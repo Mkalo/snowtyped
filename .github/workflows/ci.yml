@@ -3,29 +3,69 @@ name: CI
 on:
   push:
   pull_request:
+  merge_group:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   check:
+    name: Check (${{ matrix.os }}, Node ${{ matrix.node }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         node: [22, 24]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
-      - uses: actions/upload-artifact@v4
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: |
+          mkdir -p reports
+          pnpm install --frozen-lockfile 2>&1 | tee reports/install.log
+      - name: Run offline checks
+        run: pnpm check 2>&1 | tee reports/check.log
+      - name: Upload coverage and diagnostics
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: coverage-${{ matrix.os }}-node-${{ matrix.node }}
-          path: coverage/
+          name: ci-${{ matrix.os }}-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
+          path: |
+            coverage/
+            reports/
+          retention-days: 14
+          if-no-files-found: warn
+
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs: [check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every matrix job to pass
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+        run: |
+          if [ "$CHECK_RESULT" != "success" ]; then
+            echo "::error::CI matrix result: $CHECK_RESULT. Every check must succeed."
+            exit 1
+          fi

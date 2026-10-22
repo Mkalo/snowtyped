@@ -16,6 +16,8 @@ pnpm test:integration
 
 `pnpm check` runs Biome, strict TypeScript checks and type fixtures, offline unit tests with 100% per-file coverage thresholds, ESM/CJS builds, publint, Are the Types Wrong, and tests against an installed tarball. Those package tests check `import`, `require`, mixed-format interoperability, NodeNext/Bundler declaration resolution, and tree shaking. CI targets Windows/Linux and Node 22/24.
 
+See [CI and release checks](docs/ci.md) for the required matrix gate, retained diagnostics, and release prerequisites.
+
 Live tests require your test account configuration. See [Snowflake setup](docs/snowflake-setup.md). Each run creates a unique schema, seeds fixtures, and drops only its own schema. The manual integration workflow uses a dedicated GitHub environment. Tests consume real Snowflake credits.
 
 ## Declared schemas and typed queries
