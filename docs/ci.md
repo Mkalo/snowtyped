@@ -44,6 +44,7 @@ gh api repos/Mkalo/snowtyped --jq .visibility
 gh api repos/Mkalo/snowtyped/rules/branches/main
 ```
 
+The active ruleset is [Protect main](https://github.com/Mkalo/snowtyped/rules/25685546).
 The configuration in [main.json](../.github/rulesets/main.json) protects
 `refs/heads/main` with an active ruleset that requires pull requests and
 the `CI required` status from the GitHub Actions app. Require the branch to be
@@ -52,6 +53,16 @@ force pushes, and leave the bypass list empty. A review approval count of zero
 allows the sole maintainer to merge their own reviewed changes after CI passes.
 The rule's effectiveness must be checked through the API and a failing pull
 request; a successful workflow alone does not establish enforcement.
+
+After reviewing a configuration change, update this existing ruleset and read
+the effective rules back:
+
+```sh
+gh api repos/Mkalo/snowtyped/rulesets/25685546 --method PUT --input .github/rulesets/main.json
+```
+
+Do not create a duplicate ruleset for each edit. The file documents repository settings; merging
+a change to it does not apply the settings automatically.
 
 To validate the gate, use a disposable pull request with a deliberate TypeScript
 error in `tests/types/`. Confirm that the matrix and `CI required` fail and that
