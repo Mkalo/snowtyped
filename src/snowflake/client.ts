@@ -1,0 +1,214 @@
+import type { StatementOption } from 'snowflake-sdk';
+import type { MutationQuery } from '../mutations.js';
+import type { SelectQuery } from '../query.js';
+import { type InferSelection, resultSchema, type Selection } from '../schema.js';
+import { isRawQuery, type RawQuery, type SqlInterpolation, sql } from '../sql.js';
+import {
+  type DriverConnection,
+  type ExecuteOptions,
+  request,
+  requestSignal,
+  streamRequest,
+} from './request.js';
+import { normalizeWireRow } from './wire.js';
+
+export interface QueryResult<Row> {
+  readonly rows: readonly Row[];
+  readonly queryId: string;
+}
+export interface MutationResult {
+  readonly queryId: string;
+  readonly affectedRows: number;
+}
+export interface SnowflakeClient {
+  execute<S extends Selection, Scope extends string, Nullable extends string>(
+    query: SelectQuery<S, Scope, Nullable>,
+    options?: ExecuteOptions,
+  ): Promise<QueryResult<InferSelection<S, Nullable>>>;
+  execute(query: MutationQuery, options?: ExecuteOptions): Promise<MutationResult>;
+  queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: SqlInterpolation[]): Promise<T>;
+  queryRaw<T = unknown>(query: RawQuery<T>): Promise<T>;
+  queryRaw<T = unknown>(query: RawQuery): Promise<T>;
+  stream<S extends Selection, Scope extends string, Nullable extends string>(
+    query: SelectQuery<S, Scope, Nullable>,
+    options?: ExecuteOptions,
+  ): AsyncIterable<InferSelection<S, Nullable>>;
+  streamRaw<T = unknown>(query: RawQuery, options?: ExecuteOptions): AsyncIterable<T>;
+  transaction<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T>;
+}
+
+/** Uses a connected SDK connection. The caller owns connection lifecycle. */
+export function createClient(connection: DriverConnection): SnowflakeClient {
+  const schemas = new WeakMap<object, ReturnType<typeof resultSchema>>();
+  interface Session {
+    readonly requests: Promise<unknown>[];
+    closed: boolean;
+  }
+  let activeSession: Session | undefined;
+  const pending = new Set<Promise<unknown>>();
+  let streams = 0;
+  async function tracked<T>(promise: Promise<T>, session?: Session): Promise<T> {
+    pending.add(promise);
+    session?.requests.push(promise);
+    try {
+      return await promise;
+    } finally {
+      pending.delete(promise);
+    }
+  }
+  function factory(session?: Session): SnowflakeClient {
+    function check() {
+      if (activeSession && !session)
+        throw new Error(
+          'This connection is reserved by an active transaction; use its transaction client.',
+        );
+      if (session && (activeSession !== session || session.closed))
+        throw new Error('This transaction client is no longer active.');
+    }
+    function prepared(query: SelectQuery<Selection, string, string>) {
+      let schema = schemas.get(query);
+      if (!schema) {
+        schema = resultSchema(query.selection, query.nullableSources);
+        schemas.set(query, schema);
+      }
+      const validator = schema;
+      const keys = Object.keys(query.selection);
+      return (row: unknown): unknown => {
+        if (!Array.isArray(row) || row.length !== keys.length)
+          throw new TypeError('Result row does not match the declared projection width.');
+        return validator.parse(Object.fromEntries(keys.map((key, i) => [key, row[i]])));
+      };
+    }
+    const driverOptions = (
+      query: { compile(): { sql: string; binds: readonly (string | number | boolean | null)[] } },
+      rowMode: 'object' | 'array',
+    ): StatementOption => {
+      const compiled = query.compile();
+      return {
+        sqlText: compiled.sql,
+        binds: [...compiled.binds],
+        rowMode,
+        streamResult: false,
+        asyncExec: false,
+        fetchAsString: ['Number', 'Date', 'JSON'],
+        parameters: {
+          JS_TREAT_INTEGER_AS_BIGINT: true,
+          DATE_OUTPUT_FORMAT: 'YYYY-MM-DD',
+          TIME_OUTPUT_FORMAT: 'HH24:MI:SS.FF9',
+          TIMESTAMP_NTZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF9',
+          TIMESTAMP_LTZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF9 TZH:TZM',
+          TIMESTAMP_TZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF9 TZH:TZM',
+        },
+      };
+    };
+    async function execute(
+      query: SelectQuery<Selection, string, string> | MutationQuery,
+      options: ExecuteOptions = {},
+    ): Promise<QueryResult<unknown> | MutationResult> {
+      check();
+      const decode = query.kind === 'select' ? prepared(query) : undefined;
+      const result = await request(
+        connection,
+        driverOptions(query, 'array'),
+        requestSignal(options),
+      );
+      if (!decode)
+        return {
+          queryId: result.statement.getQueryId(),
+          affectedRows: result.statement.getNumUpdatedRows() ?? 0,
+        };
+      if (!result.rows) throw new TypeError('Expected a SELECT result set.');
+      return {
+        rows: result.rows.map((row) => decode(normalizeWireRow(row, result.statement))),
+        queryId: result.statement.getQueryId(),
+      };
+    }
+    return Object.freeze({
+      execute: (
+        query: SelectQuery<Selection, string, string> | MutationQuery,
+        options?: ExecuteOptions,
+      ) => tracked(execute(query, options), session),
+      async queryRaw<T = unknown>(
+        input: TemplateStringsArray | RawQuery<T>,
+        ...values: SqlInterpolation[]
+      ): Promise<T> {
+        check();
+        const query = isRawQuery(input) ? input : sql<T>(input, ...values);
+        return tracked(
+          request(connection, driverOptions(query, 'object')).then(
+            (result) => result.rows?.map((row) => normalizeWireRow(row, result.statement)) as T,
+          ),
+          session,
+        );
+      },
+      async *stream(query: SelectQuery<Selection, string, string>, options: ExecuteOptions = {}) {
+        check();
+        const decode = prepared(query);
+        streams++;
+        try {
+          for await (const { row, statement } of streamRequest(
+            connection,
+            driverOptions(query, 'array'),
+            requestSignal(options),
+          ))
+            yield decode(normalizeWireRow(row, statement));
+        } finally {
+          streams--;
+        }
+      },
+      async *streamRaw<T = unknown>(
+        query: RawQuery,
+        options: ExecuteOptions = {},
+      ): AsyncGenerator<T> {
+        check();
+        streams++;
+        try {
+          for await (const { row, statement } of streamRequest(
+            connection,
+            driverOptions(query, 'object'),
+            requestSignal(options),
+          ))
+            yield normalizeWireRow(row, statement) as T;
+        } finally {
+          streams--;
+        }
+      },
+      async transaction<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T> {
+        check();
+        if (session) throw new Error('Nested transactions are not supported by this client.');
+        if (pending.size || streams)
+          throw new Error('Await running queries and close streams before starting a transaction.');
+        const current: Session = { requests: [], closed: false };
+        activeSession = current;
+        const tx = factory(current);
+        try {
+          await request(connection, driverOptions(sql`BEGIN`, 'object'));
+          let value: T;
+          try {
+            value = await callback(tx);
+            current.closed = true;
+            await Promise.all(current.requests);
+            await request(connection, driverOptions(sql`COMMIT`, 'object'));
+          } catch (error) {
+            current.closed = true;
+            await Promise.allSettled(current.requests);
+            try {
+              await request(connection, driverOptions(sql`ROLLBACK`, 'object'));
+            } catch (rollback) {
+              throw new AggregateError(
+                [error, rollback],
+                'Transaction failed and rollback also failed.',
+              );
+            }
+            throw error;
+          }
+          return value;
+        } finally {
+          current.closed = true;
+          activeSession = undefined;
+        }
+      },
+    }) as SnowflakeClient;
+  }
+  return factory();
+}

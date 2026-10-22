@@ -1,0 +1,99 @@
+{
+  "name": "snowtyped",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "description": "Schema-driven Snowflake queries, runtime validation, and parameterized raw SQL for TypeScript.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mkalo/snowtyped.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mkalo/snowtyped/issues"
+  },
+  "homepage": "https://github.com/Mkalo/snowtyped#readme",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "typesVersions": {
+    "*": {
+      "snowflake": [
+        "./dist/snowflake.d.cts"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./snowflake": {
+      "import": {
+        "types": "./dist/snowflake.d.mts",
+        "default": "./dist/snowflake.mjs"
+      },
+      "require": {
+        "types": "./dist/snowflake.d.cts",
+        "default": "./dist/snowflake.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:package": "node scripts/test-package.mjs",
+    "check:package": "publint && attw --pack .",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build && pnpm check:package && pnpm test:package",
+    "prepack": "pnpm build",
+    "snowflake:setup": "node scripts/snowflake-setup.mjs"
+  },
+  "peerDependencies": {
+    "snowflake-sdk": "^3.4.0"
+  },
+  "peerDependenciesMeta": {
+    "snowflake-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "22.20.5",
+    "@vitest/coverage-v8": "5.0.5",
+    "esbuild": "0.28.2",
+    "publint": "0.3.25",
+    "snowflake-sdk": "3.4.0",
+    "tsdown": "0.23.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}

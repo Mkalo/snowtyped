@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.integration.example
+.secrets/
+.snowflake/
+*.tgz
+*.tsbuildinfo
+*.log
+.DS_Store
