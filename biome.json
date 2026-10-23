@@ -5,6 +5,7 @@
       "**",
       "!dist",
       "!coverage",
+      "!reports",
       "!pnpm-lock.yaml",
       "!.changeset/**/*.md",
       "!.secrets",

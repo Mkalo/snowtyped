@@ -7,8 +7,8 @@ const pnpm = process.env.npm_execpath;
 assert(pnpm, 'Run through pnpm check:changesets.');
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
-assert.equal(manifest.private, true, 'Publication remains blocked pending #20/#24.');
-assert.equal(manifest.license, 'UNLICENSED', 'Licensing requires an owner decision in #24.');
+assert.equal(manifest.private, false, 'Public prereleases are enabled.');
+assert.equal(manifest.license, 'MIT', 'Keep the MIT license.');
 // Parse and validate all pending/archived changesets, even on push and merge-group events.
 await getReleasePlan(process.cwd());
 

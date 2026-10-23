@@ -41,6 +41,8 @@ jobs:
         run: pnpm check:changesets
       - name: Exercise disposable versioning flows
         run: pnpm test:versioning
+      - name: Exercise release safety checks
+        run: pnpm test:release
 
   check:
     name: Check (${{ matrix.os }}, Node ${{ matrix.node }})

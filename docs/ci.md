@@ -92,14 +92,15 @@ independently of the project's Node test matrix.
 
 ## Release gate
 
-Offline CI cannot authorize publication. Keep `package.json` private until the
-owner settles licensing and the release contract (#24), Changesets/version
-review (#19), and npm ownership/trusted publishing (#20). Record passing offline
-checks and an installed-tarball check for the exact release candidate SHA.
+Offline CI does not publish. Follow [npm publication](versioning.md#npm-publication)
+to stage MIT-licensed alpha/beta releases, verify the exact commit and tarball,
+and approve publication with npm 2FA.
 
-A release additionally needs a successful protected hosted Snowflake run on that
+A supported stable release additionally needs a successful protected hosted Snowflake run on that
 same SHA (#23), production-critical hardening evidence (#17/#24), and checked
 documentation and deployment/version agreement (#21/#22). These follow-ups are
 still release requirements even though their jobs are not yet part of
 `CI required`. First npm publication and production documentation deployment need
-the owner's authorization. Do not infer release readiness from a green PR.
+your approval. Stable publication also needs the explicit repository
+variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while those stable
+gates are outstanding. Do not infer stable readiness from an experimental npm release.

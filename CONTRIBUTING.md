@@ -26,4 +26,6 @@ choices, alpha/beta/stable transitions, and version PRs. Do not hand-edit packag
 versions or publish from contribution PRs. Run `pnpm test:versioning` when changing
 this tooling.
 
-Publishing remains disabled until the package name, license, repository metadata, and public API have been settled.
+The project uses MIT. Follow [npm publication](docs/versioning.md#npm-publication)
+to release alpha/beta versions; approve staged packages with npm 2FA. Run
+`pnpm test:release` when changing release policy or automation.
