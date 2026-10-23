@@ -57,7 +57,10 @@ export interface ColumnConstraints {
   readonly scale?: number;
   readonly length?: number;
   readonly dimension?: number;
+  readonly element?: 'int' | 'float';
   readonly srid?: number;
+  /** The SQL spelling of a structured ARRAY, OBJECT, or MAP type. */
+  readonly structure?: string;
 }
 export interface Column<
   T,
@@ -502,7 +505,7 @@ export function vector(
     json(schema, element === 'float' ? Math.fround : undefined),
     schema,
     false,
-    { constraints: { dimension }, type, check: (value) => value.length === dimension },
+    { constraints: { dimension, element }, type, check: (value) => value.length === dimension },
     (value) => Object.freeze({ kind: 'cast', value: parseJson('vector', value), target: type }),
   );
 }

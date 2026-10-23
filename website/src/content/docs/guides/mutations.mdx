@@ -28,7 +28,8 @@ import writes from '../../../snippets/writes.ts?raw';
 Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)`
 so they are optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)`
 column. It is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These
-modifiers are metadata only and do not emit DDL.
+modifiers do not emit DDL from query builders; [`snowtyped/ddl`](/guides/migrations/) renders them in
+table definitions.
 
 <Snippet code={serverValues} />
 

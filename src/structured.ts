@@ -31,7 +31,7 @@ export function structured<T>(
     jsonText((_value, source) => new JsonNumber(source)).pipe(required.decode),
     required.value,
     false,
-    undefined,
+    { constraints: { structure: required.sql }, type: required.sql },
     (value) =>
       Object.freeze({
         kind: 'cast',

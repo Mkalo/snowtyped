@@ -49,9 +49,10 @@ describe('production build', () => {
     expect(exists('pagefind/pagefind.js')).toBe(true);
   });
 
-  it('documents both package entry points', () => {
+  it('documents every package entry point', () => {
     expect(exists('api/snowtyped/functions/select/index.html')).toBe(true);
     expect(exists('api/snowtyped/snowflake/functions/createclient/index.html')).toBe(true);
+    expect(exists('api/snowtyped/ddl/functions/migrate/index.html')).toBe(true);
   });
 
   it('omits module internals that the entry points do not export', () => {

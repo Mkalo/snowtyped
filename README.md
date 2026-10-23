@@ -206,7 +206,7 @@ await db.execute(
 );
 ```
 
-INSERT accepts one row or an array of rows. Required columns must be present. Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or NULL; explicit `null` stays NULL. Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row; Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps. Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)` to make them optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)` column, which is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These modifiers are metadata only; they do not emit DDL. `insertFrom` maps selected names to target columns, and the selected row type and SQL types must fit the target. UPDATE accepts typed literal values and expressions from its table. `updateFrom` and `deleteUsing` take one table or derived source and a required join predicate; `.where()` adds to it. MERGE branches run in the order added, and each takes an optional condition. An unconditional branch must be the last of its kind, and NOT MATCHED branches may only reference the source. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
+INSERT accepts one row or an array of rows. Required columns must be present. Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or NULL; explicit `null` stays NULL. Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row; Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps. Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)` to make them optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)` column, which is read-only: insert, update, and MERGE types exclude it and reject it at runtime. Query builders do not emit DDL for these modifiers; `snowtyped/ddl` renders them as `DEFAULT`, `AUTOINCREMENT`, and `AS (expr)`. `insertFrom` maps selected names to target columns, and the selected row type and SQL types must fit the target. UPDATE accepts typed literal values and expressions from its table. `updateFrom` and `deleteUsing` take one table or derived source and a required join predicate; `.where()` adds to it. MERGE branches run in the order added, and each takes an optional condition. An unconditional branch must be the last of its kind, and NOT MATCHED branches may only reference the source. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
 
 ## Raw tagged queries
 
@@ -273,9 +273,40 @@ Await running operations and close cursors before starting a transaction on a si
 
 `await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Generated declarations carry NUMBER precision/scale, VARCHAR length, and TIME/TIMESTAMP precision when they differ from Snowflake's defaults; INFORMATION_SCHEMA does not report BINARY length. Column defaults, identity settings, and virtual column expressions become `.serverDefault()`, `.identity()`, and `.virtual()` modifiers. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
 
+## Schema management
+
+DDL builders, schema diffs, and migrations live in the separate `snowtyped/ddl` entry point, so query-only code never loads them.
+
+```ts
+import { createTable, defineSchema, defineTable, migrate, sqlType } from 'snowtyped/ddl';
+
+const accountsTable = defineTable(accounts, {
+  types: { balance: sqlType.number(18, 2) },
+  comments: { email: 'Primary contact' },
+});
+const result = await migrate(
+  db,
+  [{ id: '0001_accounts', statements: [createTable(accountsTable)] }],
+  {
+    database: 'APP_DB',
+    schema: 'PUBLIC',
+    verify: defineSchema({ database: 'APP_DB', schema: 'PUBLIC' }, [accountsTable]),
+  },
+);
+// result.applied: ['0001_accounts']; result.drift lists remaining differences
+```
+
+`defineTable` derives physical columns from a declared table: length, precision, and scale options, VECTOR element types and dimensions, `structured()` ARRAY/OBJECT/MAP types, and server values carry into the DDL. It rejects physical types its codecs cannot read or that conflict with declared options; `decimal()` without a precision needs an explicit `sqlType.number(precision, scale)`. Default and virtual columns need their expression, identity columns must be NUMBER or FLOAT, virtual columns cannot be NOT NULL, structured columns cannot have a DEFAULT, and a default with a leading `+` is rejected because Snowflake then fails every insert. `createSchema`, `dropSchema`, `createTable`, `dropTable`, and `alterTable(table)` (rename, comments, add/drop/rename columns, type changes, NOT NULL) build quoted statements. Comments compile to escaped literals.
+
+`migrate` applies migrations in array order and records each statement in a `SNOWTYPED_MIGRATIONS` history table. A lease lock in `SNOWTYPED_MIGRATIONS_LOCK` makes concurrent runs fail with `LOCKED`; the lease is renewed before every statement and must exceed the longest one (`leaseSeconds`, default 900). Applied migrations must not change or be reordered (`HISTORY_DRIFT`). Destructive DDL needs `destructive: true` on its migration; raw SQL statements are not classified.
+
+Snowflake commits each DDL statement on its own, so a failed migration keeps its earlier statements. The run stops with `FAILED`, and later runs refuse to continue until you fix the remaining statements and pass `resumeFailed: true`, which skips the committed ones. If a connection drops after Snowflake committed a statement but before it was recorded, that statement runs again on resume; prefer `IF NOT EXISTS` forms for such steps.
+
+`inspectSchema` reads base tables through INFORMATION_SCHEMA, and `diffSchema`/`checkDrift` compare them with `defineSchema(...)`. Diffs widen VARCHAR, change NUMBER precision, toggle NOT NULL, add nullable, constant-default, and virtual columns, drop columns and tables, and set comments. Narrowing NUMBER precision and setting NOT NULL fail if existing data does not fit. Adding a NOT NULL column without a non-NULL constant default, an identity column, or a non-constant default to an existing table, changing a column's kind of server value or constant default, and other type changes (scale, timestamp precision, type family, structured types, unmodeled types) are reported as `unsupported` rather than rebuilt. Renames are never inferred. Constant defaults are compared by value, since Snowflake normalizes numbers and string escapes and records `DEFAULT NULL` as no default; other default and virtual expressions are compared by kind only, since Snowflake stores them rewritten; identity options are compared when declared. Column order, clustering, and BINARY length (not reported by INFORMATION_SCHEMA) are not compared. `pushSchema` applies a diff directly without history or locking, refusing destructive changes unless `allowDestructive` is set; rerunning it continues a partial push.
+
 ## Scope and distribution
 
-The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. Complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. Complex nested relation projections, DDL for objects other than schemas and tables, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 

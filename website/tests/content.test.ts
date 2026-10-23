@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import * as library from 'snowtyped';
+import * as ddl from 'snowtyped/ddl';
 import * as snowflake from 'snowtyped/snowflake';
 import { describe, expect, it } from 'vitest';
 
@@ -27,7 +28,7 @@ describe('documentation content', () => {
       ...pages.flatMap(({ source }) => source.match(/`[^`\n]+`/g) ?? []),
       ...snippets.map((name) => read(`src/snippets/${name}`)),
     ].join('\n');
-    const exports = [...Object.keys(library), ...Object.keys(snowflake)];
+    const exports = [...Object.keys(library), ...Object.keys(snowflake), ...Object.keys(ddl)];
     expect(exports.filter((name) => !new RegExp(`(?<![.\\w])${name}\\b`).test(code))).toEqual([]);
   });
 

@@ -8,10 +8,10 @@ any change to the guarantees below.
 
 ## Public API
 
-The package has two entry points, `snowtyped` and `snowtyped/snowflake`.
-`tests/unit/public-api.test.ts` records the exact value and type exports of
-both; adding, removing, or reclassifying an export must update that list and
-this section.
+The package has three entry points, `snowtyped`, `snowtyped/snowflake`, and
+`snowtyped/ddl`. `tests/unit/public-api.test.ts` records the exact value and
+type exports of each; adding, removing, or reclassifying an export must update
+that list and this section.
 
 **Stable** from `1.0.0`; incompatible changes need a major release:
 - Schema declarations: `snowflakeTable`, `alias`, `timeTravel`, the column
@@ -48,6 +48,10 @@ new case.
   methods, `columns`, `selection`, and `compile()`; for example `ast`, `node`,
   `expression`, `readSchema`, `refs`, and the phantom `*ScopeType` fields. Use
   builders rather than constructing or inspecting these values.
+- All of `snowtyped/ddl`: physical types, table and schema definitions, DDL
+  builders, schema inspection and diffs, `pushSchema`, and the migration
+  runner. A change to the history or lock table layout that existing history
+  cannot be read with ships an upgrade path in its changeset.
 
 A public extension protocol for third-party AST nodes is deferred (#13).
 
@@ -159,7 +163,6 @@ changes stable behavior:
 - Stronger SQL semantic validation (#11)
 - A public AST extension protocol (#13)
 - Nested selections and relation loading (#14)
-- DDL builders and migrations (#16)
 
 In progress and not yet part of this contract: constraints and additional type codecs (#5). It
 joins the stable API when it merges and this document and the export snapshot are updated.

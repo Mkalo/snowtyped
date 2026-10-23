@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: { index: 'src/index.ts', snowflake: 'src/snowflake/index.ts' },
+  entry: { index: 'src/index.ts', snowflake: 'src/snowflake/index.ts', ddl: 'src/ddl/index.ts' },
   format: ['esm', 'cjs'],
   fixedExtension: true,
   target: 'es2022',

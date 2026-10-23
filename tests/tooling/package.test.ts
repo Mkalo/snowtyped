@@ -62,16 +62,21 @@ test('packed ESM/CJS consumers, declarations, license, and tree shaking', async 
     assert.equal(query.compile().sql, 'SELECT TO_VARCHAR("__sflib_result"."id") AS "id" FROM (SELECT "ID" AS "id" FROM "CUSTOMERS" WHERE ("ID" = ?)) AS "__sflib_result"');
     assert.deepEqual(query.compile().binds, ['42']);
   `;
+    const ddlExample = `
+    assert.equal(ddl.createTable(ddl.defineTable(table)).compile().sql, 'CREATE TABLE "CUSTOMERS" ("ID" NUMBER(38, 0) NOT NULL)');
+  `;
     await writeFile(
       join(temporary, 'consumer.mjs'),
       `import assert from 'node:assert/strict';
     import { createRequire } from 'node:module';
     import * as lib from 'snowtyped';
     import { createClient } from 'snowtyped/snowflake';
+    import * as ddl from 'snowtyped/ddl';
     assert.equal(typeof createClient, 'function');
     const require = createRequire(import.meta.url);
     assert.throws(() => require.resolve('snowflake-sdk'), { code: 'MODULE_NOT_FOUND' });
     ${example}
+    ${ddlExample}
     const cjs = require('snowtyped');
     const mixedQuery = cjs.select(table, { id: table.columns.id });
     const mixedClient = createClient({ execute(options) {
@@ -84,7 +89,9 @@ test('packed ESM/CJS consumers, declarations, license, and tree shaking', async 
       `const assert = require('node:assert/strict');
     const lib = require('snowtyped');
     assert.equal(typeof require('snowtyped/snowflake').createClient, 'function');
-    ${example}`,
+    const ddl = require('snowtyped/ddl');
+    ${example}
+    ${ddlExample}`,
     );
     for (const file of ['consumer.mjs', 'consumer.cjs']) {
       execFileSync(process.execPath, [file], { cwd: temporary, stdio: 'pipe' });
@@ -123,6 +130,7 @@ test('packed ESM/CJS consumers, declarations, license, and tree shaking', async 
     runPnpm(['add', '--ignore-workspace', '--ignore-scripts', '--save-dev', 'snowflake-sdk@3.4.0']);
     const typeSource = `import { eq, integer, select, snowflakeTable, sql, text } from 'snowtyped';
     import type { SnowflakeClient } from 'snowtyped/snowflake';
+    import { defineTable, type Migration, sqlType } from 'snowtyped/ddl';
     const table = snowflakeTable('T', { id: integer('ID').notNull(), email: text('EMAIL') });
     const query = select(table, { id: table.columns.id, email: table.columns.email });
     declare const client: SnowflakeClient;
@@ -133,6 +141,8 @@ test('packed ESM/CJS consumers, declarations, license, and tree shaking', async 
       const email: string | null = result.rows[0]!.email;
       void [id, email];
     });
+    const migration: Migration = { id: '1', statements: [] };
+    void [migration, defineTable(table, { types: { email: sqlType.varchar(10) } })];
     // @ts-expect-error Integer filters require bigint.
     eq(table.columns.id, '1');`;
     for (const extension of ['mts', 'cts'])

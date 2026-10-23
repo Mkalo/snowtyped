@@ -1,0 +1,88 @@
+---
+title: Migrations
+description: Schema and table DDL, schema diffs, drift checks, and versioned migrations.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../../components/Snippet.astro';
+import migrations from '../../../snippets/migrations.ts?raw';
+import schemaDiff from '../../../snippets/schema-diff.ts?raw';
+
+Schema management lives in the separate `snowtyped/ddl` entry point, so query-only code never loads
+it. It works with any client from `snowtyped/snowflake`.
+
+## Table definitions and DDL
+
+`defineTable(table, options)` derives physical columns from a declared table. Declared lengths,
+precisions, scales, and VECTOR element types and dimensions become the physical type, such as
+`VARCHAR(20)`, `NUMBER(12, 4)`, or `VECTOR(FLOAT, 256)`. `types` overrides a type with one from
+`sqlType`; each declared codec must be able to read it and it must match declared options, so
+`integer()` needs a NUMBER with scale 0 and `decimal()` without a precision needs an explicit
+`sqlType.number(precision, scale)`. `structured()` columns use their `ARRAY(...)`, `OBJECT(...)`,
+or `MAP(...)` type and cannot have a DEFAULT. GEOMETRY SRIDs are checked per value, not in DDL. `types` and `comments`
+are keyed by the declaration's column keys. An omitted comment is not managed; `null` requires no
+comment. `defineSchema(target, tables)` places the tables in one schema.
+
+The builders return statements with a `destructive` flag and a `compile()` method:
+
+- `createSchema`, `dropSchema`, and `setSchemaComment`. `dropSchema` defaults to RESTRICT, which Snowflake
+  only enforces for foreign keys from other schemas, so it still drops a schema that has tables.
+- `createTable(definition)`, `dropTable(table)`.
+- `alterTable(table)`: rename, comments, add, drop, and rename columns, type changes, and NOT NULL.
+
+Server values render into column definitions: `.serverDefault(sql)` as `DEFAULT sql`, `.identity()` as
+`AUTOINCREMENT` with its start, increment, and order, and `.virtual(sql)` as `AS (sql)`. Expressions
+are trusted SQL text. Default and virtual columns need an expression, identity columns must be NUMBER
+or FLOAT, and virtual columns cannot be NOT NULL. A default with a leading `+` is rejected, because
+Snowflake stores it as `UNARY PLUS(...)` and every later insert fails. `alterTable(table).dropDefault(column)` removes a
+default.
+
+`compileDdl` compiles the underlying DDL node. Names are quoted; comments compile to escaped
+literals because Snowflake DDL does not accept bind parameters.
+
+## Migrations
+
+<Snippet code={migrations} />
+
+`migrate(db, migrations, target)` applies migrations in array order and records each statement in a
+`SNOWTYPED_MIGRATIONS` history table, creating the schema if needed. `migrationStatus` reports
+applied, pending, and incomplete migrations without changing anything.
+
+- A lease in `SNOWTYPED_MIGRATIONS_LOCK` makes a concurrent run fail with the `LOCKED` code. The
+  lease is renewed before every statement and must outlast the longest one (`leaseSeconds`, 900 by
+  default).
+- Applied migrations must not change or be reordered; otherwise the run fails with `HISTORY_DRIFT`.
+- A migration with destructive DDL needs `destructive: true`. Raw SQL statements are not classified.
+- Failures are `MigrationError` instances whose `code` names the cause.
+
+<Aside type="caution">
+  Snowflake commits each DDL statement on its own. A failed migration keeps its earlier statements,
+  and later runs refuse to continue until you fix the remaining statements and pass
+  `resumeFailed: true`, which skips the committed ones. A statement whose commit was not recorded,
+  for example after a dropped connection, runs again on resume; prefer `IF NOT EXISTS` forms there.
+</Aside>
+
+## Schema diffs and drift
+
+<Snippet code={schemaDiff} />
+
+`inspectSchema` reads base tables through `INFORMATION_SCHEMA`. `diffSchema` compares them with the
+desired schema in declaration order and only emits changes Snowflake makes in place: widening
+VARCHAR, changing NUMBER precision, toggling NOT NULL, adding nullable columns, dropping columns and
+tables, and setting comments. A missing column with a constant default (NOT NULL needs a non-NULL
+one) or a virtual expression is added. Narrowing NUMBER precision and setting NOT NULL fail when existing data
+does not fit. Other changes, such as a new NUMBER scale or a NOT NULL column on an existing table,
+are listed under `unsupported` for a hand-written migration. So are identity columns on an existing
+table, which Snowflake adds only to empty tables, non-constant defaults, which it accepts only at
+table creation, and any change between no server value, a default, identity, and a virtual
+expression. Identity start, increment, and order are compared when declared. Constant defaults
+compare by value, since Snowflake normalizes numbers and string escapes and records `DEFAULT NULL` as
+no default; a changed constant is listed under `unsupported`. Other default and virtual
+expressions are not compared, because Snowflake stores them rewritten. Renames are never inferred.
+
+`checkDrift` runs the same comparison while ignoring the history tables. `pushSchema` applies a diff
+without history or locking and refuses unsupported or destructive changes unless `allowDestructive`
+is set; rerunning it continues a partial push. Structured types are read
+through `SHOW COLUMNS`, because INFORMATION_SCHEMA upper-cases their field names and can lag behind an
+ALTER; a structured type change is listed under `unsupported`. Column order, clustering, BINARY
+length, and server values of columns declared without one are not compared.

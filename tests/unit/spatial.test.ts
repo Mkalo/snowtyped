@@ -281,7 +281,7 @@ describe('VECTOR columns', () => {
       expect(() => values.readSchema.parse(input)).toThrow();
     expect(() => counts.readSchema.parse('[1.5,2]')).toThrow();
     expect(() => values.readSchema.parse('[1,2]')).toThrow('Value does not fit VECTOR(FLOAT, 3).');
-    expect(values.constraints).toEqual({ dimension: 3 });
+    expect(values.constraints).toEqual({ dimension: 3, element: 'float' });
     expect([values.dataType, values.wireType]).toEqual(['vector', 'variant']);
   });
 
@@ -327,6 +327,6 @@ describe('VECTOR columns', () => {
     expect(() => vector('V', 'double' as 'float', 2)).toThrow(
       "VECTOR elements must be 'int' or 'float'.",
     );
-    expect(vector('V', 'int', 4096).constraints).toEqual({ dimension: 4096 });
+    expect(vector('V', 'int', 4096).constraints).toEqual({ dimension: 4096, element: 'int' });
   });
 });

@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import * as ddl from '../../src/ddl/index.js';
 import * as core from '../../src/index.js';
 import * as snowflake from '../../src/snowflake/index.js';
 
@@ -48,6 +49,20 @@ const expected = {
       'ExecuteOptions MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
     ),
   },
+  'snowtyped/ddl': {
+    values: names(
+      `alterTable checkDrift compileDdl createSchema createTable defineSchema defineTable
+      diffSchema dropSchema dropTable inspectSchema MigrationError migrate migrationStatus
+      pushSchema setSchemaComment sqlType`,
+    ),
+    types: names(
+      `AlterTable ColumnDefinition ColumnDefinitionNode ColumnOptions DdlNode DdlStatement
+      DiffOptions DriftOptions IncompleteMigration MigrateOptions MigrateResult Migration
+      MigrationErrorCode MigrationStatus MigrationTarget ObservedColumn ObservedSchema
+      ObservedTable ObservedType PhysicalType SchemaChange SchemaDefinition SchemaDiff
+      TableDefinition TableDefinitionOptions UnmodeledType UnsupportedChange`,
+    ),
+  },
 };
 
 const entries = {
@@ -55,6 +70,10 @@ const entries = {
   'snowtyped/snowflake': {
     module: snowflake,
     file: fileURLToPath(new URL('../../src/snowflake/index.ts', import.meta.url)),
+  },
+  'snowtyped/ddl': {
+    module: ddl,
+    file: fileURLToPath(new URL('../../src/ddl/index.ts', import.meta.url)),
   },
 };
 const program = ts.createProgram(

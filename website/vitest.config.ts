@@ -8,6 +8,7 @@ export default defineConfig({
     alias: [
       { find: /^snowtyped$/, replacement: source('index.ts') },
       { find: /^snowtyped\/snowflake$/, replacement: source('snowflake/index.ts') },
+      { find: /^snowtyped\/ddl$/, replacement: source('ddl/index.ts') },
     ],
   },
   test: { include: ['tests/**/*.test.ts', 'src/snippets/**/*.test.ts'] },

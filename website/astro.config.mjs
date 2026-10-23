@@ -26,7 +26,7 @@ export default defineConfig({
       plugins: [
         starlightLinksValidator({ errorOnLocalLinks: true }),
         starlightTypeDoc({
-          entryPoints: ['../src/index.ts', '../src/snowflake/index.ts'],
+          entryPoints: ['../src/index.ts', '../src/snowflake/index.ts', '../src/ddl/index.ts'],
           tsconfig: '../tsconfig.build.json',
           output: 'api',
           sidebar: { label: 'API reference', collapsed: true, readmeLabel: 'Overview' },
@@ -56,6 +56,7 @@ export default defineConfig({
             'guides/execution',
             'guides/production',
             'guides/introspection',
+            'guides/migrations',
             'guides/testing',
           ],
         },

@@ -5,7 +5,8 @@
     "noUnusedLocals": false,
     "paths": {
       "snowtyped": ["../src/index.ts"],
-      "snowtyped/snowflake": ["../src/snowflake/index.ts"]
+      "snowtyped/snowflake": ["../src/snowflake/index.ts"],
+      "snowtyped/ddl": ["../src/ddl/index.ts"]
     }
   },
   "include": ["src/snippets"]

@@ -42,10 +42,12 @@ CI runs the library checks on Linux and Windows with Node 22 and 24.
   retries, and sustained use) have unit and live coverage; see
   [production use](/guides/production/) for operational limits.
 - Introspection and declaration generation. See [introspection](/guides/introspection/).
+- Schema and table DDL, schema diffs, drift checks, and migrations from `snowtyped/ddl`. See
+  [migrations](/guides/migrations/).
 
 ## Not first-class in this alpha
 
-Complex nested relation projections, migrations, DDL builders, and ORM relation loading are not
-modeled. A public third-party AST registration protocol is not implemented.
+Complex nested relation projections, DDL for objects other than schemas and tables, and ORM
+relation loading are not modeled. A public third-party AST registration protocol is not implemented.
 
 [Raw SQL](/guides/raw-sql/) can execute Snowflake syntax beyond the modeled builder surface.
