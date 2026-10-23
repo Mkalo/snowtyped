@@ -1,22 +1,36 @@
 import { expectTypeOf } from 'vitest';
 import * as z from 'zod';
 import {
+  add,
   and,
   array,
   asc,
+  avg,
   binary,
   boolean,
+  caseWhen,
+  cast,
+  coalesce,
+  concat,
   count,
   date,
+  dateAdd,
+  dateDiff,
+  datePart,
+  dateTrunc,
   decimal,
+  div,
   eq,
   float,
   geography,
   geometry,
   gt,
   inArray,
+  insertFrom,
   integer,
   jsonPath,
+  lag,
+  length,
   like,
   lower,
   lt,
@@ -25,6 +39,7 @@ import {
   min,
   object,
   over,
+  rank,
   rowNumber,
   select,
   snowflakeTable,
@@ -165,3 +180,50 @@ asc(d.place);
 select(s).groupBy(d.shape);
 // @ts-expect-error GEOGRAPHY cannot be a PARTITION BY key.
 rowNumber({ partitionBy: [d.place] });
+
+expectTypeOf(add(c.id, 1n).dataType).toEqualTypeOf<'integer'>();
+expectTypeOf(add(c.id, c.amount).dataType).toEqualTypeOf<'decimal'>();
+expectTypeOf(div(c.id, c.id).dataType).toEqualTypeOf<'decimal'>();
+expectTypeOf(add(c.ratio, c.id).dataType).toEqualTypeOf<'float'>();
+expectTypeOf(avg(c.ratio).dataType).toEqualTypeOf<'float'>();
+expectTypeOf(avg(c.amount).dataType).toEqualTypeOf<'decimal'>();
+expectTypeOf(cast(c.name, 'date').dataType).toEqualTypeOf<'date'>();
+expectTypeOf(cast(c.name, 'decimal', 10, 2).dataType).toEqualTypeOf<'decimal'>();
+expectTypeOf(concat(c.name, 'x').dataType).toEqualTypeOf<'text'>();
+expectTypeOf(length(c.name).dataType).toEqualTypeOf<'integer'>();
+expectTypeOf(dateAdd('day', 1n, c.day).dataType).toEqualTypeOf<'date'>();
+expectTypeOf(dateAdd('hour', 1n, c.day).dataType).toEqualTypeOf<'timestamp_ntz'>();
+expectTypeOf(dateAdd('hour', 1n, c.tz).dataType).toEqualTypeOf<'timestamp_tz'>();
+expectTypeOf(dateTrunc('month', c.ntz).dataType).toEqualTypeOf<'timestamp_ntz'>();
+expectTypeOf(datePart('year', c.day).dataType).toEqualTypeOf<'integer'>();
+expectTypeOf(caseWhen(c.active, 'a').dataType).toEqualTypeOf<'text'>();
+expectTypeOf(caseWhen(c.active, c.day).else(c.day).dataType).toEqualTypeOf<'date'>();
+expectTypeOf(coalesce(c.day, '2024-01-01').dataType).toEqualTypeOf<'date'>();
+expectTypeOf(lag(c.day, { orderBy: [asc(c.id)] }).dataType).toEqualTypeOf<'date'>();
+expectTypeOf(rank({ orderBy: [asc(c.id)] }).dataType).toEqualTypeOf<'integer'>();
+eq(add(c.id, 1n), c.amount);
+lt(dateAdd('hour', 1n, c.day), c.tz);
+insertFrom(t, select(u, { id: u.columns.id, day: u.columns.day }));
+
+// @ts-expect-error COALESCE values must share one SQL type.
+coalesce(c.name, c.day);
+// @ts-expect-error CASE values must share one SQL type.
+caseWhen(c.active, c.name).else(c.day);
+// @ts-expect-error CASE WHEN needs a BOOLEAN predicate.
+caseWhen(c.flag, 1n);
+// @ts-expect-error LAG defaults must share the value's SQL type.
+lag(c.name, { orderBy: [asc(c.id)], default: c.day });
+// @ts-expect-error String helpers require TEXT.
+length(c.day);
+// @ts-expect-error String helpers require TEXT, not a VARIANT.
+concat(c.name, c.label);
+// @ts-expect-error Date helpers require a date, time, or timestamp.
+dateTrunc('day', c.name);
+// @ts-expect-error Date helpers require a date, time, or timestamp.
+dateDiff('day', c.day, c.name);
+// @ts-expect-error Arithmetic requires numeric types.
+add(c.amount, c.name);
+// @ts-expect-error dateAdd amounts must be INTEGER.
+dateAdd('day', c.amount, c.day);
+// @ts-expect-error INSERT ... SELECT values must match the column's SQL type.
+insertFrom(t, select(u, { id: u.columns.id, name: u.columns.day }));

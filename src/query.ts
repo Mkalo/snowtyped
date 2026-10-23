@@ -128,9 +128,16 @@ function children(node: ExpressionNode): readonly ExpressionNode[] {
     case 'identifier':
     case 'reference':
     case 'parameter':
+    case 'date-part':
       return [];
     case 'binary':
+    case 'arithmetic':
       return [node.left, node.right];
+    case 'case':
+      return [
+        ...node.branches.flatMap((branch) => [branch.when, branch.result]),
+        ...(node.otherwise ? [node.otherwise] : []),
+      ];
     case 'logical':
       return node.operands;
     case 'unary':

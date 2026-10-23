@@ -3,16 +3,28 @@ import * as z from 'zod';
 import type { ExpressionNode } from '../../src/ast.js';
 import { type AnyExpression, expression, type Predicate } from '../../src/expressions.js';
 import {
+  add,
   and,
   array,
   asc,
+  avg,
   binary,
   boolean,
+  caseWhen,
+  cast,
+  coalesce,
+  concat,
   count,
   date,
+  dateAdd,
+  dateDiff,
+  datePart,
+  dateTrunc,
   decimal,
   deleteFrom,
+  deleteUsing,
   desc,
+  div,
   eq,
   float,
   geography,
@@ -21,20 +33,26 @@ import {
   gte,
   ilike,
   inArray,
+  insertFrom,
   integer,
   isNull,
   jsonPath,
+  lag,
+  lead,
+  length,
   like,
   lower,
   lt,
   max,
   mergeInto,
   min,
+  mul,
   ne,
   not,
   object,
   or,
   over,
+  rank,
   rowNumber,
   select,
   snowflakeTable,
@@ -43,6 +61,7 @@ import {
   time,
   timestamp,
   update,
+  updateFrom,
   upper,
   variant,
   vector,
@@ -394,9 +413,112 @@ describe('grouping rules', () => {
         .groupBy(c.json)
         .compile().sql,
     ).toContain('GET(');
+    const helpers = {
+      sum: add(c.id, 1n),
+      choice: caseWhen(gt(c.ratio, 1), c.name).else('other'),
+      year: datePart('year', c.day),
+      n: count(),
+    };
+    expect(select(t, helpers).groupBy(c.id, c.ratio, c.name, c.day).compile().sql).toContain(
+      'CASE WHEN',
+    );
+    for (const ungrouped of [c.id, c.ratio, c.name, c.day])
+      expect(() =>
+        select(t, helpers)
+          .groupBy(...[c.id, c.ratio, c.name, c.day].filter((key) => key !== ungrouped))
+          .compile(),
+      ).toThrow(`"T"."${ungrouped.node.parts.at(-1)}" must appear in GROUP BY`);
+    expect(select(t, { total: caseWhen(gt(count(), 1n), sum(c.amount)) }).compile().sql).toContain(
+      'CASE WHEN',
+    );
     const unknown = node({ kind: 'unknown' } as unknown as ExpressionNode, []);
     expect(() => select(t, { unknown, n: count() }).compile()).toThrow(
       'Unsupported expression AST node.',
     );
+  });
+});
+
+describe('expression helpers', () => {
+  it('derive SQL types from their inputs', () => {
+    expect(add(c.id, 1n).dataType).toBe('integer');
+    expect(add(c.id, c.amount).dataType).toBe('decimal');
+    expect(div(c.id, c.id).dataType).toBe('decimal');
+    expect(mul(c.ratio, 2).dataType).toBe('float');
+    expect(avg(c.ratio).dataType).toBe('float');
+    expect(avg(c.id).dataType).toBe('decimal');
+    expect(cast(c.name, 'date').dataType).toBe('date');
+    expect(cast(c.name, 'decimal', 10, 2).dataType).toBe('decimal');
+    expect(concat(c.name, 'x').dataType).toBe('text');
+    expect(length(c.name).dataType).toBe('integer');
+    expect(dateAdd('day', 1n, c.day).dataType).toBe('date');
+    expect(dateAdd('hour', 1n, c.day).dataType).toBe('timestamp_ntz');
+    expect(dateDiff('day', c.day, c.tz).dataType).toBe('integer');
+    expect(caseWhen(c.active, 'a').dataType).toBe('text');
+    expect(caseWhen(c.active, c.day).else(c.day).dataType).toBe('date');
+    expect(coalesce(c.day, '2024-01-01').dataType).toBe('date');
+    expect(rank({ orderBy: [asc(c.id)] }).dataType).toBe('integer');
+    expect(lag(c.day, { orderBy: [asc(c.id)] }).dataType).toBe('date');
+    expect(lt(add(c.id, 1n), c.amount).dataType).toBe('boolean');
+  });
+
+  it('tag aggregate and window functions and keep windows out of them', () => {
+    expect(avg(c.amount).expression).toMatchObject({ name: 'AVG', role: 'aggregate' });
+    expect(rank({ orderBy: [asc(c.id)] }).expression).toMatchObject({
+      value: { name: 'RANK', role: 'window' },
+    });
+    expect(lead(c.id, { orderBy: [asc(c.id)] }).expression).toMatchObject({
+      value: { name: 'LEAD', role: 'window' },
+    });
+    const ranked = rank({ orderBy: [asc(c.id)] });
+    expect(() => avg(loose(ranked))).toThrow('Window functions cannot be nested inside AVG.');
+    expect(() => lag(ranked, { orderBy: [asc(c.id)] })).toThrow(
+      'Window functions cannot be nested inside LAG.',
+    );
+    expect(() => lead(c.id, { orderBy: [asc(c.id)], default: loose(ranked) })).toThrow(
+      'Window functions cannot be nested inside LEAD.',
+    );
+  });
+
+  it('reject values from different SQL types that share a TypeScript type', () => {
+    expect(() => coalesce(c.name, loose(c.day))).toThrow(
+      'COALESCE values must share one SQL domain.',
+    );
+    expect(() => coalesce(c.data, loose(binary('OTHER').notNull()))).not.toThrow();
+    expect(() => caseWhen(c.active, c.name).else(loose(c.day))).toThrow('CASE values must share');
+    expect(() => caseWhen(loose(c.flag), 1n)).toThrow('CASE WHEN requires a BOOLEAN predicate');
+    expect(() => caseWhen(c.active, 1n).when(loose(c.id), 2n)).toThrow('CASE WHEN requires');
+    expect(() => lag(c.name, { orderBy: [asc(c.id)], default: loose(c.day) })).toThrow(
+      'LAG values must share one SQL domain.',
+    );
+    expect(() => concat(c.name, loose(c.json))).toThrow('String helpers require text');
+    expect(() => dateTrunc('day', loose(c.json))).toThrow('Date helpers require');
+    expect(() => dateAdd('day', loose(c.amount), c.day)).toThrow(
+      'dateAdd amounts must be integer expressions.',
+    );
+  });
+
+  it('check BOOLEAN predicates and SQL types in sourced writes', () => {
+    const flag = loose(c.flag);
+    const on = eq(c.id, u.columns.id);
+    expect(() => updateFrom(t, u, flag, { name: u.columns.name })).toThrow(
+      'UPDATE FROM requires a BOOLEAN predicate',
+    );
+    expect(() => deleteUsing(t, u, flag)).toThrow('DELETE USING requires a BOOLEAN predicate');
+    expect(() => updateFrom(t, u, on, { name: u.columns.name }).where(flag)).toThrow(
+      'WHERE requires a BOOLEAN predicate',
+    );
+    expect(() => mergeInto(t, u, on).whenMatchedDelete(flag)).toThrow(
+      'MERGE branch requires a BOOLEAN predicate',
+    );
+    expect(() => updateFrom(t, u, on, { day: loose(u.columns.name) })).toThrow(
+      'Cannot assign a TEXT expression to DATE column day.',
+    );
+    const source = select(u, { id: u.columns.id, day: u.columns.name });
+    expect(() => insertFrom(t, loose(source))).toThrow(
+      'Cannot assign a TEXT expression to DATE column day.',
+    );
+    expect(
+      insertFrom(t, select(u, { id: u.columns.id, name: u.columns.name })).compile().sql,
+    ).toContain('INSERT INTO "T" ("ID", "NAME") SELECT');
   });
 });

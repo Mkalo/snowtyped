@@ -1,4 +1,5 @@
 export {
+  type AssignmentNode,
   type BindValue,
   type CompiledQuery,
   type CteNode,
@@ -15,6 +16,7 @@ export {
   type IntervalUnit,
   identifier,
   type JoinNode,
+  type MergeBranchNode,
   type MergeNode,
   type OrderNode,
   quoteIdentifier,
@@ -67,6 +69,34 @@ export {
   type WindowFrame,
 } from './expressions.js';
 export {
+  add,
+  avg,
+  type CaseExpression,
+  type CastType,
+  type CastValue,
+  caseWhen,
+  cast,
+  coalesce,
+  concat,
+  type DatePart,
+  dateAdd,
+  dateDiff,
+  datePart,
+  dateTrunc,
+  denseRank,
+  div,
+  lag,
+  lead,
+  length,
+  mul,
+  type OffsetWindowOptions,
+  type OrderedWindowOptions,
+  rank,
+  sub,
+  substring,
+  trim,
+} from './functions.js';
+export {
   generateSchema,
   type IntrospectedColumn,
   type IntrospectedTable,
@@ -74,14 +104,18 @@ export {
 } from './introspection.js';
 export {
   deleteFrom,
+  deleteUsing,
   type FilteredMutation,
+  type InsertSource,
   type InsertValues,
   insert,
+  insertFrom,
   type MergeQuery,
   type MutationQuery,
   mergeInto,
   type UpdateValues,
   update,
+  updateFrom,
 } from './mutations.js';
 export { type SelectQuery, select } from './query.js';
 export {

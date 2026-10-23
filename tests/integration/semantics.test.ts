@@ -3,8 +3,12 @@ import * as z from 'zod';
 import {
   array,
   asc,
+  avg,
+  caseWhen,
   count,
   date,
+  dateAdd,
+  datePart,
   decimal,
   desc,
   eq,
@@ -186,6 +190,22 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
       .where(eq(d.embedding, d.embedding))
       .orderBy(asc(d.doc));
     expect((await db.execute(vectors)).rows).toEqual([{ id: 2n }, { id: 1n }, { id: 3n }]);
+  });
+
+  it('groups by expression helpers and compares their SQL types', async () => {
+    const year = datePart('year', c.day);
+    const grouped = select(facts, {
+      year,
+      mean: avg(c.amount),
+      size: caseWhen(gt(count(), 1n), 'many').else('one'),
+    }).groupBy(year);
+    expect((await db.execute(grouped)).rows).toEqual([
+      { year: 2024n, mean: '2.16666667', size: 'many' },
+    ]);
+    const shifted = select(facts, { id: c.id })
+      .where(lt(dateAdd('hour', 1n, c.day), c.at))
+      .orderBy(asc(c.id));
+    expect((await db.execute(shifted)).rows).toEqual([{ id: 3n }]);
   });
 
   it('assigns across compatible SQL types', async () => {
