@@ -6,6 +6,7 @@ description: Compose immutable, typed SELECT queries with joins, grouping, order
 import Snippet from '../../../components/Snippet.astro';
 import aliases from '../../../snippets/aliases.ts?raw';
 import derived from '../../../snippets/derived.ts?raw';
+import expressions from '../../../snippets/expressions.ts?raw';
 import firstQuery from '../../../snippets/first-query.ts?raw';
 import grouping from '../../../snippets/grouping.ts?raw';
 import joins from '../../../snippets/joins.ts?raw';
@@ -21,18 +22,33 @@ again replaces that clause on the new query.
 
 ## Expressions
 
-| Category    | Helpers                                                       |
-| ----------- | ------------------------------------------------------------- |
-| Comparison  | `eq`, `ne`, `gt`, `gte`, `lt`, `lte`                          |
-| Logic       | `and`, `or`, `not`                                            |
-| Nullability | `isNull`, `isNotNull`                                         |
-| Membership  | `inArray`                                                     |
-| Text        | `like`, `ilike`, `lower`, `upper`                             |
-| Aggregates  | `count`, `sum`, `min`, `max`                                  |
-| Ordering    | `asc`, `desc`, with optional `FIRST`/`LAST` null ordering     |
+| Category    | Helpers                                                                    |
+| ----------- | -------------------------------------------------------------------------- |
+| Comparison  | `eq`, `ne`, `gt`, `gte`, `lt`, `lte`                                       |
+| Logic       | `and`, `or`, `not`                                                         |
+| Nullability | `isNull`, `isNotNull`, `coalesce`                                          |
+| Membership  | `inArray`                                                                  |
+| Conditional | `caseWhen`                                                                 |
+| Text        | `like`, `ilike`, `lower`, `upper`, `concat`, `trim`, `length`, `substring` |
+| Arithmetic  | `add`, `sub`, `mul`, `div`                                                 |
+| Dates       | `dateTrunc`, `dateAdd`, `dateDiff`, `datePart`                             |
+| Conversion  | `cast`                                                                     |
+| Aggregates  | `count`, `sum`, `avg`, `min`, `max`                                        |
+| Ordering    | `asc`, `desc`, with optional `FIRST`/`LAST` null ordering                  |
 
 Literal values become bind parameters. An empty `inArray` list compiles to a constant false, or
 true for a negated membership test.
+
+<Snippet code={expressions} />
+
+Arithmetic keeps integer operands as `bigint`, except that integer division yields an exact
+decimal; any FLOAT operand yields `number`. Literal operands are bound and cast to the left
+operand's domain. `coalesce(value, ...fallbacks)` is non-null when any argument is non-null, and
+`caseWhen(predicate, value).when(...).else(value)` is nullable without `.else()`. COALESCE and CASE
+values share one domain. `cast(value, type)` converts to any scalar domain except VARIANT and
+BINARY (`'decimal'` takes precision and scale) and keeps the input's nullability. The date helpers
+take a lowercase date part and reject parts that do not apply to DATE or TIME inputs; adding a time
+part to a DATE yields TIMESTAMP_NTZ.
 
 ## Joins
 
