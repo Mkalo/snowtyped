@@ -273,7 +273,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       case 'identifier':
         return quoteIdentifier(node);
       case 'table':
-        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
+        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)}${node.temporal.selector === 'TIMESTAMP' ? '::TIMESTAMP_TZ' : ''})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
       case 'derived':
         return `(${selectStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
       case 'cte':
