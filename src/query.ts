@@ -9,6 +9,7 @@ import {
   type QueryNode,
   quoteIdentifier,
   type SelectNode,
+  type SelfReferenceNode,
   type SetOperationNode,
   type SetOperator,
   type SourceReference,
@@ -68,6 +69,31 @@ export type UnionRow<L, R> = { [K in keyof L]: L[K] | R[K & keyof R] };
 export type IntersectRow<L, R> = {
   [K in keyof L]: null extends R[K & keyof R] ? L[K] : Present<L[K]>;
 };
+type RecursiveMismatch<Contract, R> =
+  | Exclude<keyof Contract, keyof R>
+  | Exclude<keyof R, keyof Contract>
+  | {
+      [K in keyof Contract & keyof R]: [Present<R[K]>] extends [Present<Contract[K]>] ? never : K;
+    }[keyof Contract & keyof R];
+type UndeclaredNull<Contract, R> = {
+  [K in keyof Contract & keyof R]: null extends R[K]
+    ? null extends Contract[K]
+      ? never
+      : K
+    : never;
+}[keyof Contract & keyof R];
+/** The recursive branch must produce rows of the contract that its self-reference reads. */
+export type RecursiveOperand<Contract, R> = ([RecursiveMismatch<Contract, R>] extends [never]
+  ? unknown
+  : { readonly incompatibleRecursiveColumns: RecursiveMismatch<Contract, R> }) &
+  ([UndeclaredNull<Contract, R>] extends [never]
+    ? unknown
+    : { readonly undeclaredNullableColumns: UndeclaredNull<Contract, R> });
+export type RecursiveRow<Row, Nullable extends PropertyKey = never> = {
+  [K in keyof Row]: K extends Nullable ? Row[K] | null : Row[K];
+};
+export type RecursiveName<N extends string> =
+  N extends Uppercase<N> ? unknown : { readonly recursiveCteNamesMustBeUppercase: N };
 export type SetScope = '__sflib_result';
 export type SetColumns<Row, N extends string = SetScope> = {
   [K in keyof Row]: Column<Row[K], true, N>;
@@ -338,14 +364,17 @@ function hoist(node: QueryNode, ctes: CteNode[]): QueryNode {
   const { with: _, ...rest } = node;
   return Object.freeze(rest);
 }
+function resolveOperand(value: unknown, message: string): Operand {
+  const resolve = typeof value === 'object' && value !== null ? operands.get(value) : undefined;
+  if (!resolve) throw new TypeError(message);
+  return resolve();
+}
 function combine(
   operator: SetOperator,
   left: Operand,
   other: unknown,
 ): SetQuery<Record<string, unknown>> {
-  const resolve = typeof other === 'object' && other !== null ? operands.get(other) : undefined;
-  if (!resolve) throw new TypeError('Set operations combine queries built by select().');
-  const right = resolve();
+  const right = resolveOperand(other, 'Set operations combine queries built by select().');
   const keys = Object.keys(left.outputs);
   if (
     Object.keys(right.outputs).length !== keys.length ||
@@ -611,6 +640,133 @@ export function select(table: Table, selection: Selection = table.columns): Sele
   });
 }
 
+/** Collects self-references outside completed recursive CTEs, which validated their own. */
+function selfReferences(value: unknown, found: SelfReferenceNode[] = []): SelfReferenceNode[] {
+  if (typeof value !== 'object' || value === null) return found;
+  const node = value as { readonly kind?: unknown; readonly self?: unknown };
+  if (node.kind === 'self-reference') found.push(value as SelfReferenceNode);
+  else if (node.kind !== 'cte' || !node.self)
+    for (const item of Object.values(value)) selfReferences(item, found);
+  return found;
+}
+function mentions(value: unknown, test: (node: object) => boolean): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (test(value) || Object.values(value).some((item) => mentions(item, test)))
+  );
+}
+
+/**
+ * Defines `WITH RECURSIVE name (...) AS (anchor UNION ALL recursive)`. The anchor's projection
+ * is the row contract, widened by `nullable`; the recursive branch reads it through `self`.
+ */
+export function recursiveCte<
+  const N extends string,
+  A extends SetOperand,
+  Q extends SetOperand,
+  const Nullable extends keyof OperandRow<A> & string = never,
+>(
+  name: N & RecursiveName<N>,
+  anchor: A,
+  recursive: (
+    self: Table<SetColumns<RecursiveRow<OperandRow<A>, Nullable>, N>, N>,
+  ) => Q & RecursiveOperand<RecursiveRow<OperandRow<A>, Nullable>, OperandRow<Q>>,
+  options?: { readonly nullable?: readonly Nullable[] },
+): Table<SetColumns<RecursiveRow<OperandRow<A>, Nullable>, N>, N>;
+export function recursiveCte(
+  name: string,
+  anchor: unknown,
+  recursive: (self: Table) => unknown,
+  options: { readonly nullable?: readonly string[] } = {},
+): Table {
+  if (!/^[A-Z_][A-Z0-9_$]*$/.test(name))
+    throw new TypeError(
+      'Snowflake only recognizes recursive CTEs named with uppercase letters, digits, _ or $.',
+    );
+  const left = resolveOperand(anchor, 'A recursive CTE anchor must be built by select().');
+  if (selfReferences(left.ast).length)
+    throw new TypeError('A recursive CTE anchor cannot reference a recursive CTE being defined.');
+  // Snowflake fails internally when an anchor reads another recursive CTE.
+  if (
+    mentions(
+      left.ast,
+      (item) => (item as CteNode).kind === 'cte' && Boolean((item as CteNode).self),
+    )
+  )
+    throw new TypeError('A recursive CTE anchor cannot read another recursive CTE.');
+  const nullable = new Set(options.nullable);
+  for (const key of nullable)
+    if (!Object.hasOwn(left.outputs, key))
+      throw new TypeError(`Recursive CTE has no column ${key} to declare nullable.`);
+  const contract: Record<string, Output> = Object.fromEntries(
+    Object.entries(left.outputs).map(([key, output]) => [
+      key,
+      nullable.has(key) ? { ...output, nullable: true } : output,
+    ]),
+  );
+  const node = identifier(name);
+  const reference: SelfReferenceNode = Object.freeze({
+    kind: 'self-reference',
+    name: node,
+    columns: Object.freeze(Object.keys(contract)),
+  });
+  const columns = Object.fromEntries(
+    Object.entries(contract).map(([key, output]) => [key, outputColumn(key, output)]),
+  );
+  const self = bindTable(node, columns, reference, name);
+  const branch = recursive(self);
+  const right = resolveOperand(branch, 'A recursive branch must be built by select().');
+  const ast = right.ast;
+  if (ast.kind !== 'select') throw new TypeError('A recursive branch must be a single SELECT.');
+  if (
+    ast.distinct ||
+    ast.groupBy ||
+    ast.having ||
+    ast.qualify ||
+    ast.orderBy ||
+    ast.limit !== undefined ||
+    ast.offset !== undefined ||
+    Object.values(right.outputs).some((output) => output.source.phase !== 'scalar')
+  )
+    throw new TypeError('A recursive branch supports only scalar projections, filters, and joins.');
+  const found = selfReferences(ast);
+  if (found.some((item) => item !== reference))
+    throw new TypeError('A recursive branch can only reference its own CTE.');
+  const position = [ast.from, ...(ast.joins ?? []).map((join) => join.source)].indexOf(reference);
+  if (position < 0 || found.length !== 1)
+    throw new TypeError(
+      'A recursive branch must reference its CTE exactly once, directly in FROM or a join.',
+    );
+  let outer = false;
+  (ast.joins ?? []).forEach((join, index) => {
+    const at = index + 1;
+    if (join.kind === 'ASOF') throw new TypeError('A recursive branch cannot use ASOF joins.');
+    const outerJoin = join.kind === 'LEFT' || join.kind === 'RIGHT' || join.kind === 'FULL';
+    // Snowflake fails internally on inner joins that follow an outer join here.
+    if (outer && !outerJoin)
+      throw new TypeError('Outer joins must follow every other join in a recursive branch.');
+    outer = outerJoin;
+    if (
+      (join.kind === 'LEFT' && position === at) ||
+      (join.kind === 'RIGHT' && position < at) ||
+      (join.kind === 'FULL' && position <= at)
+    )
+      throw new TypeError('Outer joins must keep the recursive reference on the preserved side.');
+    if (join.kind === 'LATERAL' && mentions(join.source, (item) => item === self.ref))
+      throw new TypeError('FLATTEN cannot read the recursive reference.');
+  });
+  const query = combine('UNION ALL', left, branch).ast;
+  for (const [key, output] of Object.entries(right.outputs))
+    if (output.nullable && !(contract[key] as Output).nullable)
+      throw new TypeError(`Recursive branch column ${key} can be NULL; declare it nullable.`);
+  return bindTable(
+    node,
+    columns,
+    Object.freeze({ kind: 'cte', name: node, query, self: reference }),
+    name,
+  );
+}
 type IsSingle<K, All = K> = [K] extends [never]
   ? false
   : K extends unknown

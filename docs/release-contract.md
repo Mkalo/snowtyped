@@ -157,7 +157,6 @@ Not required for `1.0.0`; each can ship later as a minor release unless it
 changes stable behavior:
 - PIVOT and UNPIVOT (#10)
 - Stronger SQL semantic validation (#11)
-- Recursive CTEs (#12)
 - A public AST extension protocol (#13)
 - Nested selections and relation loading (#14)
 - MATCH_RECOGNIZE (#15)
