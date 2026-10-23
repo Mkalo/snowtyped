@@ -465,5 +465,47 @@ describe('DDL builders and schema diffs against Snowflake', () => {
         reason: 'Cannot change the DEFAULT from 1.5 to 2.5 in place.',
       },
     ]);
+
+    const spelled = (half: string) => ({
+      ...columns('1.50'),
+      half: decimal('HALF', { precision: 3, scale: 2 }).serverDefault(half),
+      five: float('FIVE').serverDefault('5.'),
+      negative: float('NEGATIVE').serverDefault('-.25'),
+      scaled: float('SCALED').serverDefault('5.e1'),
+      apostrophe: text('APOSTROPHE').notNull().serverDefault("'it\\'s'"),
+      dollar: text('DOLLAR').serverDefault("$$it's \\ ok$$"),
+    });
+    const v3 = defineSchema(defaulted, [snowflakeTable('DEFAULTS', spelled('.5'), defaulted)]);
+    expect(
+      (await pushSchema(db, v3)).changes.map((change) => change.statement.compile().sql),
+    ).toEqual([
+      `ALTER TABLE ${table.compile().sql} ADD COLUMN "HALF" NUMBER(3, 2) DEFAULT .5`,
+      `ALTER TABLE ${table.compile().sql} ADD COLUMN "FIVE" FLOAT DEFAULT 5.`,
+      `ALTER TABLE ${table.compile().sql} ADD COLUMN "NEGATIVE" FLOAT DEFAULT -.25`,
+      `ALTER TABLE ${table.compile().sql} ADD COLUMN "SCALED" FLOAT DEFAULT 5.e1`,
+      `ALTER TABLE ${table.compile().sql} ADD COLUMN "APOSTROPHE" VARCHAR DEFAULT 'it\\'s' NOT NULL`,
+      `ALTER TABLE ${table.compile().sql} ADD COLUMN "DOLLAR" VARCHAR DEFAULT $$it's \\ ok$$`,
+    ]);
+    expect(await checkDrift(db, v3)).toEqual({ changes: [], unsupported: [] });
+    expect(
+      await db.queryRaw(sql`SELECT HALF, FIVE, NEGATIVE, SCALED, APOSTROPHE, DOLLAR FROM ${table}`),
+    ).toEqual([
+      {
+        HALF: '0.50',
+        FIVE: '5',
+        NEGATIVE: '-0.25',
+        SCALED: '50',
+        APOSTROPHE: "it's",
+        DOLLAR: "it's \\ ok",
+      },
+    ]);
+    const v4 = defineSchema(defaulted, [snowflakeTable('DEFAULTS', spelled('.75'), defaulted)]);
+    expect((await checkDrift(db, v4)).unsupported).toEqual([
+      {
+        table: 'DEFAULTS',
+        column: 'HALF',
+        reason: 'Cannot change the DEFAULT from 0.5 to .75 in place.',
+      },
+    ]);
   });
 });

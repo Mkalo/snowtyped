@@ -993,14 +993,43 @@ describe('server values', () => {
       'SEQ: Adding an identity column to an existing table needs a rebuild.',
       'AT: Snowflake only accepts constant defaults when adding a column.',
     ]);
-    const constants = ['0', '-1.5e3', "'it''s'", 'TRUE', 'false', 'NULL', " 'x' "];
+    const constants = [
+      '0',
+      '-1.5e3',
+      '.5',
+      '-.5',
+      '5.',
+      '5.E+1',
+      "'it''s'",
+      "'it\\'s'",
+      "'a\\\\''b'",
+      "$$it's$$",
+      "$$a'\\$b$$",
+      'TRUE',
+      'false',
+      'NULL',
+      " 'x' ",
+    ];
     for (const expression of constants) {
       const entry = defineTable(
         snowflakeTable('EVENTS', { c: text('C').serverDefault(expression) }, target),
       );
       expect(sqlChanges(table([]), entry)).toHaveLength(1);
     }
-    for (const expression of ['1 + 1', "'a' || 'b'", 'CURRENT_DATE()', "'unterminated"]) {
+    const others = [
+      '1 + 1',
+      "'a' || 'b'",
+      'CURRENT_DATE()',
+      "'unterminated",
+      "'escaped\\'",
+      "'a''b''",
+      '.',
+      '-',
+      '5..',
+      '$$a$$ || $$b$$',
+      '$$a$$$',
+    ];
+    for (const expression of others) {
       const entry = defineTable(
         snowflakeTable('EVENTS', { c: text('C').serverDefault(expression) }, target),
       );
@@ -1093,6 +1122,17 @@ describe('server values', () => {
       ['FALSE', 'TRUE'],
       ['NULL', "'x'"],
       ["'x'", 'UPPER(Y)'],
+      ['.5', '0.5'],
+      ['-.5', '-0.5'],
+      ['5.', '5'],
+      ['5.e1', '50'],
+      ["'it\\'s'", "'it''s'"],
+      ["$$it's$$", "'it''s'"],
+      ["'\\''''", "''''''"],
+      ["'a\\\\''b'", "'a\\\\''b'"],
+      ['.25', '0.5'],
+      ['$$a\\b$$', "'a\\\\b'"],
+      ["'it\\'s'", "'its'"],
     ];
     const entries = pairs.map(([expression], index) => [
       `c${index}`,
@@ -1112,6 +1152,8 @@ describe('server values', () => {
       'C20: Cannot change the DEFAULT from 0.10000000000000001 to 0.1 in place.',
       'C21: Cannot change the DEFAULT from TRUE to FALSE in place.',
       "C22: Cannot change the DEFAULT from 'x' to NULL in place.",
+      'C32: Cannot change the DEFAULT from 0.5 to .25 in place.',
+      "C34: Cannot change the DEFAULT from 'its' to 'it\\'s' in place.",
     ]);
   });
 
