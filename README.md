@@ -177,7 +177,7 @@ try {
 }
 ```
 
-Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
+Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. Pooled calls reject an already-aborted signal before leasing; otherwise `signal` and `timeoutMs` apply once a connection is acquired, and waiting for a connection is bounded only by `acquireTimeoutMillis`. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
 
 Raw options require a `sql` query value; direct tagged templates take no options. Abort/deadline cancellation waits for the SDK's cancellation callback before releasing a request. Stopping consumption after a query has completed destroys the row stream; it does not attempt to cancel an already-completed server statement.
 

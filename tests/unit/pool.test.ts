@@ -106,7 +106,7 @@ describe('SDK-backed pool leases', () => {
     await other.close();
   });
 
-  it('applies raw query options on a lease and releases only after cancellation completes', async () => {
+  it('rejects aborted calls before leasing and releases only after cancellation completes', async () => {
     const driver = fakePool();
     const db = await createPool({});
     const controller = new AbortController();
@@ -120,7 +120,19 @@ describe('SDK-backed pool leases', () => {
     const reason = new Error('stop');
     controller.abort(reason);
     await expect(db.queryRaw(sql`SELECT 1`, { signal: controller.signal })).rejects.toBe(reason);
-    expect(driver.release).toHaveBeenCalledTimes(2);
+    await expect(db.execute(select(table), { signal: controller.signal })).rejects.toBe(reason);
+    await expect(async () => {
+      for await (const _row of db.stream(select(table), { signal: controller.signal })) {
+        /* consume */
+      }
+    }).rejects.toBe(reason);
+    await expect(async () => {
+      for await (const _row of db.streamRaw(sql`SELECT 1`, { signal: controller.signal })) {
+        /* consume */
+      }
+    }).rejects.toBe(reason);
+    expect(driver.acquire).toHaveBeenCalledOnce();
+    expect(driver.release).toHaveBeenCalledOnce();
     let cancelled: ((error?: SnowflakeError) => void) | undefined;
     let complete: StatementOption['complete'];
     const statement = {
@@ -137,15 +149,15 @@ describe('SDK-backed pool leases', () => {
     await vi.waitFor(() => expect(statement.cancel).toHaveBeenCalledOnce());
     complete?.(undefined, statement, []);
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(driver.release).toHaveBeenCalledTimes(2);
+    expect(driver.release).toHaveBeenCalledOnce();
     cancelled?.();
     await expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
-    expect(driver.release).toHaveBeenCalledTimes(3);
+    expect(driver.release).toHaveBeenCalledTimes(2);
     const failing = db.queryRaw(sql`SELECT SYSTEM$WAIT(10)`, { timeoutMs: 1 });
     await vi.waitFor(() => expect(statement.cancel).toHaveBeenCalledTimes(2));
     cancelled?.(new Error('cancel failed') as SnowflakeError);
     await expect(failing).rejects.toBeInstanceOf(AggregateError);
-    expect(driver.release).toHaveBeenCalledTimes(4);
+    expect(driver.release).toHaveBeenCalledTimes(3);
     await db.close();
     await expect(db.queryRaw(sql`SELECT 1`, { timeoutMs: 1000 })).rejects.toThrow('closed');
   });

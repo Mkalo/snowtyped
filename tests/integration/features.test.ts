@@ -315,7 +315,7 @@ describe('complete query and execution paths against Snowflake', () => {
     const cancelled = sql`
       SELECT QUERY_TEXT, ERROR_CODE
       FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION())
-      WHERE QUERY_TEXT LIKE 'SELECT SYSTEM$WAIT(10) AS RAW\\_%'
+      WHERE QUERY_TEXT LIKE 'SELECT SYSTEM$WAIT(10) AS RAW!_%' ESCAPE '!'
       ORDER BY QUERY_TEXT
     `;
     const started = Date.now();
