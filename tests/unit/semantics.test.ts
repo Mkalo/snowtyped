@@ -53,6 +53,7 @@ import {
   or,
   over,
   rank,
+  recursiveCte,
   rowNumber,
   select,
   snowflakeTable,
@@ -536,5 +537,21 @@ describe('expression helpers', () => {
     expect(() => select(t, { value: c.id }).except(loose(select(t, { value: c.amount })))).toThrow(
       'INTEGER and DECIMAL',
     );
+  });
+
+  it('keep SQL types through recursive CTEs', () => {
+    const anchor = select(t, { id: c.id, day: c.day }).where(eq(c.id, 1n));
+    const days = recursiveCte('DAYS', anchor, (self) =>
+      select(self, { id: add(self.columns.id, 1n), day: self.columns.day }).where(
+        lt(self.columns.id, 3n),
+      ),
+    );
+    expect(days.columns.day.dataType).toBe('date');
+    expect(lt(days.columns.day, c.tz).dataType).toBe('boolean');
+    expect(() =>
+      recursiveCte('BAD', anchor, (self) =>
+        loose(select(self, { id: self.columns.id, day: cast(self.columns.day, 'timestamp_ntz') })),
+      ),
+    ).toThrow('Set operation column day combines different domains: DATE and TIMESTAMP_NTZ.');
   });
 });

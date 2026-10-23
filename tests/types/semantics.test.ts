@@ -40,6 +40,7 @@ import {
   object,
   over,
   rank,
+  recursiveCte,
   rowNumber,
   select,
   snowflakeTable,
@@ -239,3 +240,15 @@ eq(days.columns.value, c.name);
 select(t, { value: c.name }).union(select(t, { value: c.day }));
 // @ts-expect-error Set operation branches need the same SQL type per column.
 days.except(select(t, { value: c.ntz }));
+
+const recursiveDays = recursiveCte('DAYS', select(t, { id: c.id, day: c.day }), (self) =>
+  select(self, { id: add(self.columns.id, 1n), day: self.columns.day }),
+);
+expectTypeOf(recursiveDays.columns.day.dataType).toEqualTypeOf<'date'>();
+lt(recursiveDays.columns.day, c.tz);
+// @ts-expect-error Recursive CTE columns keep their SQL type.
+eq(recursiveDays.columns.day, c.name);
+recursiveCte('BAD', select(t, { id: c.id, day: c.day }), (self) =>
+  // @ts-expect-error The recursive branch must keep each column's SQL type.
+  select(self, { id: self.columns.id, day: cast(self.columns.day, 'timestamp_ntz') }),
+);

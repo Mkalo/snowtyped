@@ -14,7 +14,7 @@ const expected = {
       dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div eq
       flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
       integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte max
-      mergeInto min mul ne not object or over rangeBetween rank rowNumber rowsBetween select
+      mergeInto min mul ne not object or over rangeBetween rank recursiveCte rowNumber rowsBetween select
       snowflakeTable sql sub substring sum text time timeTravel timestamp trim update
       updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
@@ -26,12 +26,12 @@ const expected = {
       GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
       InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
       MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering Predicate
-      RangeBoundary RawQuery SelectQuery Selection ServerValue ServerValueKind ServerValues
+      RangeBoundary RawQuery RecursiveName RecursiveOperand RecursiveRow SelectQuery Selection ServerValue ServerValueKind ServerValues
       SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation SqlParameter Table
       TableOptions UnionRow UpdateValues WindowFrame`,
       `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
       FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode
-      MergeNode OrderNode QueryNode RelationNode SelectNode SetOperationNode SourceReference
+      MergeNode OrderNode QueryNode RelationNode SelectNode SelfReferenceNode SetOperationNode SourceReference
       StatementNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
     ),
   },

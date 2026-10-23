@@ -28,6 +28,11 @@ export const target = snowflakeTable('CUSTOMERS', {
   id: integer('ID').notNull(),
   name: text('NAME').notNull(),
 });
+export const employees = snowflakeTable('EMPLOYEES', {
+  id: integer('ID').notNull(),
+  managerId: integer('MANAGER_ID'),
+  name: text('NAME').notNull(),
+});
 export const staged = snowflakeTable('STAGED_CUSTOMERS', {
   id: integer('ID').notNull(),
   name: text('NAME').notNull(),
