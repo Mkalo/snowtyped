@@ -18,10 +18,10 @@ this section.
   builders (`text`, `integer`, `decimal`, `float`, `boolean`, `date`, `time`,
   `timestamp`, `binary`, `variant`), and `.notNull()`.
 - Query construction: `select` and the `SelectQuery` methods documented in the
-  README, `flatten`, `pivot`, `unpivot`, `dynamicPivot`, the expression,
-  aggregate, window, and ordering helpers, `insert`, `insertFrom`, `update`,
-  `updateFrom`, `deleteFrom`, `deleteUsing`, and `mergeInto` with its
-  conditional branches.
+  README, `flatten`, `pivot`, `unpivot`, `dynamicPivot`, `matchRecognize` with
+  `rowPattern`, the expression, aggregate, window, and ordering helpers,
+  `insert`, `insertFrom`, `update`, `updateFrom`, `deleteFrom`, `deleteUsing`,
+  and `mergeInto` with its conditional branches.
 - `.compile()` results (`CompiledQuery`, `BindValue`); the bound values and SQL
   semantics are stable, the exact SQL text is not.
 - Raw SQL: `sql`, `sql.identifier`, `sql.join`, `sql.json`, `sql.unsafe`,
@@ -159,7 +159,6 @@ changes stable behavior:
 - Stronger SQL semantic validation (#11)
 - A public AST extension protocol (#13)
 - Nested selections and relation loading (#14)
-- MATCH_RECOGNIZE (#15)
 - DDL builders and migrations (#16)
 
 In progress and not yet part of this contract: constraints and additional type codecs (#5). It

@@ -43,6 +43,7 @@ import {
   like,
   lower,
   lt,
+  matchRecognize,
   max,
   mergeInto,
   min,
@@ -56,6 +57,7 @@ import {
   rank,
   recursiveCte,
   rowNumber,
+  rowPattern,
   select,
   snowflakeTable,
   sum,
@@ -603,5 +605,49 @@ describe('expression helpers', () => {
     expect(() => unpivot(sales, 'X', { value: 'n', for: 'slot', in: ['amount', 'ratio'] })).toThrow(
       'UNPIVOT columns must share one type.',
     );
+  });
+
+  it('keep SQL types through MATCH_RECOGNIZE', () => {
+    const prices = snowflakeTable('PRICES', {
+      company: text('COMPANY').notNull(),
+      day: date('DAY').notNull(),
+      price: decimal('PRICE').notNull(),
+      flag: variant('FLAG'),
+      place: geography('PLACE'),
+    });
+    const up = rowPattern.variable('up');
+    const matched = matchRecognize(prices, 'M', {
+      partitionBy: ['company'],
+      orderBy: (row) => [asc(row.day)],
+      pattern: rowPattern.oneOrMore(up),
+      define: ({ row, lag }) => ({ up: gt(row.price, lag(row.price)) }),
+      measures: ({ row, vars, last, count, classifier }) => ({
+        lastDay: last(row.day),
+        peak: last(vars.up.price),
+        n: count(),
+        label: classifier(),
+      }),
+    });
+    expect(matched.columns.lastDay.dataType).toBe('date');
+    expect(matched.columns.peak.dataType).toBe('decimal');
+    expect(matched.columns.n.dataType).toBe('integer');
+    expect(matched.columns.label.dataType).toBe('text');
+    expect(lt(matched.columns.lastDay, c.tz).dataType).toBe('boolean');
+    expect(() =>
+      matchRecognize(prices, 'B', {
+        orderBy: (row) => [asc(row.day)],
+        pattern: up,
+        define: ({ row }) => ({ up: loose(row.flag) }),
+        measures: ({ count }) => ({ n: count() }),
+      }),
+    ).toThrow('DEFINE requires a BOOLEAN predicate, not VARIANT.');
+    expect(() =>
+      matchRecognize(prices, 'G', {
+        partitionBy: loose(['place']),
+        orderBy: (row) => [asc(row.day)],
+        pattern: up,
+        measures: ({ count }) => ({ n: count() }),
+      }),
+    ).toThrow('PARTITION BY does not accept GEOGRAPHY expressions.');
   });
 });

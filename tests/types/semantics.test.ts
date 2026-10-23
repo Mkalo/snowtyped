@@ -34,6 +34,7 @@ import {
   like,
   lower,
   lt,
+  matchRecognize,
   max,
   mergeInto,
   min,
@@ -43,6 +44,7 @@ import {
   rank,
   recursiveCte,
   rowNumber,
+  rowPattern,
   select,
   snowflakeTable,
   sum,
@@ -274,3 +276,35 @@ expectTypeOf(unpivoted.columns.day.dataType).toEqualTypeOf<'date'>();
 expectTypeOf(unpivoted.columns.slot.dataType).toEqualTypeOf<'text'>();
 // @ts-expect-error UNPIVOT values keep their SQL type.
 eq(unpivoted.columns.day, c.name);
+
+const ticks = snowflakeTable('TICKS', {
+  sym: text('SYM').notNull(),
+  day: date('DAY').notNull(),
+  price: decimal('PRICE').notNull(),
+  place: geography('PLACE'),
+});
+const rise = rowPattern.variable('rise');
+const matches = matchRecognize(ticks, 'M', {
+  partitionBy: ['sym'],
+  orderBy: (row) => [asc(row.day)],
+  pattern: rowPattern.oneOrMore(rise),
+  define: ({ row, lag }) => ({ rise: gt(row.price, lag(row.price)) }),
+  measures: ({ row, last, count }) => ({ lastDay: last(row.day), n: count() }),
+});
+expectTypeOf(matches.columns.lastDay.dataType).toEqualTypeOf<'date'>();
+expectTypeOf(matches.columns.n.dataType).toEqualTypeOf<'integer'>();
+lt(matches.columns.lastDay, c.tz);
+// @ts-expect-error MATCH_RECOGNIZE measures keep their SQL type.
+eq(matches.columns.lastDay, c.name);
+matchRecognize(ticks, 'D', {
+  pattern: rise,
+  // @ts-expect-error DEFINE predicates must be BOOLEAN.
+  define: ({ row }) => ({ rise: row.price }),
+  measures: ({ count }) => ({ n: count() }),
+});
+matchRecognize(ticks, 'P', {
+  // @ts-expect-error GEOGRAPHY cannot be a PARTITION BY key.
+  partitionBy: ['place'],
+  pattern: rise,
+  measures: ({ count }) => ({ n: count() }),
+});

@@ -21,10 +21,12 @@ import {
   jsonPath,
   lower,
   lt,
+  matchRecognize,
   object,
   over,
   pivot,
   rowNumber,
+  rowPattern,
   select,
   snowflakeTable,
   sql,
@@ -237,6 +239,20 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
       lt(latest.columns.lower, dateAdd('hour', 1n, latest.columns.upper)),
     );
     expect((await db.execute(query)).rows).toEqual([{ lower: '2024-01-02', upper: '2024-01-03' }]);
+  });
+
+  it('keeps SQL types through MATCH_RECOGNIZE', async () => {
+    const up = rowPattern.variable('up');
+    const rising = matchRecognize(facts, 'RISING', {
+      orderBy: (row) => [asc(row.id)],
+      pattern: rowPattern.oneOrMore(up),
+      define: ({ row, lag }) => ({ up: gt(row.amount, lag(row.amount)) }),
+      measures: ({ row, last }) => ({ lastDay: last(row.day) }),
+    });
+    const query = select(rising).where(
+      gt(dateAdd('hour', 1n, rising.columns.lastDay), rising.columns.lastDay),
+    );
+    expect((await db.execute(query)).rows).toEqual([{ lastDay: '2024-01-03' }]);
   });
 
   it('assigns across compatible SQL types', async () => {
