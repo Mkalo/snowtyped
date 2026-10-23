@@ -1,0 +1,40 @@
+---
+title: Testing
+description: Test query construction offline, assert inferred types, and run live Snowflake tests.
+---
+
+import Snippet from '../../../components/Snippet.astro';
+import ast from '../../../snippets/ast.test.ts?raw';
+import compile from '../../../snippets/compile.test.ts?raw';
+import typeAssertions from '../../../snippets/type-assertions.ts?raw';
+
+## Compiled SQL
+
+Every structured query and mutation has a `compile()` method that returns `{ sql, binds }` without
+touching Snowflake, and so do raw `sql` fragments. Use it for fast, credential-free unit tests.
+
+<Snippet code={compile} title="customers.test.ts" />
+
+The AST behind a query is public too. `compileAst(query.ast)` produces the same output as
+`query.compile()`, and `identifier(...parts)` with `quoteIdentifier(node)` produces Snowtyped's exact
+identifier quoting.
+
+<Snippet code={ast} />
+
+## Inferred types
+
+Type-level assertions catch accidental changes to result types. With Vitest's `expectTypeOf`, the
+assertions run during type checking.
+
+<Snippet code={typeAssertions} />
+
+## Live Snowflake tests
+
+Behavior that depends on Snowflake itself, such as decoding, privileges, or time travel retention,
+needs a real account. Give tests a dedicated role and database, have each run create its own
+uniquely named schema, and drop only the schemas that run created. Live tests consume Snowflake
+credits.
+
+Snowtyped's own integration suite follows this pattern. See the
+[Snowflake setup guide](/project/contributing/#integration-tests) for the account, role, and key-pair
+configuration it uses.
