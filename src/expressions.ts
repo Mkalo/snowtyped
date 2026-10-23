@@ -59,15 +59,21 @@ export function expression<T, S extends string = never, N extends string = S>(
     },
   });
 }
-function decimalKey(text: string): string {
+/** Normalized significant digits and exponent of a JSON number, with the digit count. */
+function decimal(text: string): readonly [key: string, digits: number] {
   const [, sign, whole, fraction = '', exponent = '0'] =
     /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text) as RegExpExecArray;
   const digits = `${whole}${fraction}`.replace(/^0+/, '');
   const significant = digits.replace(/0+$/, '');
-  if (!significant) return '0';
-  return `${sign}${significant}e${Number(exponent) - fraction.length + digits.length - significant.length}`;
+  if (!significant) return ['0', 1];
+  const scale = Number(exponent) - fraction.length + digits.length - significant.length;
+  return [`${sign}${significant}e${scale}`, significant.length];
 }
-/** Rejects JSON numbers that would lose digits as a JavaScript number instead of rounding them. */
+/**
+ * Rejects JSON numbers whose text carries digits a JavaScript number cannot hold, instead of
+ * rounding them. Text is accepted when it is the decoded double correctly rounded to the text's
+ * own precision, which covers both shortest spellings and Snowflake's 16-digit DOUBLE output.
+ */
 export const jsonText = () =>
   z.string().transform((input, context) => {
     try {
@@ -78,7 +84,8 @@ export const jsonText = () =>
       return JSON.parse(text, (_key, value: unknown, parsed?: { readonly source: string }) => {
         if (typeof value !== 'number') return value;
         const { source } = parsed as { readonly source: string };
-        if (!Number.isFinite(value) || decimalKey(source) !== decimalKey(String(value)))
+        const [key, digits] = decimal(source);
+        if (!Number.isFinite(value) || key !== decimal(value.toPrecision(Math.min(digits, 100)))[0])
           throw new RangeError(`JSON number ${source} does not fit a JavaScript number exactly.`);
         return value;
       }) as unknown;
