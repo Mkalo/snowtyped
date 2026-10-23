@@ -7,7 +7,15 @@ import {
   type SelectNode,
   type UnpivotNode,
 } from './ast.js';
-import { type AnyExpression, count, expression, max, min, sum } from './expressions.js';
+import {
+  type AnyExpression,
+  count,
+  type ExpressionDataType,
+  expression,
+  max,
+  min,
+  sum,
+} from './expressions.js';
 import { derivedServerValue, select } from './query.js';
 import {
   type AnyColumn,
@@ -27,6 +35,13 @@ export type PivotValue<A extends PivotAggregate, C> = A extends 'count'
   : A extends 'sum'
     ? string
     : NonNullable<InferColumn<C>>;
+type PivotType<A extends PivotAggregate, C> = A extends 'count'
+  ? 'integer'
+  : A extends 'sum'
+    ? 'decimal'
+    : C extends AnyColumn
+      ? ExpressionDataType<C>
+      : DataType;
 type Key<C> = keyof C & string;
 type Collisions<T, Taken> = { readonly [K in Extract<keyof T, Taken>]: never };
 
@@ -58,7 +73,10 @@ export type PivotColumns<
 > = Omit<C, V | F> & {
   readonly [K in keyof In]: Column<
     PivotValue<A, C[V]>,
-    A extends 'count' ? true : [D] extends [undefined] ? false : true
+    A extends 'count' ? true : [D] extends [undefined] ? false : true,
+    string,
+    'none',
+    PivotType<A, C[V]>
   >;
 };
 export interface UnpivotOptions<
@@ -74,17 +92,23 @@ export interface UnpivotOptions<
   readonly in: In;
   readonly includeNulls?: I;
 }
-type UnpivotValue<U, I extends boolean> = I extends true
-  ? Column<NonNullable<U>, null extends U ? false : true>
-  : Column<NonNullable<U>, true>;
+type UnpivotValue<U, I extends boolean, T extends DataType> = I extends true
+  ? Column<NonNullable<U>, null extends U ? false : true, string, 'none', T>
+  : Column<NonNullable<U>, true, string, 'none', T>;
 export type UnpivotColumns<
   C extends ColumnMap,
   In extends readonly Key<C>[],
   V extends string,
   F extends string,
   I extends boolean,
-> = Omit<C, In[number]> & { readonly [K in V]: UnpivotValue<InferColumn<C[In[number]]>, I> } & {
-  readonly [K in F]: Column<In[number], true>;
+> = Omit<C, In[number]> & {
+  readonly [K in V]: UnpivotValue<
+    InferColumn<C[In[number]]>,
+    I,
+    C[In[number]] extends AnyColumn ? ExpressionDataType<C[In[number]]> : DataType
+  >;
+} & {
+  readonly [K in F]: Column<In[number], true, string, 'none', 'text'>;
 };
 
 function nonNull<T>(schema: z.ZodType<T>): z.ZodType<T> {
@@ -118,6 +142,7 @@ function output(
 ): AnyColumn {
   const node = identifier(key);
   const result = expression(node, nullable ? read : nonNull(read), {
+    dataType,
     valueSchema: nullable ? value : nonNull(value),
     ...(base.wireType ? { wireType: base.wireType } : {}),
     encode: (parsed: unknown) => base.encode(parsed),
@@ -126,7 +151,6 @@ function output(
     ...result,
     ...derived(result.encode),
     node,
-    dataType,
     required: !nullable,
     notNull: () => output(key, base, dataType, false, read, value) as Column<unknown, true>,
   });
@@ -160,15 +184,15 @@ function aggregation(
   let aggregate: AnyExpression;
   switch (options.aggregate) {
     case 'sum':
-      if (!['integer', 'decimal', 'float'].includes(value.wireType as string))
+      if (!['integer', 'decimal', 'float'].includes(value.dataType))
         throw new TypeError('PIVOT sum requires a numeric value column.');
-      aggregate = sum(value as Column<string>);
+      aggregate = sum(value as never);
       break;
     case 'min':
-      aggregate = min(value);
+      aggregate = min(value as never);
       break;
     case 'max':
-      aggregate = max(value);
+      aggregate = max(value as never);
       break;
     case 'count':
       aggregate = count(value);
@@ -326,8 +350,7 @@ export function unpivot(
     throw new TypeError('UNPIVOT columns must be distinct.');
   const values = options.in.map((key) => column(source, key, 'UNPIVOT'));
   const first = values[0] as AnyColumn;
-  const domain = (value: AnyColumn) => value.wireType ?? value.dataType;
-  if (values.some((value) => domain(value) !== domain(first)))
+  if (values.some((value) => value.dataType !== first.dataType))
     throw new TypeError('UNPIVOT columns must share one type.');
   const groups = Object.entries(source.columns).filter(([key]) => !options.in.includes(key));
   const taken = new Set(groups.map(([key]) => key));
@@ -338,6 +361,7 @@ export function unpivot(
   const read = union(values.map((value) => value.readSchema));
   const valueSchema = union(values.map((value) => value.valueSchema));
   const base = expression(identifier(options.value), read, {
+    dataType: first.dataType,
     valueSchema,
     ...(first.wireType ? { wireType: first.wireType } : {}),
     encode: (parsed: unknown) =>
@@ -346,12 +370,11 @@ export function unpivot(
       ),
   });
   const keys = z.enum(options.in as [string, ...string[]]);
-  const tag = expression(identifier(options.for), keys);
+  const tag = expression(identifier(options.for), keys, { dataType: 'text' });
   const label: AnyColumn = Object.freeze({
     ...tag,
     ...derived(tag.encode),
     node: identifier(options.for),
-    dataType: 'text',
     required: true,
     notNull: () => label as Column<unknown, true>,
   });

@@ -9,13 +9,18 @@ import {
 } from './ast.js';
 import {
   type AnyExpression,
+  assertNotType,
+  assertPredicate,
   type Expression,
+  type ExpressionDataType,
   type ExpressionScope,
   expression,
   type InferExpression,
   type Ordering,
   type Predicate,
+  type SpatialType,
   scalarParameter,
+  spatialTypes,
 } from './expressions.js';
 import { derivedServerValue, select } from './query.js';
 import {
@@ -225,16 +230,22 @@ export type MatchRowScope<N extends string> = `${N}.*`;
 export type MatchVariableScope<N extends string, V extends string> = `${N}.${V}`;
 type RowExpression<N extends string> = Expression<unknown, MatchRowScope<N>, string>;
 
+type Navigated<T, N extends string, E extends AnyExpression> = Expression<
+  T,
+  MatchRowScope<N>,
+  MatchRowScope<N>,
+  ExpressionDataType<E>
+>;
 export interface Navigation<N extends string> {
   <E extends RowExpression<N>>(
     value: E,
     offset?: number,
-  ): Expression<InferExpression<E> | null, MatchRowScope<N>>;
+  ): Navigated<InferExpression<E> | null, N, E>;
   <E extends RowExpression<N>>(
     value: E,
     offset: number,
     fallback: NonNullable<NoInfer<InferExpression<E>>>,
-  ): Expression<InferExpression<E>, MatchRowScope<N>>;
+  ): Navigated<InferExpression<E>, N, E>;
 }
 export interface DefineContext<C extends ColumnMap, N extends string> {
   /** The row being classified. */
@@ -242,7 +253,7 @@ export interface DefineContext<C extends ColumnMap, N extends string> {
   readonly lag: Navigation<N>;
   readonly lead: Navigation<N>;
   readonly next: Navigation<N>;
-  last<E extends RowExpression<N>>(value: E): Expression<InferExpression<E>, MatchRowScope<N>>;
+  last<E extends RowExpression<N>>(value: E): Navigated<InferExpression<E>, N, E>;
 }
 export interface MeasureContext<C extends ColumnMap, N extends string, V extends string> {
   readonly row: BoundColumns<C, MatchRowScope<N>>;
@@ -256,25 +267,39 @@ export interface MeasureContext<C extends ColumnMap, N extends string, V extends
     value: E,
   ): Expression<
     InferExpression<E> | (ExpressionScope<E> extends MatchRowScope<N> ? never : null),
-    ExpressionScope<E>
+    ExpressionScope<E>,
+    ExpressionScope<E>,
+    ExpressionDataType<E>
   >;
   last<E extends Expression<unknown, MatchRowScope<N> | MatchVariableScope<N, V>, string>>(
     value: E,
   ): Expression<
     InferExpression<E> | (ExpressionScope<E> extends MatchRowScope<N> ? never : null),
-    ExpressionScope<E>
+    ExpressionScope<E>,
+    ExpressionScope<E>,
+    ExpressionDataType<E>
   >;
   /** Evaluates over the whole match; required for variable columns in ALL ROWS PER MATCH. */
   final<E extends AnyExpression>(value: E): E;
   /** Evaluates up to the current row; ALL ROWS PER MATCH only. */
   running<E extends AnyExpression>(value: E): E;
-  count(): Expression<bigint, MatchRowScope<N>, never>;
-  count<K extends V>(variable: K): Expression<bigint, MatchVariableScope<N, K>, never>;
-  matchNumber(): Expression<bigint, MatchRowScope<N>, never>;
-  matchSequenceNumber(): Expression<bigint, MatchRowScope<N>, never>;
-  classifier(): Expression<V, MatchRowScope<N>, never>;
+  count(): Expression<bigint, MatchRowScope<N>, never, 'integer'>;
+  count<K extends V>(variable: K): Expression<bigint, MatchVariableScope<N, K>, never, 'integer'>;
+  matchNumber(): Expression<bigint, MatchRowScope<N>, never, 'integer'>;
+  matchSequenceNumber(): Expression<bigint, MatchRowScope<N>, never, 'integer'>;
+  classifier(): Expression<V, MatchRowScope<N>, never, 'text'>;
 }
-type MeasureColumn<T> = Column<NonNullable<T>, null extends T ? false : true>;
+type MeasureColumn<T, D extends DataType> = Column<
+  NonNullable<T>,
+  null extends T ? false : true,
+  string,
+  'none',
+  D
+>;
+/** Snowflake rejects GEOGRAPHY and GEOMETRY partition keys. */
+export type PartitionKey<C extends ColumnMap> = {
+  [K in keyof C & string]: ExpressionDataType<C[K]> extends SpatialType ? never : K;
+}[keyof C & string];
 type NullableMeasures<R extends RowsPerMatch, E extends boolean> = R extends 'all-with-unmatched'
   ? true
   : R extends 'all-omit-empty'
@@ -288,7 +313,8 @@ export type MatchRecognizeColumns<
   E extends boolean,
 > = (R extends 'one' ? Pick<C, P> : C) & {
   readonly [K in keyof M]: MeasureColumn<
-    InferExpression<M[K]> | (NullableMeasures<R, E> extends true ? null : never)
+    InferExpression<M[K]> | (NullableMeasures<R, E> extends true ? null : never),
+    M[K] extends AnyExpression ? ExpressionDataType<M[K]> : DataType
   >;
 };
 type Collisions<T, Taken> = { readonly [K in Extract<keyof T, Taken>]: never };
@@ -342,12 +368,12 @@ function measured(key: string, value: AnyExpression, nullable: boolean): AnyColu
   const node = identifier(key);
   const column: AnyColumn = Object.freeze({
     ...expression(node, nullable ? value.readSchema.nullable() : value.readSchema, {
+      dataType: value.dataType,
       valueSchema: nullable ? value.valueSchema.nullable() : value.valueSchema,
       ...(value.wireType ? { wireType: value.wireType } : {}),
       encode: (parsed: unknown) => value.encode(parsed),
     }),
     node,
-    dataType: (('dataType' in value ? value.dataType : value.wireType) ?? 'text') as DataType,
     required: true,
     constraints: Object.freeze({}),
     serverValue: null,
@@ -379,7 +405,7 @@ export function matchRecognize<
   const N extends string,
   V extends string,
   E extends boolean,
-  const P extends readonly (keyof C & string)[] = [],
+  const P extends readonly PartitionKey<C>[] = [],
   D extends Readonly<Record<string, Predicate<MatchRowScope<N>>>> = Record<never, never>,
   M extends Readonly<
     Record<string, Expression<unknown, MatchRowScope<N> | MatchVariableScope<N, V>, string>>
@@ -482,6 +508,7 @@ export function matchRecognize(
       },
       nullable ? value.readSchema.nullable() : value.readSchema,
       {
+        dataType: value.dataType,
         valueSchema: nullable ? value.valueSchema.nullable() : value.valueSchema,
         refs: options.measure ? [...value.refs, measureRef] : value.refs,
         ...(value.wireType ? { wireType: value.wireType } : {}),
@@ -504,7 +531,14 @@ export function matchRecognize(
       measure,
     });
   function counter(name: string, refs: readonly SourceReference[], args: ExpressionNode[] = []) {
-    return expression<bigint>({ kind: 'function', name, args: Object.freeze(args) }, bigintText(), {
+    const node: ExpressionNode = {
+      kind: 'function',
+      name,
+      args: Object.freeze(args),
+      ...(name === 'COUNT' ? { role: 'aggregate' as const } : {}),
+    };
+    return expression<bigint>(node, bigintText(), {
+      dataType: 'integer',
       valueSchema: z.bigint(),
       refs,
       phase: name === 'COUNT' ? 'aggregate' : 'scalar',
@@ -524,6 +558,7 @@ export function matchRecognize(
       { kind: 'semantics', mode, value: value.expression },
       value.readSchema,
       {
+        dataType: value.dataType,
         valueSchema: value.valueSchema,
         refs: [...value.refs, measureRef],
         nullRefs: value.nullRefs,
@@ -557,6 +592,7 @@ export function matchRecognize(
   for (const [variable, predicate] of defined) {
     if (!variableRefs.has(variable))
       throw new TypeError(`DEFINE names a variable missing from the pattern: ${variable}`);
+    assertPredicate(predicate, 'DEFINE');
     if (predicate.phase !== 'scalar' || predicate.refs.some((ref) => ref !== rowRef))
       throw new TypeError('DEFINE accepts only row columns with LAG, LEAD, NEXT, or LAST.');
   }
@@ -598,6 +634,7 @@ export function matchRecognize(
               return variable;
             }),
             {
+              dataType: 'text',
               valueSchema: z.enum(variables as [string, ...string[]]),
               refs: [measureRef],
               nullRefs: [],
@@ -620,6 +657,7 @@ export function matchRecognize(
   for (const key of partitionBy) {
     if (!Object.hasOwn(source.columns, key))
       throw new TypeError(`Unknown partition column: ${key}`);
+    assertNotType(source.columns[key] as AnyColumn, spatialTypes, 'PARTITION BY');
     claim(taken, key, 'partition');
   }
   if (rows === 'one' && !partitionBy.length && !measureEntries.length)

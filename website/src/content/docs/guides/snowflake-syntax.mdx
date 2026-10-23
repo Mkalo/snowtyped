@@ -60,11 +60,13 @@ from the right side are nullable.
 `pivot(source, name, options)` turns declared values of the `for` column into columns named by the
 keys of `in`, aggregated with `sum`, `min`, `max`, or `count`. Every other source column groups the
 rows, so narrow the source with `select(...).as()` first. Pivoted columns are nullable unless the
-aggregate is `count` or a `default` is given. Snowflake does not accept binds in the `in` list, so
+aggregate is `count` or a `default` is given. Their SQL type is INTEGER for `count`, DECIMAL for
+`sum`, and the value column's type for `min` and `max`. Snowflake does not accept binds in the `in` list, so
 values are validated against the `for` column and rendered as escaped literals.
 
 `unpivot(source, name, options)` rotates the `in` columns into rows. The `value` column takes their
-shared type, and the `for` column holds the source key, typed as the union of the `in` keys. Rows
+shared SQL type, and the `for` column holds the source key as TEXT, typed as the union of the `in`
+keys. Rows
 with null values are dropped unless `includeNulls` is set. The columns must have the same Snowflake
 type, including NUMBER scale and timestamp precision.
 
@@ -86,10 +88,14 @@ The variable names come from the pattern. `define` keys, `vars`, `count(variable
 values, and `afterMatch` targets accept only those names. Variables you don't define match every
 row.
 
-- `define` receives the row being classified with `lag`, `lead`, `next`, and `last`.
+- `define` receives the row being classified with `lag`, `lead`, `next`, and `last`, and each
+  definition must be a BOOLEAN predicate.
 - `measures` also receive variable-qualified columns (`vars.down.day`), `prev`, `first`, `final`,
   `running`, `count`, `matchNumber`, `matchSequenceNumber`, and `classifier`.
-- Columns inside the clause are named by their source keys, and `partitionBy` lists source keys.
+- Columns inside the clause are named by their source keys, and `partitionBy` lists source keys,
+  which cannot be GEOGRAPHY or GEOMETRY columns.
+- Measures keep their SQL type: navigation keeps the input's type, and `count` and the match
+  numbers are INTEGER.
 - `rowsPerMatch` is `'one'` (the default: partition keys plus measures), `'all'`,
   `'all-omit-empty'`, or `'all-with-unmatched'` (all source keys plus measures).
 - Measures become nullable when unmatched rows or empty matches can appear.

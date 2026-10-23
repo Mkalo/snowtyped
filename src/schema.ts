@@ -67,17 +67,17 @@ export interface Column<
   Required extends boolean = false,
   Scope extends string = string,
   Server extends ServerValueKind = 'none',
-> extends Expression<ColumnValue<T, Required>, Scope> {
+  D extends DataType = DataType,
+> extends Expression<ColumnValue<T, Required>, Scope, Scope, D> {
   readonly node: IdentifierNode;
-  readonly dataType: DataType;
   readonly required: Required;
   readonly constraints: ColumnConstraints;
   readonly serverValue: ServerValues[Server];
   encodeWrite(value: ColumnValue<T, Required>): ExpressionNode;
-  notNull(): Column<T, true, Scope, Server>;
-  serverDefault(expression?: string): Column<T, Required, Scope, 'default'>;
-  identity(options?: IdentityOptions): Column<T, Required, Scope, 'identity'>;
-  virtual(expression?: string): Column<T, Required, Scope, 'virtual'>;
+  notNull(): Column<T, true, Scope, Server, D>;
+  serverDefault(expression?: string): Column<T, Required, Scope, 'default', D>;
+  identity(options?: IdentityOptions): Column<T, Required, Scope, 'identity', D>;
+  virtual(expression?: string): Column<T, Required, Scope, 'virtual', D>;
 }
 export type AnyColumn = Column<unknown, boolean, string, ServerValueKind>;
 export type InferColumn<C> =
@@ -90,8 +90,8 @@ export type InferSelection<S extends Selection, Nullable extends string = never>
     | (Extract<ExpressionNullScope<S[K]>, Nullable> extends never ? never : null);
 };
 export type BoundColumns<C extends ColumnMap, Name extends string> = {
-  [K in keyof C]: C[K] extends Column<infer T, infer R, string, infer S>
-    ? Column<T, R, Name, S>
+  [K in keyof C]: C[K] extends Column<infer T, infer R, string, infer S, infer D>
+    ? Column<T, R, Name, S, D>
     : never;
 };
 interface Constraint<T> {
@@ -120,16 +120,21 @@ const writeSchemas = new WeakMap<AnyColumn, z.ZodType>();
 export function writeSchema<T>(value: Column<T, true>): z.ZodType<T> {
   return writeSchemas.get(value as AnyColumn) as z.ZodType<T>;
 }
-export function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
+export function column<
+  T,
+  R extends boolean,
+  S extends ServerValueKind = 'none',
+  D extends DataType = DataType,
+>(
   name: string,
-  dataType: DataType,
+  dataType: D,
   read: z.ZodType<T>,
   value: z.ZodType<T>,
   required: R,
   constraint?: Constraint<T>,
   write?: (value: T | null) => ExpressionNode,
   serverValue: ServerValue | null = null,
-): Column<T, R, string, S> {
+): Column<T, R, string, S, D> {
   const constrained = (schema: z.ZodType<T>) =>
     constraint?.check
       ? schema.refine(constraint.check, `Value does not fit ${constraint.type}.`)
@@ -171,20 +176,20 @@ export function column<T, R extends boolean, S extends ServerValueKind = 'none'>
       : (dataType as WireType);
   const result = Object.freeze({
     ...expression(node, readSchema, {
+      dataType,
       valueSchema,
       ...(wireType ? { wireType } : {}),
       encode,
     }),
     node,
-    dataType,
     required,
     constraints: Object.freeze({ ...constraint?.constraints }),
     serverValue: serverValue as ServerValues[S],
     encodeWrite: (input: ColumnValue<T, R>) => encode(writeSchema.parse(input)),
     notNull: () =>
-      column<T, true, S>(name, dataType, read, value, true, constraint, write, serverValue),
+      column<T, true, S, D>(name, dataType, read, value, true, constraint, write, serverValue),
     serverDefault: (expression?: string) =>
-      column<T, R, 'default'>(
+      column<T, R, 'default', D>(
         name,
         dataType,
         read,
@@ -195,7 +200,7 @@ export function column<T, R extends boolean, S extends ServerValueKind = 'none'>
         serverExpression('default', expression),
       ),
     identity: (options: IdentityOptions = {}) =>
-      column<T, R, 'identity'>(
+      column<T, R, 'identity', D>(
         name,
         dataType,
         read,
@@ -206,7 +211,7 @@ export function column<T, R extends boolean, S extends ServerValueKind = 'none'>
         identityValue(options),
       ),
     virtual: (expression?: string) =>
-      column<T, R, 'virtual'>(
+      column<T, R, 'virtual', D>(
         name,
         dataType,
         read,
@@ -216,7 +221,7 @@ export function column<T, R extends boolean, S extends ServerValueKind = 'none'>
         write,
         serverExpression('virtual', expression),
       ),
-  }) as Column<T, R, string, S>;
+  }) as Column<T, R, string, S, D>;
   writeSchemas.set(result as AnyColumn, writeSchema);
   return result;
 }
@@ -259,7 +264,10 @@ function fractional(type: string, options: { readonly precision?: number }) {
     check: (value: string) => fraction(value, precision),
   };
 }
-export function text(name: string, options: { readonly length?: number } = {}): Column<string> {
+export function text(
+  name: string,
+  options: { readonly length?: number } = {},
+): Column<string, false, string, 'none', 'text'> {
   const length =
     options.length === undefined ? undefined : bounded('Length', options.length, 1, 134217728);
   return column(
@@ -280,7 +288,7 @@ export function text(name: string, options: { readonly length?: number } = {}): 
 export function integer(
   name: string,
   options: { readonly precision?: number } = {},
-): Column<bigint> {
+): Column<bigint, false, string, 'none', 'integer'> {
   const precision =
     options.precision === undefined ? undefined : bounded('Precision', options.precision, 1, 38);
   const limit = 10n ** BigInt(precision ?? 0);
@@ -305,7 +313,7 @@ export function integer(
 export function decimal(
   name: string,
   options: { readonly precision?: number; readonly scale?: number } = {},
-): Column<string> {
+): Column<string, false, string, 'none', 'decimal'> {
   const schema = z.string().regex(/^-?\d+(?:\.\d+)?$/);
   if (options.precision === undefined && options.scale === undefined)
     return column(name, 'decimal', schema, schema, false);
@@ -325,7 +333,7 @@ export function decimal(
     },
   });
 }
-export function boolean(name: string): Column<boolean> {
+export function boolean(name: string): Column<boolean, false, string, 'none', 'boolean'> {
   return column(name, 'boolean', z.boolean(), z.boolean(), false);
 }
 /** Decodes `<significand>p<exponent>` wire text; plain numeric text is also accepted. */
@@ -336,7 +344,7 @@ function decodeFloat(value: string): number {
   const half = Math.trunc(exponent / 2);
   return Number(match[1]) * 2 ** half * 2 ** (exponent - half);
 }
-export function float(name: string): Column<number> {
+export function float(name: string): Column<number, false, string, 'none', 'float'> {
   return column(
     name,
     'float',
@@ -345,10 +353,13 @@ export function float(name: string): Column<number> {
     false,
   );
 }
-export function date(name: string): Column<string> {
+export function date(name: string): Column<string, false, string, 'none', 'date'> {
   return column(name, 'date', z.string(), z.iso.date(), false);
 }
-export function time(name: string, options: { readonly precision?: number } = {}): Column<string> {
+export function time(
+  name: string,
+  options: { readonly precision?: number } = {},
+): Column<string, false, string, 'none', 'time'> {
   return column(
     name,
     'time',
@@ -358,11 +369,17 @@ export function time(name: string, options: { readonly precision?: number } = {}
     fractional('TIME', options),
   );
 }
+export function timestamp(name: string): Column<string, false, string, 'none', 'timestamp_ntz'>;
+export function timestamp<M extends 'ntz' | 'ltz' | 'tz'>(
+  name: string,
+  mode: M,
+  options?: { readonly precision?: number },
+): Column<string, false, string, 'none', `timestamp_${M}`>;
 export function timestamp(
   name: string,
   mode: 'ntz' | 'ltz' | 'tz' = 'ntz',
   options: { readonly precision?: number } = {},
-): Column<string> {
+): Column<string, false, string, 'none', `timestamp_${typeof mode}`> {
   return column(
     name,
     `timestamp_${mode}`,
@@ -372,32 +389,46 @@ export function timestamp(
     fractional(`TIMESTAMP_${mode.toUpperCase()}`, options),
   );
 }
-export function variant(name: string): Column<unknown>;
-export function variant<T>(name: string, schema: z.ZodType<T>): Column<T>;
-export function variant(name: string, schema: z.ZodType<unknown> = z.unknown()): Column<unknown> {
+export function variant(name: string): Column<unknown, false, string, 'none', 'variant'>;
+export function variant<T>(
+  name: string,
+  schema: z.ZodType<T>,
+): Column<T, false, string, 'none', 'variant'>;
+export function variant(
+  name: string,
+  schema: z.ZodType<unknown> = z.unknown(),
+): Column<unknown, false, string, 'none', 'variant'> {
   return column(name, 'variant', json(schema), schema, false);
 }
-export function array(name: string): Column<unknown[]>;
-export function array<T>(name: string, element: z.ZodType<T>): Column<T[]>;
-export function array(name: string, element: z.ZodType<unknown> = z.unknown()): Column<unknown[]> {
+export function array(name: string): Column<unknown[], false, string, 'none', 'array'>;
+export function array<T>(
+  name: string,
+  element: z.ZodType<T>,
+): Column<T[], false, string, 'none', 'array'>;
+export function array(
+  name: string,
+  element: z.ZodType<unknown> = z.unknown(),
+): Column<unknown[], false, string, 'none', 'array'> {
   const schema = z.array(element);
   return column(name, 'array', json(schema), schema, false);
 }
-export function object(name: string): Column<Record<string, unknown>>;
+export function object(
+  name: string,
+): Column<Record<string, unknown>, false, string, 'none', 'object'>;
 export function object<T extends Record<string, unknown>>(
   name: string,
   schema: z.ZodType<T>,
-): Column<T>;
+): Column<T, false, string, 'none', 'object'>;
 export function object(
   name: string,
   schema: z.ZodType<Record<string, unknown>> = z.record(z.string(), z.unknown()),
-): Column<Record<string, unknown>> {
+): Column<Record<string, unknown>, false, string, 'none', 'object'> {
   return column(name, 'object', json(schema), schema, false);
 }
 export function binary(
   name: string,
   options: { readonly length?: number } = {},
-): Column<Uint8Array> {
+): Column<Uint8Array, false, string, 'none', 'binary'> {
   const schema = z.instanceof(Uint8Array);
   const length =
     options.length === undefined ? undefined : bounded('Length', options.length, 1, 67108864);
@@ -417,7 +448,9 @@ export function binary(
   );
 }
 
-export function geography(name: string): Column<GeoJsonGeometry> {
+export function geography(
+  name: string,
+): Column<GeoJsonGeometry, false, string, 'none', 'geography'> {
   const schema = geoJson(4);
   return column(name, 'geography', json(schema), schema, false, undefined, (value) =>
     call('TO_GEOGRAPHY', value === null ? null : JSON.stringify(value)),
@@ -426,7 +459,7 @@ export function geography(name: string): Column<GeoJsonGeometry> {
 export function geometry(
   name: string,
   options: { readonly srid?: number } = {},
-): Column<GeoJsonGeometry> {
+): Column<GeoJsonGeometry, false, string, 'none', 'geometry'> {
   const srid = bounded('SRID', options.srid ?? 0, 0, 2147483647);
   const schema = geoJson(3);
   const read = z
@@ -456,7 +489,7 @@ export function vector(
   name: string,
   element: 'int' | 'float',
   dimension: number,
-): Column<number[]> {
+): Column<number[], false, string, 'none', 'vector'> {
   if (element !== 'int' && element !== 'float')
     throw new TypeError("VECTOR elements must be 'int' or 'float'.");
   bounded('Dimension', dimension, 1, 4096);
@@ -493,10 +526,13 @@ export interface TableOptions {
   readonly database?: string;
 }
 
-export function bindColumn<T, R extends boolean, N extends string, S extends ServerValueKind>(
-  value: Column<T, R, string, S>,
-  ref: SourceReference,
-): Column<T, R, N, S> {
+export function bindColumn<
+  T,
+  R extends boolean,
+  N extends string,
+  S extends ServerValueKind,
+  D extends DataType,
+>(value: Column<T, R, string, S, D>, ref: SourceReference): Column<T, R, N, S, D> {
   return Object.freeze({
     ...value,
     phase: 'scalar',
@@ -507,7 +543,7 @@ export function bindColumn<T, R extends boolean, N extends string, S extends Ser
     serverDefault: (expression?: string) => bindColumn(value.serverDefault(expression), ref),
     identity: (options?: IdentityOptions) => bindColumn(value.identity(options), ref),
     virtual: (expression?: string) => bindColumn(value.virtual(expression), ref),
-  }) as Column<T, R, N, S>;
+  }) as Column<T, R, N, S, D>;
 }
 export function bindTable<C extends ColumnMap, N extends string>(
   node: IdentifierNode,

@@ -158,9 +158,11 @@ describe('set operation composition', () => {
       left.union(select(b, { id: b.columns.id, other: b.columns.name })),
     ).toThrow('same projection aliases');
     expect(() =>
+      // @ts-expect-error Exercise the runtime SQL type boundary.
       select(a, { value: a.columns.day }).union(select(a, { value: a.columns.at })),
-    ).toThrow('column value combines different domains');
+    ).toThrow('column value combines different domains: DATE and TIMESTAMP_NTZ.');
     expect(() =>
+      // @ts-expect-error Exercise the runtime SQL type boundary.
       select(a, { value: a.columns.name }).union(select(b, { value: b.columns.amount })),
     ).toThrow('different domains');
     const flags = snowflakeTable('F', {

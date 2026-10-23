@@ -10,7 +10,16 @@ import {
   type StatementNode,
   type UpdateNode,
 } from './ast.js';
-import { type Expression, isExpression, type Predicate } from './expressions.js';
+import {
+  type AnyExpression,
+  assertPredicate,
+  type ComparableType,
+  comparable,
+  type Expression,
+  type ExpressionDataType,
+  isExpression,
+  type Predicate,
+} from './expressions.js';
 import { assertScope, type SelectQuery } from './query.js';
 import type {
   AnyColumn,
@@ -34,8 +43,14 @@ type RequiredKeys<C extends ColumnMap> = {
 export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferColumn<C[K]> } & {
   [K in Exclude<WritableKeys<C>, RequiredKeys<C>>]?: InferColumn<C[K]>;
 };
+type Assignment<C extends AnyColumn, Scope extends string> = Expression<
+  InferColumn<C>,
+  Scope,
+  string,
+  ComparableType<ExpressionDataType<C>>
+>;
 export type UpdateValues<C extends ColumnMap, Scope extends string = string> = {
-  [K in WritableKeys<C>]?: InferColumn<C[K]> | Expression<InferColumn<C[K]>, Scope>;
+  [K in WritableKeys<C>]?: InferColumn<C[K]> | Assignment<C[K], Scope>;
 };
 export type InsertSource<C extends ColumnMap, Row> = [
   Exclude<keyof Row, keyof InsertValues<C>>,
@@ -44,6 +59,15 @@ export type InsertSource<C extends ColumnMap, Row> = [
     ? unknown
     : never
   : never;
+type SourceTypes<C extends ColumnMap, S extends Selection> = true extends {
+  [K in keyof S & keyof C]: ExpressionDataType<S[K]> extends ComparableType<
+    ExpressionDataType<C[K]>
+  >
+    ? false
+    : true;
+}[keyof S & keyof C]
+  ? never
+  : unknown;
 export interface MutationQuery {
   readonly kind: 'mutation';
   readonly ast: StatementNode;
@@ -64,7 +88,7 @@ export interface MergeQuery<
   whenMatchedDelete(condition?: Predicate<Scope>): MergeQuery<C, Scope, Source>;
   whenNotMatchedInsert(
     values: {
-      [K in keyof InsertValues<C>]: InsertValues<C>[K] | Expression<InsertValues<C>[K], Source>;
+      [K in keyof InsertValues<C>]: InsertValues<C>[K] | Assignment<C[K & keyof C], Source>;
     },
     condition?: Predicate<Source>,
   ): MergeQuery<C, Scope, Source>;
@@ -80,8 +104,14 @@ function checkSource(target: Table, source: Table): void {
   if (target.ref.name === source.ref.name)
     throw new TypeError('Mutation sources need distinct names.');
 }
-function condition(predicate: Predicate, refs: readonly SourceReference[], clause: string) {
+function condition(
+  predicate: Predicate,
+  refs: readonly SourceReference[],
+  keyword: string,
+  clause: string,
+) {
   assertScope([predicate], refs);
+  assertPredicate(predicate, keyword);
   if (predicate.phase !== 'scalar') throw new TypeError(`${clause} must be scalar.`);
   return predicate.expression;
 }
@@ -94,6 +124,12 @@ function writable(table: Table, key: string): AnyColumn {
   if (column.serverValue?.kind === 'virtual')
     throw new TypeError(`Cannot write virtual column: ${key}`);
   return column;
+}
+function assignable(column: AnyColumn, value: AnyExpression, key: string): void {
+  if (!comparable(column.dataType, value.dataType))
+    throw new TypeError(
+      `Cannot assign a ${value.dataType.toUpperCase()} expression to ${column.dataType.toUpperCase()} column ${key}.`,
+    );
 }
 function provided(table: Table, values: Readonly<Record<string, unknown>>): string[] {
   for (const key of Object.keys(values)) writable(table, key);
@@ -115,7 +151,12 @@ function entries(
   return Object.freeze(
     items.map(([key, value]) => {
       const column = writable(table, key);
-      if (isExpression(value)) assertScope([value], refs);
+      if (isExpression(value)) {
+        assertScope([value], refs);
+        if (value.phase !== 'scalar')
+          throw new TypeError('Mutation values cannot contain aggregate or window functions.');
+        assignable(column, value, key);
+      }
       return Object.freeze({
         column: column.node,
         value: isExpression(value) ? value.expression : column.encodeWrite(value),
@@ -185,12 +226,18 @@ export function insertFrom<
   Nullable extends string,
 >(
   table: Table<C>,
-  query: SelectQuery<S, Scope, Nullable> & InsertSource<C, InferSelection<S, Nullable>>,
+  query: SelectQuery<S, Scope, Nullable> &
+    InsertSource<C, InferSelection<S, Nullable>> &
+    SourceTypes<C, S>,
 ): MutationQuery {
   checkTable(table);
   query.compile();
   const keys = Object.keys(query.selection);
-  const columns = keys.map((key) => writable(table, key).node);
+  const columns = keys.map((key) => {
+    const column = writable(table, key);
+    assignable(column, query.selection[key] as AnyExpression, key);
+    return column.node;
+  });
   for (const [key, column] of Object.entries(table.columns))
     if (column.required && !column.serverValue && !keys.includes(key))
       throw new TypeError(`INSERT source is missing required column: ${key}`);
@@ -213,7 +260,7 @@ function filtered<N extends string>(
   return Object.freeze({
     ...mutation(ast),
     where(predicate: Predicate<N>) {
-      const where = condition(predicate, refs, 'Mutation filters');
+      const where = condition(predicate, refs, 'WHERE', 'Mutation filters');
       return filtered(
         refs,
         Object.freeze({
@@ -254,7 +301,7 @@ export function updateFrom<
 ): FilteredMutation<T | N> {
   checkSource(target, source);
   const refs = [target.ref, source.ref];
-  const join = condition(on, refs, 'UPDATE FROM join predicates');
+  const join = condition(on, refs, 'UPDATE FROM', 'UPDATE FROM join predicates');
   return filtered(
     refs,
     Object.freeze({
@@ -282,7 +329,7 @@ export function deleteUsing<
 >(target: Table<C, T>, source: Table<S, N>, on: Predicate<T | N>): FilteredMutation<T | N> {
   checkSource(target, source);
   const refs = [target.ref, source.ref];
-  const join = condition(on, refs, 'DELETE USING join predicates');
+  const join = condition(on, refs, 'DELETE USING', 'DELETE USING join predicates');
   return filtered(
     refs,
     Object.freeze({
@@ -308,7 +355,7 @@ export function mergeInto<
     kind: 'merge',
     target: Object.freeze({ kind: 'table', name: target.node, alias: target.ref.qualifier }),
     source: source.source,
-    on: condition(on, refs, 'MERGE match predicates'),
+    on: condition(on, refs, 'MERGE', 'MERGE match predicates'),
     branches: Object.freeze([]),
   });
   function add(ast: MergeNode, branch: MergeBranchNode): MergeQuery<C, T | N, N> {
@@ -327,7 +374,9 @@ export function mergeInto<
     return build(Object.freeze({ ...ast, branches: Object.freeze(next) }));
   }
   function when(predicate: Predicate | undefined, scope: readonly SourceReference[]) {
-    return predicate ? { condition: condition(predicate, scope, 'MERGE branch conditions') } : {};
+    return predicate
+      ? { condition: condition(predicate, scope, 'MERGE branch', 'MERGE branch conditions') }
+      : {};
   }
   function build(ast: MergeNode): MergeQuery<C, T | N, N> {
     return Object.freeze({

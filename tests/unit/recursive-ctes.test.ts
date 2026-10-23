@@ -38,7 +38,14 @@ const anchor = select(employees, { id: e.id, managerId: e.managerId, name: e.nam
 // biome-ignore lint/suspicious/noExplicitAny: runtime checks are exercised without static types.
 const untyped = recursiveCte as (...args: any[]) => Table;
 function reports<N extends string>(
-  self: Table<SetColumns<{ id: bigint; managerId: bigint | null; name: string }, N>, N>,
+  self: Table<
+    SetColumns<
+      { id: bigint; managerId: bigint | null; name: string },
+      N,
+      { id: 'integer'; managerId: 'integer'; name: 'text' }
+    >,
+    N
+  >,
 ) {
   return select(employees, { name: e.name, id: e.id, managerId: e.managerId }).innerJoin(
     self,
@@ -244,20 +251,24 @@ describe('recursive CTEs', () => {
     ).toThrow('must be a single SELECT');
     const restricted = [
       (query: ReturnType<typeof reports>) => query.distinct(),
-      (query: ReturnType<typeof reports>) => query.groupBy(e.id),
+      (query: ReturnType<typeof reports>) => query.groupBy(e.id, e.managerId, e.name),
       (query: ReturnType<typeof reports>) => query.having(eq(e.id, 1n)),
       (query: ReturnType<typeof reports>) =>
         query.qualify(eq(rowNumber({ orderBy: [asc(e.id)] }), 1n)),
       (query: ReturnType<typeof reports>) => query.orderBy(asc(e.id)),
       (query: ReturnType<typeof reports>) => query.limit(1),
       (query: ReturnType<typeof reports>) => query.offset(1),
-      (query: ReturnType<typeof reports>) =>
-        query.select({ id: count(), managerId: e.managerId, name: e.name }),
     ];
     for (const restrict of restricted)
       expect(() =>
         untyped('CHAIN', anchor, (self: Table) => restrict(reports(self as never))),
       ).toThrow('only scalar projections, filters, and joins');
+    // The grouping check rejects an ungrouped aggregate projection before the branch shape check.
+    expect(() =>
+      untyped('CHAIN', anchor, (self: Table) =>
+        reports(self as never).select({ id: count(), managerId: e.managerId, name: e.name }),
+      ),
+    ).toThrow('"EMPLOYEES"."MANAGER_ID" must appear in GROUP BY');
     expect(() =>
       untyped('CHAIN', anchor, (self: Table) =>
         select(employees, { id: e.name, managerId: e.managerId, name: e.name }).innerJoin(

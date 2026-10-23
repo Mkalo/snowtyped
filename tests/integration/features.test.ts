@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import {
+  type AnyExpression,
   alias,
   and,
   array,
@@ -854,9 +855,9 @@ describe('complete query and execution paths against Snowflake', () => {
         )
       ).rows,
     ).toEqual([{ plain: collection }]);
-    await expect(
-      db.execute(select(spatial).where(eq(spatial.columns.location, precise as GeoJsonGeometry))),
-    ).rejects.toThrow("Invalid argument types for function '='");
+    expect(() => eq(spatial.columns.location as AnyExpression, precise)).toThrow(
+      '= does not accept GEOGRAPHY expressions.',
+    );
     expect(() => insert(spatial, { id: 3n, location: precise, counts: [1, 2, 3] })).toThrow(
       'VECTOR(INT, 2)',
     );

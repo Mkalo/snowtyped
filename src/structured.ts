@@ -20,7 +20,10 @@ export class JsonNumber {
   constructor(readonly source: string) {}
 }
 
-export function structured<T>(name: string, type: StructuredType<T, boolean>): Column<T> {
+export function structured<T>(
+  name: string,
+  type: StructuredType<T, boolean>,
+): Column<T, false, string, 'none', 'structured'> {
   const required = type.notNull();
   return column(
     name,
