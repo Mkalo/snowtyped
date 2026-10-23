@@ -1,0 +1,75 @@
+name: Version packages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-packages-main
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Inspect pending versions
+        id: pending
+        run: |
+          node --input-type=module -e 'import { getReleasePlan } from "@changesets/get-release-plan"; const plan = await getReleasePlan(process.cwd()); console.log(`has-releases=${plan.releases.length > 0}`);' >> "$GITHUB_OUTPUT"
+      - name: Require the version bot configuration
+        if: steps.pending.outputs.has-releases == 'true'
+        env:
+          APP_CLIENT_ID: ${{ vars.CHANGESETS_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.CHANGESETS_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_CLIENT_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "::error::Configure CHANGESETS_APP_CLIENT_ID and CHANGESETS_APP_PRIVATE_KEY; see docs/versioning.md. An App token is required for automatic PR CI."
+            exit 1
+          fi
+      - name: Create a repository-scoped version bot token
+        if: steps.pending.outputs.has-releases == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.CHANGESETS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHANGESETS_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Create or update the version PR
+        if: steps.pending.outputs.has-releases == 'true'
+        id: version-pr
+        uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2 (Changesets v3)
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: pnpm version:packages
+          pr-base-branch: main
+          pr-title: "chore: version snowtyped"
+          commit-message: "chore: version snowtyped"
+      - name: Clarify the version-only PR description
+        if: steps.pending.outputs.has-releases == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.version-pr.outputs.pr-number }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body | sub("This PR was opened[^\n]*"; "This PR only updates versions, changelogs, and the lockfile. Merging it does not publish packages, create tags, or create GitHub releases. Publication remains blocked pending #20/#24. Additional changesets on main update this same PR.")' > "$RUNNER_TEMP/version-pr-body.md"
+          gh pr edit "$PR_NUMBER" --body-file "$RUNNER_TEMP/version-pr-body.md"
