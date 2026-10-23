@@ -7,6 +7,7 @@ import Snippet from '../../../components/Snippet.astro';
 import asof from '../../../snippets/asof.ts?raw';
 import flatten from '../../../snippets/flatten.ts?raw';
 import timeTravel from '../../../snippets/time-travel.ts?raw';
+import windowFrames from '../../../snippets/window-frames.ts?raw';
 import windows from '../../../snippets/windows.ts?raw';
 
 ## Windows and QUALIFY
@@ -16,6 +17,19 @@ into a window. Both accept `partitionBy` and `orderBy`. QUALIFY requires a windo
 or in its predicate.
 
 <Snippet code={windows} />
+
+### Window frames
+
+Pass `frame: rowsBetween(start, end)` or `frame: rangeBetween(start, end)` to `over()`. A frame
+requires ORDER BY and an aggregate; ranking functions such as `rowNumber` reject frames.
+
+<Snippet code={windowFrames} />
+
+Boundaries are `'UNBOUNDED PRECEDING'`, `'CURRENT ROW'`, `'UNBOUNDED FOLLOWING'`, `{ preceding: n }`,
+or `{ following: n }`, and the start cannot follow the end. ROWS offsets are nonnegative integers.
+RANGE offsets need exactly one ORDER BY expression: numeric offsets for a numeric or date key, or
+intervals such as `{ preceding: 1, unit: 'DAY' }` for a date or timestamp key. Empty frames yield
+NULL aggregates and zero counts. Snowflake still enforces its own frame-size limits.
 
 ## FLATTEN
 
@@ -38,5 +52,9 @@ from the right side are nullable.
 `{ offset }` in seconds, `{ timestamp }`, or `{ statement }` with a query ID. Pass `'BEFORE'` as
 the third argument for BEFORE semantics. Time travel applies only to base tables, and the
 database's retention period and selector rules still apply.
+
+Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset such as
+`2026-10-22T15:00:00-07:00` selects that instant. A timestamp without an offset is read in the
+session `TIMEZONE`, which defaults to `America/Los_Angeles`; append `Z` or `+00:00` for UTC.
 
 <Snippet code={timeTravel} />
