@@ -19,7 +19,8 @@ this section.
   `timestamp`, `binary`, `variant`), and `.notNull()`.
 - Query construction: `select` and the `SelectQuery` methods documented in the
   README, `flatten`, the expression, aggregate, window, and ordering helpers,
-  `insert`, `update`, `deleteFrom`, and `mergeInto`.
+  `insert`, `insertFrom`, `update`, `updateFrom`, `deleteFrom`, `deleteUsing`,
+  and `mergeInto` with its conditional branches.
 - `.compile()` results (`CompiledQuery`, `BindValue`); the bound values and SQL
   semantics are stable, the exact SQL text is not.
 - Raw SQL: `sql`, `sql.identifier`, `sql.join`, `sql.json`, `sql.unsafe`,
@@ -153,7 +154,6 @@ comment on #1. Missing, pending, skipped, or cancelled runs do not count.
 
 Not required for `1.0.0`; each can ship later as a minor release unless it
 changes stable behavior:
-- MERGE source and condition extensions (#8)
 - Scalar, EXISTS, and correlated subqueries (#9)
 - PIVOT and UNPIVOT (#10)
 - Stronger SQL semantic validation (#11)
@@ -163,11 +163,9 @@ changes stable behavior:
 - MATCH_RECOGNIZE (#15)
 - DDL builders and migrations (#16)
 
-In progress and not yet part of this contract: raw-query cancellation (#2),
-expression and function helpers (#3), default, identity, and generated columns
-(#4), constraints and additional type codecs (#5), window frames (#6), and set
-operations (#7). Each joins the stable API when it merges and this document and
-the export snapshot are updated.
+In progress and not yet part of this contract: constraints and additional type codecs (#5) and set
+operations (#7). Each joins the stable API when it merges and this document and the export snapshot
+are updated.
 
 Raw SQL remains available for Snowflake syntax beyond the modeled builders.
 

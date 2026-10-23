@@ -6,13 +6,16 @@ description: Typed INSERT, UPDATE, DELETE, and MERGE statements.
 import { Aside } from '@astrojs/starlight/components';
 import Snippet from '../../../components/Snippet.astro';
 import merge from '../../../snippets/merge.ts?raw';
+import serverValues from '../../../snippets/server-values.ts?raw';
+import sourcedWrites from '../../../snippets/sourced-writes.ts?raw';
 import writes from '../../../snippets/writes.ts?raw';
 
 <Snippet code={writes} />
 
-- `insert(table, values)` accepts one row or an array of rows. Required columns must be present;
-  omitted nullable columns become SQL NULL. An explicit `null` also writes SQL NULL, including on
-  VARIANT columns, where it is not JSON `null`.
+- `insert(table, values)` accepts one row or an array of rows. Required columns must be present.
+  Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or
+  NULL. An explicit `null` writes SQL NULL, including on VARIANT columns, where it is not JSON
+  `null`.
 - `update(table, values)` accepts typed literal values and expressions from its own table.
 - Statements resolve to `{ affectedRows, queryId }`. There is no emulated RETURNING clause.
 
@@ -20,8 +23,38 @@ import writes from '../../../snippets/writes.ts?raw';
   UPDATE and DELETE without `.where()` affect every row in the table.
 </Aside>
 
+## Defaults, identity, and virtual columns
+
+Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)`
+so they are optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)`
+column. It is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These
+modifiers are metadata only and do not emit DDL.
+
+<Snippet code={serverValues} />
+
+Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row.
+Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps.
+
+## Writes from another source
+
+<Snippet code={sourcedWrites} />
+
+- `insertFrom(target, query)` maps each selected name to a target column. The selected row type,
+  including nullability from outer joins, must fit the target. Required columns without a server
+  value must be selected, and virtual columns cannot be.
+- `updateFrom(target, source, on, values)` and `deleteUsing(target, source, on)` require a join
+  predicate. `.where()` adds filters to it, so a forgotten filter cannot cross join every row.
+- Sources are base tables or derived queries (`.as()`). Combine several tables into one derived
+  query.
+
 ## MERGE
 
-`mergeInto(target, source, on)` supports matched update, matched delete, and unmatched insert.
+`mergeInto(target, source, on)` adds `WHEN [NOT] MATCHED` branches in the order they are called.
+`whenMatchedUpdate(values, condition?)`, `whenMatchedDelete(condition?)`, and
+`whenNotMatchedInsert(values, condition?)` each take an optional condition.
 
 <Snippet code={merge} />
+
+- An unconditional branch must be the last of its kind. Calling it again replaces it, and adding a
+  conditional branch after it throws.
+- NOT MATCHED values and conditions can only reference the source; the target row does not exist.

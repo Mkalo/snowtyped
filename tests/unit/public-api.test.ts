@@ -11,23 +11,27 @@ const expected = {
   snowtyped: {
     values: names(
       `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date
-      dateAdd dateDiff datePart dateTrunc decimal deleteFrom denseRank desc div eq flatten
-      float generateSchema geography geometry gt gte ilike inArray insert integer introspect
-      isNotNull isNull jsonPath lag lead length like lower lt lte max mergeInto min mul ne not
-      object or over rank rowNumber select snowflakeTable sql sub substring sum text time
-      timeTravel timestamp trim update upper variant vector`,
+      dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div eq
+      flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
+      integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte max
+      mergeInto min mul ne not object or over rangeBetween rank rowNumber rowsBetween select
+      snowflakeTable sql sub substring sum text time timeTravel timestamp trim update
+      updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
       `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
       ColumnMap ColumnValue CompiledQuery DataType DatePart Expression FilteredMutation
-      FlattenOptions GeoJsonGeometry GeoPosition InferColumn InferExpression InferSelection
-      InsertValues IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
-      OffsetWindowOptions OrderedWindowOptions Ordering Predicate RawQuery SelectQuery
-      Selection SqlInterpolation SqlParameter Table TableOptions UpdateValues`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
-      InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode SourceReference
-      StatementNode TableNode TemporalNode UpdateNode WireType`,
+      FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry GeoPosition
+      IdentityOptions InferColumn InferExpression InferSelection InsertSource InsertValues
+      IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
+      OffsetWindowOptions OrderedWindowOptions Ordering Predicate RangeBoundary RawQuery
+      SelectQuery Selection ServerValue ServerValueKind ServerValues SqlInterpolation
+      SqlParameter Table TableOptions UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
+      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode
+      MergeNode OrderNode RelationNode SelectNode SourceReference StatementNode TableNode
+      TemporalNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
