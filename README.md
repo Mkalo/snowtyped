@@ -186,9 +186,40 @@ Await running operations and close cursors before starting a transaction on a si
 
 `await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
 
+## Schema management
+
+DDL builders, schema diffs, and migrations live in the separate `snowtyped/ddl` entry point, so query-only code never loads them.
+
+```ts
+import { createTable, defineSchema, defineTable, migrate, sqlType } from 'snowtyped/ddl';
+
+const accountsTable = defineTable(accounts, {
+  types: { balance: sqlType.number(18, 2) },
+  comments: { email: 'Primary contact' },
+});
+const result = await migrate(
+  db,
+  [{ id: '0001_accounts', statements: [createTable(accountsTable)] }],
+  {
+    database: 'APP_DB',
+    schema: 'PUBLIC',
+    verify: defineSchema({ database: 'APP_DB', schema: 'PUBLIC' }, [accountsTable]),
+  },
+);
+// result.applied: ['0001_accounts']; result.drift lists remaining differences
+```
+
+`defineTable` derives physical columns from a declared table and rejects physical types its codecs cannot read; `decimal()` columns need an explicit `sqlType.number(precision, scale)`. `createSchema`, `dropSchema`, `createTable`, `dropTable`, and `alterTable(table)` (rename, comments, add/drop/rename columns, type changes, NOT NULL) build quoted statements. Comments compile to escaped literals.
+
+`migrate` applies migrations in array order and records each statement in a `SNOWTYPED_MIGRATIONS` history table. A lease lock in `SNOWTYPED_MIGRATIONS_LOCK` makes concurrent runs fail with `LOCKED`; the lease is renewed before every statement and must exceed the longest one (`leaseSeconds`, default 900). Applied migrations must not change or be reordered (`HISTORY_DRIFT`). Destructive DDL needs `destructive: true` on its migration; raw SQL statements are not classified.
+
+Snowflake commits each DDL statement on its own, so a failed migration keeps its earlier statements. The run stops with `FAILED`, and later runs refuse to continue until you fix the remaining statements and pass `resumeFailed: true`, which skips the committed ones. If a connection drops after Snowflake committed a statement but before it was recorded, that statement runs again on resume; prefer `IF NOT EXISTS` forms for such steps.
+
+`inspectSchema` reads base tables through INFORMATION_SCHEMA, and `diffSchema`/`checkDrift` compare them with `defineSchema(...)`. Diffs widen VARCHAR, change NUMBER precision, toggle NOT NULL, add and drop columns and tables, and set comments; other type changes (scale, timestamp precision, type family, unmodeled types) are reported as `unsupported` rather than rebuilt. Renames are never inferred. Column order, defaults, identity, clustering, and BINARY length (not reported by INFORMATION_SCHEMA) are not compared. `pushSchema` applies a diff directly without history or locking, refusing destructive changes unless `allowDestructive` is set; rerunning it continues a partial push.
+
 ## Scope and distribution
 
-The first-class API covers the operations above. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, advanced frames, default/generated columns, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, advanced frames, default/generated columns, DDL for objects other than schemas and tables, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 

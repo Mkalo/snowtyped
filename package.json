@@ -31,6 +31,9 @@
     "*": {
       "snowflake": [
         "./dist/snowflake.d.cts"
+      ],
+      "ddl": [
+        "./dist/ddl.d.cts"
       ]
     }
   },
@@ -53,6 +56,16 @@
       "require": {
         "types": "./dist/snowflake.d.cts",
         "default": "./dist/snowflake.cjs"
+      }
+    },
+    "./ddl": {
+      "import": {
+        "types": "./dist/ddl.d.mts",
+        "default": "./dist/ddl.mjs"
+      },
+      "require": {
+        "types": "./dist/ddl.d.cts",
+        "default": "./dist/ddl.cjs"
       }
     },
     "./package.json": "./package.json"
