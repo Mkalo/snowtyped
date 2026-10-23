@@ -10,26 +10,30 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc eq flatten float
-      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath like
-      lower lt lte max mergeInto min ne not or over rowNumber select snowflakeTable sql sum text
-      time timestamp timeTravel update upper variant`,
+      `add alias and asc avg binary boolean caseWhen cast coalesce concat count date dateAdd
+      dateDiff datePart dateTrunc decimal deleteFrom denseRank desc div eq flatten float
+      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath
+      lag lead length like lower lt lte max mergeInto min mul ne not or over rank rowNumber
+      select snowflakeTable sql sub substring sum text time timeTravel timestamp trim update
+      upper variant`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
-      `AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue CompiledQuery
-      DataType Expression FilteredMutation FlattenOptions InferColumn InferExpression InferSelection
-      InsertValues IntrospectedColumn IntrospectedTable MergeQuery MutationQuery Ordering Predicate
-      RawQuery SelectQuery Selection SqlInterpolation SqlParameter Table TableOptions UpdateValues`,
+      `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
+      ColumnMap ColumnValue CompiledQuery DataType DatePart Expression FilteredMutation
+      FlattenOptions InferColumn InferExpression InferSelection InsertValues IntrospectedColumn
+      IntrospectedTable MergeQuery MutationQuery OffsetWindowOptions OrderedWindowOptions
+      Ordering Predicate RawQuery SelectQuery Selection SqlInterpolation SqlParameter Table
+      TableOptions UpdateValues`,
       `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
-      InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode SourceReference StatementNode
-      TableNode TemporalNode UpdateNode WireType`,
+      InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode SourceReference
+      StatementNode TableNode TemporalNode UpdateNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
     values: names('createClient createPool'),
     types: names(
-      'ExecuteOptions MutationResult PooledClient PoolOptions QueryResult SnowflakeClient',
+      'ExecuteOptions MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
     ),
   },
 };
