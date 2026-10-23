@@ -3,13 +3,23 @@ import {
   compileAst,
   type DefaultNode,
   type DeleteNode,
+  type ExpressionNode,
+  type MergeBranchNode,
   type MergeNode,
+  type SourceReference,
   type StatementNode,
   type UpdateNode,
 } from './ast.js';
 import { type Expression, isExpression, type Predicate } from './expressions.js';
-import { assertScope } from './query.js';
-import type { AnyColumn, ColumnMap, InferColumn, Table } from './schema.js';
+import { assertScope, type SelectQuery } from './query.js';
+import type {
+  AnyColumn,
+  ColumnMap,
+  InferColumn,
+  InferSelection,
+  Selection,
+  Table,
+} from './schema.js';
 
 type WritableKeys<C extends ColumnMap> = {
   [K in keyof C]: C[K]['serverValue'] extends { readonly kind: 'virtual' } ? never : K;
@@ -27,6 +37,13 @@ export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferC
 export type UpdateValues<C extends ColumnMap, Scope extends string = string> = {
   [K in WritableKeys<C>]?: InferColumn<C[K]> | Expression<InferColumn<C[K]>, Scope>;
 };
+export type InsertSource<C extends ColumnMap, Row> = [
+  Exclude<keyof Row, keyof InsertValues<C>>,
+] extends [never]
+  ? Row extends InsertValues<C>
+    ? unknown
+    : never
+  : never;
 export interface MutationQuery {
   readonly kind: 'mutation';
   readonly ast: StatementNode;
@@ -35,18 +52,38 @@ export interface MutationQuery {
 export interface FilteredMutation<Scope extends string> extends MutationQuery {
   where(predicate: Predicate<Scope>): FilteredMutation<Scope>;
 }
-export interface MergeQuery<C extends ColumnMap, Scope extends string> extends MutationQuery {
-  whenMatchedUpdate(values: UpdateValues<C, Scope>): MergeQuery<C, Scope>;
-  whenMatchedDelete(): MergeQuery<C, Scope>;
+export interface MergeQuery<
+  C extends ColumnMap,
+  Scope extends string,
+  Source extends string = Scope,
+> extends MutationQuery {
+  whenMatchedUpdate(
+    values: UpdateValues<C, Scope>,
+    condition?: Predicate<Scope>,
+  ): MergeQuery<C, Scope, Source>;
+  whenMatchedDelete(condition?: Predicate<Scope>): MergeQuery<C, Scope, Source>;
   whenNotMatchedInsert(
     values: {
-      [K in keyof InsertValues<C>]: InsertValues<C>[K] | Expression<InsertValues<C>[K], Scope>;
+      [K in keyof InsertValues<C>]: InsertValues<C>[K] | Expression<InsertValues<C>[K], Source>;
     },
-  ): MergeQuery<C, Scope>;
+    condition?: Predicate<Source>,
+  ): MergeQuery<C, Scope, Source>;
 }
 
 function checkTable(table: Table): void {
   if (table.source.kind !== 'table') throw new TypeError('Mutations require a base table.');
+}
+function checkSource(target: Table, source: Table): void {
+  checkTable(target);
+  if (source.source.kind !== 'table' && source.source.kind !== 'derived')
+    throw new TypeError('Mutation sources must be tables or derived queries.');
+  if (target.ref.name === source.ref.name)
+    throw new TypeError('Mutation sources need distinct names.');
+}
+function condition(predicate: Predicate, refs: readonly SourceReference[], clause: string) {
+  assertScope([predicate], refs);
+  if (predicate.phase !== 'scalar') throw new TypeError(`${clause} must be scalar.`);
+  return predicate.expression;
 }
 function mutation(ast: StatementNode): MutationQuery {
   return Object.freeze({ kind: 'mutation', ast, compile: () => compileAst(ast) });
@@ -68,7 +105,11 @@ function provided(table: Table, values: Readonly<Record<string, unknown>>): stri
     return false;
   });
 }
-function entries(table: Table, values: Readonly<Record<string, unknown>>, refs = [table.ref]) {
+function entries(
+  table: Table,
+  values: Readonly<Record<string, unknown>>,
+  refs: readonly SourceReference[] = [table.ref],
+) {
   const items = Object.entries(values);
   if (!items.length) throw new TypeError('A mutation needs at least one column value.');
   return Object.freeze(
@@ -137,16 +178,56 @@ export function insert<C extends ColumnMap>(
   );
 }
 
+export function insertFrom<
+  C extends ColumnMap,
+  S extends Selection,
+  Scope extends string,
+  Nullable extends string,
+>(
+  table: Table<C>,
+  query: SelectQuery<S, Scope, Nullable> & InsertSource<C, InferSelection<S, Nullable>>,
+): MutationQuery {
+  checkTable(table);
+  query.compile();
+  const keys = Object.keys(query.selection);
+  const columns = keys.map((key) => writable(table, key).node);
+  for (const [key, column] of Object.entries(table.columns))
+    if (column.required && !column.serverValue && !keys.includes(key))
+      throw new TypeError(`INSERT source is missing required column: ${key}`);
+  return mutation(
+    Object.freeze({
+      kind: 'insert',
+      table: table.node,
+      columns: Object.freeze(columns),
+      rows: Object.freeze([]),
+      query: query.ast,
+    }),
+  );
+}
+
 function filtered<N extends string>(
-  table: Table<ColumnMap, N>,
+  refs: readonly SourceReference[],
   ast: UpdateNode | DeleteNode,
+  on?: ExpressionNode,
 ): FilteredMutation<N> {
   return Object.freeze({
     ...mutation(ast),
     where(predicate: Predicate<N>) {
-      assertScope([predicate], [table.ref]);
-      if (predicate.phase !== 'scalar') throw new TypeError('Mutation filters must be scalar.');
-      return filtered(table, Object.freeze({ ...ast, where: predicate.expression }));
+      const where = condition(predicate, refs, 'Mutation filters');
+      return filtered(
+        refs,
+        Object.freeze({
+          ...ast,
+          where: on
+            ? Object.freeze({
+                kind: 'logical',
+                operator: 'AND',
+                operands: Object.freeze([on, where]),
+              })
+            : where,
+        }),
+        on,
+      );
     },
   });
 }
@@ -156,15 +237,63 @@ export function update<C extends ColumnMap, N extends string>(
 ): FilteredMutation<N> {
   checkTable(table);
   return filtered(
-    table,
+    [table.ref],
     Object.freeze({ kind: 'update', table: table.node, assignments: entries(table, values) }),
+  );
+}
+export function updateFrom<
+  C extends ColumnMap,
+  T extends string,
+  S extends ColumnMap,
+  N extends string,
+>(
+  target: Table<C, T>,
+  source: Table<S, N>,
+  on: Predicate<T | N>,
+  values: NoInfer<UpdateValues<C, T | N>>,
+): FilteredMutation<T | N> {
+  checkSource(target, source);
+  const refs = [target.ref, source.ref];
+  const join = condition(on, refs, 'UPDATE FROM join predicates');
+  return filtered(
+    refs,
+    Object.freeze({
+      kind: 'update',
+      table: target.node,
+      alias: target.ref.qualifier,
+      assignments: entries(target, values, refs),
+      from: source.source,
+      where: join,
+    }),
+    join,
   );
 }
 export function deleteFrom<C extends ColumnMap, N extends string>(
   table: Table<C, N>,
 ): FilteredMutation<N> {
   checkTable(table);
-  return filtered(table, Object.freeze({ kind: 'delete', table: table.node }));
+  return filtered([table.ref], Object.freeze({ kind: 'delete', table: table.node }));
+}
+export function deleteUsing<
+  C extends ColumnMap,
+  T extends string,
+  S extends ColumnMap,
+  N extends string,
+>(target: Table<C, T>, source: Table<S, N>, on: Predicate<T | N>): FilteredMutation<T | N> {
+  checkSource(target, source);
+  const refs = [target.ref, source.ref];
+  const join = condition(on, refs, 'DELETE USING join predicates');
+  return filtered(
+    refs,
+    Object.freeze({
+      kind: 'delete',
+      table: target.node,
+      alias: target.ref.qualifier,
+      using: source.source,
+      where: join,
+    }),
+    join,
+  );
 }
 
 export function mergeInto<
@@ -172,51 +301,66 @@ export function mergeInto<
   T extends string,
   S extends ColumnMap,
   N extends string,
->(target: Table<C, T>, source: Table<S, N>, on: Predicate<T | N>): MergeQuery<C, T | N> {
-  checkTable(target);
-  if (target.ref.name === source.ref.name)
-    throw new TypeError('MERGE sources need distinct names.');
-  assertScope([on], [target.ref, source.ref]);
-  if (on.phase !== 'scalar') throw new TypeError('MERGE requires a scalar match predicate.');
+>(target: Table<C, T>, source: Table<S, N>, on: Predicate<T | N>): MergeQuery<C, T | N, N> {
+  checkSource(target, source);
+  const refs = [target.ref, source.ref];
   const base: MergeNode = Object.freeze({
     kind: 'merge',
     target: Object.freeze({ kind: 'table', name: target.node, alias: target.ref.qualifier }),
     source: source.source,
-    on: on.expression,
+    on: condition(on, refs, 'MERGE match predicates'),
+    branches: Object.freeze([]),
   });
-  function build(ast: MergeNode): MergeQuery<C, T | N> {
+  function add(ast: MergeNode, branch: MergeBranchNode): MergeQuery<C, T | N, N> {
+    const matched = (item: MergeBranchNode) =>
+      (item.kind === 'not-matched-insert') === (branch.kind === 'not-matched-insert');
+    const branches = ast.branches as readonly MergeBranchNode[];
+    const fallback = branches.findIndex((item) => matched(item) && !item.condition);
+    if (fallback >= 0 && branch.condition)
+      throw new TypeError(
+        'Unreachable MERGE branch: an unconditional branch must be the last of its kind.',
+      );
+    const next =
+      fallback >= 0
+        ? branches.map((item, index) => (index === fallback ? branch : item))
+        : [...branches, branch];
+    return build(Object.freeze({ ...ast, branches: Object.freeze(next) }));
+  }
+  function when(predicate: Predicate | undefined, scope: readonly SourceReference[]) {
+    return predicate ? { condition: condition(predicate, scope, 'MERGE branch conditions') } : {};
+  }
+  function build(ast: MergeNode): MergeQuery<C, T | N, N> {
     return Object.freeze({
       ...mutation(ast),
       compile() {
-        if (!ast.matched && !ast.insert && !ast.deleteMatched)
-          throw new TypeError('MERGE needs at least one action.');
+        if (!ast.branches?.length) throw new TypeError('MERGE needs at least one action.');
         return compileAst(ast);
       },
-      whenMatchedUpdate(values: UpdateValues<C>) {
-        const { deleteMatched: _, ...previous } = ast;
-        return build(
+      whenMatchedUpdate(values: UpdateValues<C>, predicate?: Predicate) {
+        return add(
+          ast,
           Object.freeze({
-            ...previous,
-            matched: entries(target, values, [target.ref, source.ref]),
+            kind: 'matched-update',
+            ...when(predicate, refs),
+            assignments: entries(target, values, refs),
           }),
         );
       },
-      whenMatchedDelete() {
-        const { matched: _, ...previous } = ast;
-        return build(Object.freeze({ ...previous, deleteMatched: true }));
+      whenMatchedDelete(predicate?: Predicate) {
+        return add(ast, Object.freeze({ kind: 'matched-delete', ...when(predicate, refs) }));
       },
-      whenNotMatchedInsert(values: Record<string, unknown>) {
+      whenNotMatchedInsert(values: Record<string, unknown>, predicate?: Predicate) {
         const completed = Object.fromEntries(
           provided(target, values).map((key) => [key, values[key]]),
         );
-        const items = entries(target, completed, [target.ref, source.ref]);
-        return build(
+        const items = entries(target, completed, [source.ref]);
+        return add(
+          ast,
           Object.freeze({
-            ...ast,
-            insert: Object.freeze({
-              columns: Object.freeze(items.map((item) => item.column)),
-              values: Object.freeze(items.map((item) => item.value)),
-            }),
+            kind: 'not-matched-insert',
+            ...when(predicate, [source.ref]),
+            columns: Object.freeze(items.map((item) => item.column)),
+            values: Object.freeze(items.map((item) => item.value)),
           }),
         );
       },

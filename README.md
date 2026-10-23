@@ -129,14 +129,20 @@ await db.execute(insert(customers, { id: 1n, name: 'Ada', email: null }));
 await db.execute(update(customers, { name: 'Grace' }).where(eq(customers.columns.id, 1n)));
 await db.execute(deleteFrom(customers).where(eq(customers.columns.id, 1n)));
 
+const byId = eq(target.columns.id, staged.columns.id);
+await db.execute(insertFrom(target, select(staged, { id: staged.columns.id })));
+await db.execute(updateFrom(target, staged, byId, { name: staged.columns.name }));
+await db.execute(deleteUsing(target, staged, byId).where(eq(staged.columns.name, 'gone')));
+
 await db.execute(
-  mergeInto(target, staged, eq(target.columns.id, staged.columns.id))
+  mergeInto(target, staged, byId)
+    .whenMatchedDelete(eq(staged.columns.name, 'gone'))
     .whenMatchedUpdate({ name: staged.columns.name })
     .whenNotMatchedInsert({ id: staged.columns.id, name: staged.columns.name }),
 );
 ```
 
-INSERT accepts one row or an array of rows. Required columns must be present. Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or NULL; explicit `null` stays NULL. Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row; Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps. Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)` to make them optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)` column, which is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These modifiers are metadata only; they do not emit DDL. UPDATE accepts typed literal values and expressions from its table. MERGE supports matched update/delete and unmatched insert. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
+INSERT accepts one row or an array of rows. Required columns must be present. Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or NULL; explicit `null` stays NULL. Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row; Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps. Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)` to make them optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)` column, which is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These modifiers are metadata only; they do not emit DDL. `insertFrom` maps selected names to target columns, and the selected row type must fit the target. UPDATE accepts typed literal values and expressions from its table. `updateFrom` and `deleteUsing` take one table or derived source and a required join predicate; `.where()` adds to it. MERGE branches run in the order added, and each takes an optional condition. An unconditional branch must be the last of its kind, and NOT MATCHED branches may only reference the source. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
 
 ## Raw tagged queries
 

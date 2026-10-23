@@ -200,31 +200,54 @@ export interface InsertNode {
   readonly table: IdentifierNode;
   readonly columns: readonly IdentifierNode[];
   readonly rows: readonly (readonly (ExpressionNode | DefaultNode)[])[];
+  readonly query?: SelectNode;
+}
+export interface AssignmentNode {
+  readonly column: IdentifierNode;
+  readonly value: ExpressionNode;
 }
 export interface UpdateNode {
   readonly kind: 'update';
   readonly table: IdentifierNode;
-  readonly assignments: readonly {
-    readonly column: IdentifierNode;
-    readonly value: ExpressionNode;
-  }[];
+  readonly alias?: IdentifierNode;
+  readonly assignments: readonly AssignmentNode[];
+  readonly from?: RelationNode;
   readonly where?: ExpressionNode;
 }
 export interface DeleteNode {
   readonly kind: 'delete';
   readonly table: IdentifierNode;
+  readonly alias?: IdentifierNode;
+  readonly using?: RelationNode;
   readonly where?: ExpressionNode;
 }
+export type MergeBranchNode =
+  | {
+      readonly kind: 'matched-update';
+      readonly condition?: ExpressionNode;
+      readonly assignments: readonly AssignmentNode[];
+    }
+  | { readonly kind: 'matched-delete'; readonly condition?: ExpressionNode }
+  | {
+      readonly kind: 'not-matched-insert';
+      readonly condition?: ExpressionNode;
+      readonly columns: readonly IdentifierNode[];
+      readonly values: readonly ExpressionNode[];
+    };
 export interface MergeNode {
   readonly kind: 'merge';
   readonly target: TableNode;
   readonly source: RelationNode;
   readonly on: ExpressionNode;
-  readonly matched?: readonly { readonly column: IdentifierNode; readonly value: ExpressionNode }[];
+  readonly branches?: readonly MergeBranchNode[];
+  /** @deprecated Use `branches`. */
+  readonly matched?: readonly AssignmentNode[];
+  /** @deprecated Use `branches`. */
   readonly insert?: {
     readonly columns: readonly IdentifierNode[];
     readonly values: readonly ExpressionNode[];
   };
+  /** @deprecated Use `branches`. */
   readonly deleteMatched?: boolean;
 }
 export type StatementNode = SelectNode | InsertNode | UpdateNode | DeleteNode | MergeNode;
@@ -416,16 +439,14 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;
   }
-  function assignments(
-    values: readonly { readonly column: IdentifierNode; readonly value: ExpressionNode }[],
-    qualified: boolean,
-  ): string {
+  function assignments(values: readonly AssignmentNode[], qualified: boolean): string {
     return values
       .map(({ column, value }) => `${quoteIdentifier(column)} = ${expression(value, qualified)}`)
       .join(', ');
   }
   function insertStatement(node: InsertNode): string {
     const target = `${quoteIdentifier(node.table)} (${node.columns.map(quoteIdentifier).join(', ')})`;
+    if (node.query) return `INSERT INTO ${target} ${selectStatement(node.query)}`;
     if (!node.rows.some((row) => row.some((value) => value.kind === 'default')))
       return `INSERT INTO ${target} ${node.rows.map((row) => `SELECT ${row.map((value) => expression(value as ExpressionNode)).join(', ')}`).join(' UNION ALL ')}`;
     // VALUES rejects expressions such as PARSE_JSON, so rows with differing omitted columns
@@ -450,20 +471,41 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     case 'insert':
       sql = insertStatement(statement);
       break;
-    case 'update':
-      sql = `UPDATE ${quoteIdentifier(statement.table)} SET ${assignments(statement.assignments, false)}${statement.where ? ` WHERE ${expression(statement.where)}` : ''}`;
+    case 'update': {
+      const qualified = Boolean(statement.from);
+      sql = `UPDATE ${quoteIdentifier(statement.table)}${statement.alias ? ` AS ${quoteIdentifier(statement.alias)}` : ''} SET ${assignments(statement.assignments, qualified)}`;
+      if (statement.from) sql += ` FROM ${source(statement.from)}`;
+      if (statement.where) sql += ` WHERE ${expression(statement.where, qualified)}`;
       break;
-    case 'delete':
-      sql = `DELETE FROM ${quoteIdentifier(statement.table)}${statement.where ? ` WHERE ${expression(statement.where)}` : ''}`;
+    }
+    case 'delete': {
+      const qualified = Boolean(statement.using);
+      sql = `DELETE FROM ${quoteIdentifier(statement.table)}${statement.alias ? ` AS ${quoteIdentifier(statement.alias)}` : ''}`;
+      if (statement.using) sql += ` USING ${source(statement.using)}`;
+      if (statement.where) sql += ` WHERE ${expression(statement.where, qualified)}`;
       break;
-    case 'merge':
+    }
+    case 'merge': {
       sql = `MERGE INTO ${source(statement.target)} USING ${source(statement.source)} ON ${expression(statement.on, true)}`;
-      if (statement.deleteMatched) sql += ' WHEN MATCHED THEN DELETE';
-      if (statement.matched)
-        sql += ` WHEN MATCHED THEN UPDATE SET ${assignments(statement.matched, true)}`;
-      if (statement.insert)
-        sql += ` WHEN NOT MATCHED THEN INSERT (${statement.insert.columns.map(quoteIdentifier).join(', ')}) VALUES (${statement.insert.values.map((value) => expression(value, true)).join(', ')})`;
+      const branches: MergeBranchNode[] = [
+        ...(statement.deleteMatched ? [{ kind: 'matched-delete' as const }] : []),
+        ...(statement.matched
+          ? [{ kind: 'matched-update' as const, assignments: statement.matched }]
+          : []),
+        ...(statement.insert ? [{ kind: 'not-matched-insert' as const, ...statement.insert }] : []),
+        ...(statement.branches ?? []),
+      ];
+      for (const branch of branches) {
+        sql += ` WHEN ${branch.kind === 'not-matched-insert' ? 'NOT MATCHED' : 'MATCHED'}`;
+        if (branch.condition) sql += ` AND ${expression(branch.condition, true)}`;
+        if (branch.kind === 'matched-update')
+          sql += ` THEN UPDATE SET ${assignments(branch.assignments, true)}`;
+        else if (branch.kind === 'matched-delete') sql += ' THEN DELETE';
+        else
+          sql += ` THEN INSERT (${branch.columns.map(quoteIdentifier).join(', ')}) VALUES (${branch.values.map((value) => expression(value, true)).join(', ')})`;
+      }
       break;
+    }
     default:
       throw new TypeError('Unsupported statement AST node.');
   }
