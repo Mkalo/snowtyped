@@ -56,11 +56,39 @@ export interface InNode {
   readonly values: readonly ExpressionNode[];
   readonly negate: boolean;
 }
+export type IntervalUnit =
+  | 'YEAR'
+  | 'QUARTER'
+  | 'MONTH'
+  | 'WEEK'
+  | 'DAY'
+  | 'HOUR'
+  | 'MINUTE'
+  | 'SECOND'
+  | 'MILLISECOND'
+  | 'MICROSECOND'
+  | 'NANOSECOND';
+export interface FrameBoundaryNode {
+  readonly bound:
+    | 'UNBOUNDED PRECEDING'
+    | 'PRECEDING'
+    | 'CURRENT ROW'
+    | 'FOLLOWING'
+    | 'UNBOUNDED FOLLOWING';
+  readonly offset?: number;
+  readonly unit?: IntervalUnit;
+}
+export interface WindowFrameNode {
+  readonly units: 'ROWS' | 'RANGE';
+  readonly start: FrameBoundaryNode;
+  readonly end: FrameBoundaryNode;
+}
 export interface WindowNode {
   readonly kind: 'window';
   readonly value: ExpressionNode;
   readonly partitionBy: readonly ExpressionNode[];
   readonly orderBy: readonly OrderNode[];
+  readonly frame?: WindowFrameNode;
 }
 export interface JsonPathNode {
   readonly kind: 'json-path';
@@ -251,6 +279,9 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           node.orderBy.length
             ? `ORDER BY ${node.orderBy.map((value) => order(value, qualify)).join(', ')}`
             : '',
+          node.frame
+            ? `${node.frame.units} BETWEEN ${boundary(node.frame.start)} AND ${boundary(node.frame.end)}`
+            : '',
         ]
           .filter(Boolean)
           .join(' ')})`;
@@ -267,6 +298,10 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   }
   function order(node: OrderNode, qualify: boolean): string {
     return `${expression(node.expression, qualify)} ${node.direction}${node.nulls ? ` NULLS ${node.nulls}` : ''}`;
+  }
+  function boundary(node: FrameBoundaryNode): string {
+    if (node.offset === undefined) return node.bound;
+    return `${node.unit ? `INTERVAL '${node.offset} ${node.unit}'` : node.offset} ${node.bound}`;
   }
   function source(node: RelationNode): string {
     switch (node.kind) {

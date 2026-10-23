@@ -8,8 +8,10 @@ export {
   type EqualityNode,
   type ExpressionNode,
   type FlattenNode,
+  type FrameBoundaryNode,
   type IdentifierNode,
   type InsertNode,
+  type IntervalUnit,
   identifier,
   type JoinNode,
   type MergeNode,
@@ -22,6 +24,7 @@ export {
   type TableNode,
   type TemporalNode,
   type UpdateNode,
+  type WindowFrameNode,
   type WireType,
 } from './ast.js';
 export {
@@ -32,6 +35,8 @@ export {
   desc,
   type Expression,
   eq,
+  type FrameBoundary,
+  type FramedWindowOptions,
   gt,
   gte,
   type InferExpression,
@@ -52,9 +57,13 @@ export {
   or,
   over,
   type Predicate,
+  type RangeBoundary,
+  rangeBetween,
   rowNumber,
+  rowsBetween,
   sum,
   upper,
+  type WindowFrame,
 } from './expressions.js';
 export {
   generateSchema,

@@ -93,6 +93,11 @@ const rank = rowNumber({
   orderBy: [desc(orders.columns.amount)],
 });
 const latest = select(orders, { id: orders.columns.id, rank }).qualify(eq(rank, 1n));
+const running = over(sum(orders.columns.amount), {
+  partitionBy: [orders.columns.customerId],
+  orderBy: [asc(orders.columns.id)],
+  frame: rowsBetween('UNBOUNDED PRECEDING', 'CURRENT ROW'),
+});
 
 const items = flatten(jsonPath(events.columns.payload, 'items'), 'items');
 const expanded = select(events)
@@ -104,7 +109,7 @@ const prices = select(trades)
   .select({ at: trades.columns.at, price: quotes.columns.price });
 ```
 
-`over(aggregate, options)` supports aggregate windows. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
+`over(aggregate, options)` supports aggregate windows. An explicit `frame` (`rowsBetween(start, end)` or `rangeBetween(start, end)`) requires ORDER BY and an aggregate; ranking functions such as `rowNumber` reject frames. Boundaries are `'UNBOUNDED PRECEDING'`, `'CURRENT ROW'`, `'UNBOUNDED FOLLOWING'`, `{ preceding: n }`, or `{ following: n }`, and the start cannot follow the end. ROWS offsets are nonnegative integers. RANGE offsets need exactly one ORDER BY expression: numeric offsets for a numeric or date key, or `{ preceding: n, unit: 'DAY' }` intervals for a date or timestamp key. Empty frames yield NULL aggregates and zero counts. Snowflake's frame-size limits remain database-enforced. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
 `timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Database retention and supported selector rules still apply.
 
