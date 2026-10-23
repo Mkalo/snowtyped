@@ -44,14 +44,16 @@ Snowflake consumes identity and sequence values for every branch, so such insert
   value must be selected, and virtual columns cannot be.
 - `updateFrom(target, source, on, values)` and `deleteUsing(target, source, on)` require a join
   predicate. `.where()` adds filters to it, so a forgotten filter cannot cross join every row.
-- Sources are base tables or derived queries (`.as()`). Combine several tables into one derived
+- Sources are base tables, derived queries (`.as()`), or CTEs (`.asCte()`). DML has no WITH
+  clause, so a CTE source is inlined as a derived query. Combine several tables into one derived
   query.
 
 ## MERGE
 
 `mergeInto(target, source, on)` adds `WHEN [NOT] MATCHED` branches in the order they are called.
 `whenMatchedUpdate(values, condition?)`, `whenMatchedDelete(condition?)`, and
-`whenNotMatchedInsert(values, condition?)` each take an optional condition.
+`whenNotMatchedInsert(values, condition?)` each take an optional condition. The source accepts the
+same kinds as `updateFrom` and `deleteUsing`.
 
 <Snippet code={merge} />
 

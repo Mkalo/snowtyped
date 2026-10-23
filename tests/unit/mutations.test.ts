@@ -129,6 +129,26 @@ describe('UPDATE FROM and DELETE USING', () => {
     );
   });
 
+  it('inlines CTE sources as derived queries', () => {
+    const stale = select(source, { id: source.columns.id })
+      .where(eq(source.columns.label, 'stale'))
+      .asCte('S');
+    const on = eq(target.columns.id, stale.columns.id);
+    const inlined = '(SELECT "ID" AS "id" FROM "SOURCE" WHERE ("LABEL" = ?)) AS "S"';
+    expect(deleteUsing(target, stale, on).compile()).toEqual({
+      sql: `DELETE FROM "APP"."TARGET" AS "TARGET" USING ${inlined} WHERE ("TARGET"."ID" = "S"."id")`,
+      binds: ['stale'],
+    });
+    expect(updateFrom(target, stale, on, { label: 'x' }).compile()).toEqual({
+      sql: `UPDATE "APP"."TARGET" AS "TARGET" SET "LABEL" = ? FROM ${inlined} WHERE ("TARGET"."ID" = "S"."id")`,
+      binds: ['x', 'stale'],
+    });
+    expect(mergeInto(target, stale, on).whenMatchedDelete().compile()).toEqual({
+      sql: `MERGE INTO "APP"."TARGET" AS "TARGET" USING ${inlined} ON ("TARGET"."ID" = "S"."id") WHEN MATCHED THEN DELETE`,
+      binds: ['stale'],
+    });
+  });
+
   it('enforces source kinds, names, and scope', () => {
     const join = eq(target.columns.id, source.columns.id);
     const otherJoin = eq(target.columns.id, other.columns.id);
@@ -144,12 +164,9 @@ describe('UPDATE FROM and DELETE USING', () => {
     expect(() => deleteUsing(target, alias(source, 'TARGET'), join as never)).toThrow(
       'distinct names',
     );
-    expect(() => deleteUsing(target, select(source).asCte('S'), join as never)).toThrow(
-      'tables or derived',
-    );
     expect(() =>
       deleteUsing(target, flatten(jsonPath(source.columns.data, 'x'), 'F'), join as never),
-    ).toThrow('tables or derived');
+    ).toThrow('tables, derived queries, or CTEs');
     expect(() => updateFrom(select(target).as('D'), source, join as never, { id: 1n })).toThrow(
       'base table',
     );
@@ -208,9 +225,6 @@ describe('conditional MERGE branches', () => {
     expect(() => merge.whenMatchedDelete(eq(other.columns.id, 1n) as never)).toThrow('scope');
     expect(() => merge.whenMatchedDelete(eq(rowNumber(), 1n))).toThrow('scalar');
     expect(() => merge.whenMatchedUpdate({})).toThrow('at least one');
-    expect(() => mergeInto(target, select(source).asCte('S'), eq(target.columns.id, 1n))).toThrow(
-      'tables or derived',
-    );
   });
 
   it('compiles legacy single-action MERGE nodes before explicit branches', () => {
