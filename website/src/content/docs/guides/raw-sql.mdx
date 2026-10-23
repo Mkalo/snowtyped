@@ -1,0 +1,50 @@
+---
+title: Raw SQL
+description: Parameterized tagged templates, reusable fragments, and result assertions.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../../components/Snippet.astro';
+import rawQuery from '../../../snippets/raw-query.ts?raw';
+import sqlTag from '../../../snippets/sql-tag.ts?raw';
+
+`db.queryRaw` runs a tagged template. Interpolated values become bind parameters, never SQL text.
+
+<Snippet code={rawQuery} />
+
+<Aside title="The generic is an assertion">
+  The type argument describes the **entire returned result**, like Prisma's `queryRaw`. Snowtyped
+  does not parse arbitrary SQL into a result schema, so raw results are not validated at runtime.
+  Without a type argument the result is `unknown`. See [validation](/guides/validation/).
+</Aside>
+
+## Reusable fragments
+
+The standalone `sql` tag builds query values you can compose and pass to `db.queryRaw` or
+`db.streamRaw`. `` db.queryRaw<Result>(sql`...`) `` is also supported.
+
+<Snippet code={sqlTag} />
+
+| Helper                       | Use                                                        |
+| ---------------------------- | ---------------------------------------------------------- |
+| `sql.identifier(...parts)`   | A quoted, optionally qualified identifier                  |
+| `sql.join(values, sep?)`     | Comma-separated lists, or predicates with a custom separator |
+| `sql.json(value)`            | A bound `PARSE_JSON` value                                 |
+| `sql.unsafe(text)`           | Trusted SQL text, inserted verbatim                        |
+
+Nested fragments compose with their bindings in order. Plain objects, arrays, `undefined`,
+non-finite numbers, and unsafe integer numbers are rejected as ordinary interpolations; use the
+helpers, `bigint`, or decimal text instead.
+
+<Aside type="danger">
+  `sql.unsafe` is an explicit escape hatch. Never pass it user input.
+</Aside>
+
+## Result shapes
+
+- Numbers, temporal values, and semi-structured values are returned as strings.
+- Temporal text follows the session's output format parameters, which can drop fractional seconds.
+  Cast or use `TO_VARCHAR` explicitly when the exact form matters. See
+  [exact values](/guides/validation/#exact-numeric-and-temporal-values).
+- Field names follow SQL aliases and the SDK's object-row behavior. Alias duplicate column names
+  explicitly to avoid key collisions.
