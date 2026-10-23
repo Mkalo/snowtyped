@@ -159,11 +159,14 @@ export interface SelectNode {
   readonly offset?: number;
   readonly with?: readonly CteNode[];
 }
+export interface DefaultNode {
+  readonly kind: 'default';
+}
 export interface InsertNode {
   readonly kind: 'insert';
   readonly table: IdentifierNode;
   readonly columns: readonly IdentifierNode[];
-  readonly rows: readonly (readonly ExpressionNode[])[];
+  readonly rows: readonly (readonly (ExpressionNode | DefaultNode)[])[];
 }
 export interface UpdateNode {
   readonly kind: 'update';
@@ -364,13 +367,31 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       .map(({ column, value }) => `${quoteIdentifier(column)} = ${expression(value, qualified)}`)
       .join(', ');
   }
+  function insertStatement(node: InsertNode): string {
+    const target = `${quoteIdentifier(node.table)} (${node.columns.map(quoteIdentifier).join(', ')})`;
+    if (!node.rows.some((row) => row.some((value) => value.kind === 'default')))
+      return `INSERT INTO ${target} ${node.rows.map((row) => `SELECT ${row.map((value) => expression(value as ExpressionNode)).join(', ')}`).join(' UNION ALL ')}`;
+    // VALUES rejects expressions such as PARSE_JSON, so rows with differing omitted columns
+    // become one conditional multi-table insert whose branches use DEFAULT per row shape.
+    const shapes: string[] = [];
+    const sources = node.rows.map((row) => {
+      const shape = row
+        .map((value, index) =>
+          value.kind === 'default' ? 'DEFAULT' : quoteIdentifier(identifier(`__sflib_${index}`)),
+        )
+        .join(', ');
+      if (!shapes.includes(shape)) shapes.push(shape);
+      return `SELECT ${shapes.indexOf(shape)} AS "__sflib_shape", ${row.map((value, index) => `${value.kind === 'default' ? 'NULL' : expression(value)} AS ${quoteIdentifier(identifier(`__sflib_${index}`))}`).join(', ')}`;
+    });
+    return `INSERT ALL ${shapes.map((shape, index) => `WHEN "__sflib_shape" = ${index} THEN INTO ${target} VALUES (${shape})`).join(' ')} ${sources.join(' UNION ALL ')}`;
+  }
   let sql: string;
   switch (statement.kind) {
     case 'select':
       sql = selectStatement(statement, true);
       break;
     case 'insert':
-      sql = `INSERT INTO ${quoteIdentifier(statement.table)} (${statement.columns.map(quoteIdentifier).join(', ')}) ${statement.rows.map((row) => `SELECT ${row.map((value) => expression(value)).join(', ')}`).join(' UNION ALL ')}`;
+      sql = insertStatement(statement);
       break;
     case 'update':
       sql = `UPDATE ${quoteIdentifier(statement.table)} SET ${assignments(statement.assignments, false)}${statement.where ? ` WHERE ${expression(statement.where)}` : ''}`;

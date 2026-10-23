@@ -10,14 +10,21 @@ import { type Expression, isExpression, type Predicate } from './expressions.js'
 import { assertScope } from './query.js';
 import type { AnyColumn, ColumnMap, InferColumn, Table } from './schema.js';
 
-type RequiredKeys<C extends ColumnMap> = {
-  [K in keyof C]: C[K]['required'] extends true ? K : never;
+type WritableKeys<C extends ColumnMap> = {
+  [K in keyof C]: C[K]['serverValue'] extends { readonly kind: 'virtual' } ? never : K;
 }[keyof C];
+type RequiredKeys<C extends ColumnMap> = {
+  [K in WritableKeys<C>]: C[K]['required'] extends true
+    ? C[K]['serverValue'] extends null
+      ? K
+      : never
+    : never;
+}[WritableKeys<C>];
 export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferColumn<C[K]> } & {
-  [K in Exclude<keyof C, RequiredKeys<C>>]?: InferColumn<C[K]>;
+  [K in Exclude<WritableKeys<C>, RequiredKeys<C>>]?: InferColumn<C[K]>;
 };
 export type UpdateValues<C extends ColumnMap, Scope extends string = string> = {
-  [K in keyof C]?: InferColumn<C[K]> | Expression<InferColumn<C[K]>, Scope>;
+  [K in WritableKeys<C>]?: InferColumn<C[K]> | Expression<InferColumn<C[K]>, Scope>;
 };
 export interface MutationQuery {
   readonly kind: 'mutation';
@@ -43,14 +50,29 @@ function checkTable(table: Table): void {
 function mutation(ast: StatementNode): MutationQuery {
   return Object.freeze({ kind: 'mutation', ast, compile: () => compileAst(ast) });
 }
+function writable(table: Table, key: string): AnyColumn {
+  if (!Object.hasOwn(table.columns, key)) throw new TypeError(`Unknown mutation column: ${key}`);
+  const column = table.columns[key] as AnyColumn;
+  if (column.serverValue?.kind === 'virtual')
+    throw new TypeError(`Cannot write virtual column: ${key}`);
+  return column;
+}
+function provided(table: Table, values: Readonly<Record<string, unknown>>): string[] {
+  for (const key of Object.keys(values)) writable(table, key);
+  return Object.keys(table.columns).filter((key) => {
+    const column = table.columns[key] as AnyColumn;
+    if (Object.hasOwn(values, key) && values[key] !== undefined) return true;
+    if (column.required && !column.serverValue)
+      throw new TypeError(`Missing required insert column: ${key}`);
+    return false;
+  });
+}
 function entries(table: Table, values: Readonly<Record<string, unknown>>, refs = [table.ref]) {
   const items = Object.entries(values);
   if (!items.length) throw new TypeError('A mutation needs at least one column value.');
   return Object.freeze(
     items.map(([key, value]) => {
-      if (!Object.hasOwn(table.columns, key))
-        throw new TypeError(`Unknown mutation column: ${key}`);
-      const column = table.columns[key] as AnyColumn;
+      const column = writable(table, key);
       if (isExpression(value)) assertScope([value], refs);
       return Object.freeze({
         column: column.node,
@@ -65,20 +87,26 @@ export function insert<C extends ColumnMap>(
   input: NoInfer<InsertValues<C>> | readonly NoInfer<InsertValues<C>>[],
 ): MutationQuery {
   checkTable(table);
-  const rows = Array.isArray(input) ? input : [input];
+  const rows: readonly Readonly<Record<string, unknown>>[] = Array.isArray(input) ? input : [input];
   if (!rows.length) throw new TypeError('INSERT needs at least one row.');
-  const keys = Object.keys(table.columns);
-  const encoded = rows.map((row) => {
-    for (const key of Object.keys(row))
-      if (!Object.hasOwn(table.columns, key))
-        throw new TypeError(`Unknown mutation column: ${key}`);
-    return Object.freeze(
-      keys.map((key) => {
-        const column = table.columns[key] as AnyColumn;
-        return column.encode(Object.hasOwn(row, key) ? row[key] : null);
-      }),
+  const present = rows.map((row) => new Set(provided(table, row)));
+  let keys = Object.keys(table.columns).filter((key) => present.some((row) => row.has(key)));
+  if (!keys.length) {
+    const fallback = Object.keys(table.columns).find(
+      (key) => (table.columns[key] as AnyColumn).serverValue?.kind !== 'virtual',
     );
-  });
+    if (fallback === undefined) throw new TypeError('INSERT needs a writable column.');
+    keys = [fallback];
+  }
+  const encoded = rows.map((row, index) =>
+    Object.freeze(
+      keys.map((key) =>
+        (present[index] as Set<string>).has(key)
+          ? (table.columns[key] as AnyColumn).encode(row[key])
+          : Object.freeze({ kind: 'default' as const }),
+      ),
+    ),
+  );
   return mutation(
     Object.freeze({
       kind: 'insert',
@@ -159,14 +187,8 @@ export function mergeInto<
       },
       whenNotMatchedInsert(values: Record<string, unknown>) {
         const completed = Object.fromEntries(
-          Object.keys(target.columns).map((key) => [
-            key,
-            Object.hasOwn(values, key) ? values[key] : null,
-          ]),
+          provided(target, values).map((key) => [key, values[key]]),
         );
-        for (const key of Object.keys(values))
-          if (!Object.hasOwn(target.columns, key))
-            throw new TypeError(`Unknown mutation column: ${key}`);
         const items = entries(target, completed, [target.ref, source.ref]);
         return build(
           Object.freeze({

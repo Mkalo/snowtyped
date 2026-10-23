@@ -29,15 +29,38 @@ export type DataType =
   | 'timestamp_tz'
   | 'variant'
   | 'binary';
-export interface Column<T, Required extends boolean = false, Scope extends string = string>
-  extends Expression<ColumnValue<T, Required>, Scope> {
+export interface ServerValues {
+  readonly none: null;
+  readonly default: { readonly kind: 'default'; readonly expression?: string };
+  readonly identity: {
+    readonly kind: 'identity';
+    readonly start?: number;
+    readonly increment?: number;
+    readonly order?: boolean;
+  };
+  readonly virtual: { readonly kind: 'virtual'; readonly expression?: string };
+}
+export type ServerValueKind = keyof ServerValues;
+export type ServerValue = NonNullable<ServerValues[ServerValueKind]>;
+export type IdentityOptions = Omit<ServerValues['identity'], 'kind'>;
+export interface Column<
+  T,
+  Required extends boolean = false,
+  Scope extends string = string,
+  Server extends ServerValueKind = 'none',
+> extends Expression<ColumnValue<T, Required>, Scope> {
   readonly node: IdentifierNode;
   readonly dataType: DataType;
   readonly required: Required;
-  notNull(): Column<T, true, Scope>;
+  readonly serverValue: ServerValues[Server];
+  notNull(): Column<T, true, Scope, Server>;
+  serverDefault(expression?: string): Column<T, Required, Scope, 'default'>;
+  identity(options?: IdentityOptions): Column<T, Required, Scope, 'identity'>;
+  virtual(expression?: string): Column<T, Required, Scope, 'virtual'>;
 }
-export type AnyColumn = Column<unknown, boolean, string>;
-export type InferColumn<C> = C extends Column<infer T, infer R, string> ? ColumnValue<T, R> : never;
+export type AnyColumn = Column<unknown, boolean, string, ServerValueKind>;
+export type InferColumn<C> =
+  C extends Column<infer T, infer R, string, ServerValueKind> ? ColumnValue<T, R> : never;
 export type ColumnMap = Readonly<Record<string, AnyColumn>>;
 export type Selection = Readonly<Record<string, AnyExpression>>;
 export type InferSelection<S extends Selection, Nullable extends string = never> = {
@@ -46,16 +69,34 @@ export type InferSelection<S extends Selection, Nullable extends string = never>
     | (Extract<ExpressionNullScope<S[K]>, Nullable> extends never ? never : null);
 };
 export type BoundColumns<C extends ColumnMap, Name extends string> = {
-  [K in keyof C]: C[K] extends Column<infer T, infer R, string> ? Column<T, R, Name> : never;
+  [K in keyof C]: C[K] extends Column<infer T, infer R, string, infer S>
+    ? Column<T, R, Name, S>
+    : never;
 };
 
-function column<T, R extends boolean>(
+function serverExpression(kind: 'default' | 'virtual', expression: string | undefined) {
+  if (expression !== undefined && !expression.trim())
+    throw new TypeError('Server value expressions cannot be empty.');
+  return Object.freeze({ kind, ...(expression === undefined ? {} : { expression }) });
+}
+function identityValue(options: IdentityOptions) {
+  for (const key of ['start', 'increment'] as const) {
+    const value = options[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || (key === 'increment' && !value)))
+      throw new TypeError(
+        'Identity start and increment must be safe integers, and increment cannot be zero.',
+      );
+  }
+  return Object.freeze({ kind: 'identity' as const, ...options });
+}
+function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
   name: string,
   dataType: DataType,
   read: z.ZodType<T>,
   value: z.ZodType<T>,
   required: R,
-): Column<T, R> {
+  serverValue: ServerValue | null = null,
+): Column<T, R, string, S> {
   const readSchema = (required ? read : read.nullable()) as z.ZodType<ColumnValue<T, R>>;
   const valueSchema = (required ? value : value.nullable()) as z.ZodType<ColumnValue<T, R>>;
   const node = identifier(name);
@@ -93,8 +134,29 @@ function column<T, R extends boolean>(
     node,
     dataType,
     required,
-    notNull: () => column(name, dataType, read, value, true),
-  });
+    serverValue: serverValue as ServerValues[S],
+    notNull: () => column<T, true, S>(name, dataType, read, value, true, serverValue),
+    serverDefault: (expression?: string) =>
+      column<T, R, 'default'>(
+        name,
+        dataType,
+        read,
+        value,
+        required,
+        serverExpression('default', expression),
+      ),
+    identity: (options: IdentityOptions = {}) =>
+      column<T, R, 'identity'>(name, dataType, read, value, required, identityValue(options)),
+    virtual: (expression?: string) =>
+      column<T, R, 'virtual'>(
+        name,
+        dataType,
+        read,
+        value,
+        required,
+        serverExpression('virtual', expression),
+      ),
+  }) as Column<T, R, string, S>;
 }
 export function text(name: string): Column<string> {
   return column(name, 'text', z.string(), z.string(), false);
@@ -174,18 +236,21 @@ export interface TableOptions {
   readonly database?: string;
 }
 
-export function bindColumn<T, R extends boolean, N extends string>(
-  value: Column<T, R>,
+export function bindColumn<T, R extends boolean, N extends string, S extends ServerValueKind>(
+  value: Column<T, R, string, S>,
   ref: SourceReference,
-): Column<T, R, N> {
+): Column<T, R, N, S> {
   return Object.freeze({
     ...value,
     phase: 'scalar',
     expression: Object.freeze({ kind: 'reference', source: ref, column: value.node }),
     refs: Object.freeze([ref]),
     nullRefs: Object.freeze([ref]),
-    notNull: () => bindColumn<T, true, N>(value.notNull(), ref),
-  }) as Column<T, R, N>;
+    notNull: () => bindColumn(value.notNull(), ref),
+    serverDefault: (expression?: string) => bindColumn(value.serverDefault(expression), ref),
+    identity: (options?: IdentityOptions) => bindColumn(value.identity(options), ref),
+    virtual: (expression?: string) => bindColumn(value.virtual(expression), ref),
+  }) as Column<T, R, N, S>;
 }
 export function bindTable<C extends ColumnMap, N extends string>(
   node: IdentifierNode,

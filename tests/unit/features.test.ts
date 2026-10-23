@@ -353,12 +353,15 @@ describe('all declared scalar domains and DML', () => {
       sql: 'INSERT INTO "T" ("ID", "NAME") SELECT ?, ? UNION ALL SELECT ?, ?',
       binds: ['1', 'a', '2', null],
     });
-    expect(insert(table, { id: 3n }).compile().binds).toEqual(['3', null]);
+    expect(insert(table, { id: 3n }).compile()).toEqual({
+      sql: 'INSERT INTO "T" ("ID") SELECT ?',
+      binds: ['3'],
+    });
     expect(() => insert(table, [])).toThrow('at least one row');
     expect(() => insert(table, { id: 1n, wrong: true } as unknown as { id: bigint })).toThrow(
       'Unknown',
     );
-    expect(() => insert(table, {} as { id: bigint })).toThrow();
+    expect(() => insert(table, {} as { id: bigint })).toThrow('Missing required insert column: id');
     expect(() => insert(select(table).as('derived'), { id: 1n, name: null })).toThrow('base table');
   });
 
@@ -389,7 +392,10 @@ describe('all declared scalar domains and DML', () => {
     expect(updateInsert.compile().sql).toContain(
       'WHEN MATCHED THEN UPDATE SET "LABEL" = "SOURCE"."LABEL"',
     );
-    expect(updateInsert.compile().binds).toEqual([null]);
+    expect(updateInsert.compile()).toMatchObject({
+      sql: expect.stringContaining('WHEN NOT MATCHED THEN INSERT ("ID") VALUES ("SOURCE"."ID")'),
+      binds: [],
+    });
     expect(merge.whenMatchedUpdate({ label: 'x' }).whenMatchedDelete().compile().sql).toContain(
       'WHEN MATCHED THEN DELETE',
     );
