@@ -37,6 +37,13 @@ export interface SnowflakeClient {
   transaction<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T>;
 }
 
+const unusable = new WeakSet<DriverConnection>();
+
+/** True once a failed ROLLBACK left the connection in an unknown transaction state. */
+export function isUnusable(connection: DriverConnection): boolean {
+  return unusable.has(connection);
+}
+
 /** Uses a connected SDK connection. The caller owns connection lifecycle. */
 export function createClient(connection: DriverConnection): SnowflakeClient {
   const schemas = new WeakMap<object, ReturnType<typeof resultSchema>>();
@@ -58,6 +65,10 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
   }
   function factory(session?: Session): SnowflakeClient {
     function check() {
+      if (unusable.has(connection))
+        throw new Error(
+          'This connection is unusable because a transaction ROLLBACK failed; discard it.',
+        );
       if (activeSession && !session)
         throw new Error(
           'This connection is reserved by an active transaction; use its transaction client.',
@@ -195,6 +206,7 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
             try {
               await request(connection, driverOptions(sql`ROLLBACK`, 'object'));
             } catch (rollback) {
+              unusable.add(connection);
               throw new AggregateError(
                 [error, rollback],
                 'Transaction failed and rollback also failed.',

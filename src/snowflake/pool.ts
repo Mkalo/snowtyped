@@ -1,9 +1,9 @@
-import type { ConnectionOptions } from 'snowflake-sdk';
+import type { Connection, ConnectionOptions } from 'snowflake-sdk';
 import type { MutationQuery } from '../mutations.js';
 import type { SelectQuery } from '../query.js';
 import type { Selection } from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation } from '../sql.js';
-import { createClient, type SnowflakeClient } from './client.js';
+import { createClient, isUnusable, type SnowflakeClient } from './client.js';
 import type { ExecuteOptions } from './request.js';
 
 export interface PoolOptions {
@@ -27,13 +27,16 @@ export async function createPool(
   function check() {
     if (closed) throw new Error('This Snowflake pool is closed.');
   }
+  async function release(connection: Connection) {
+    await (isUnusable(connection) ? pool.destroy(connection) : pool.release(connection));
+  }
   async function use<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T> {
     check();
     const connection = await pool.acquire();
     try {
       return await callback(createClient(connection));
     } finally {
-      await pool.release(connection);
+      await release(connection);
     }
   }
   return Object.freeze({
@@ -62,7 +65,7 @@ export async function createPool(
       try {
         yield* createClient(connection).stream(query, executeOptions);
       } finally {
-        await pool.release(connection);
+        await release(connection);
       }
     },
     async *streamRaw<T = unknown>(query: RawQuery, executeOptions?: ExecuteOptions) {
@@ -71,7 +74,7 @@ export async function createPool(
       try {
         yield* createClient(connection).streamRaw<T>(query, executeOptions);
       } finally {
-        await pool.release(connection);
+        await release(connection);
       }
     },
     transaction: <T>(callback: (client: SnowflakeClient) => Promise<T>) =>
