@@ -75,6 +75,19 @@ describe('INSERT from SELECT', () => {
       insertFrom(select(source).as('D') as never, select(source, { id: source.columns.id })),
     ).toThrow('base table');
   });
+  it('lets server-populated columns be omitted and rejects virtual targets', () => {
+    const generated = snowflakeTable('GENERATED', {
+      id: integer('ID').notNull().identity(),
+      label: text('LABEL').notNull().serverDefault(),
+      upper: text('UPPER').virtual(),
+    });
+    expect(
+      insertFrom(generated, select(source, { label: source.columns.label }) as never).compile().sql,
+    ).toBe('INSERT INTO "GENERATED" ("LABEL") SELECT "LABEL" AS "label" FROM "SOURCE"');
+    expect(() =>
+      insertFrom(generated, select(source, { upper: source.columns.label }) as never),
+    ).toThrow('Cannot write virtual column: upper');
+  });
 });
 
 describe('UPDATE FROM and DELETE USING', () => {
@@ -160,8 +173,8 @@ describe('conditional MERGE branches', () => {
         ' WHEN NOT MATCHED AND ("SOURCE"."ID" > ?) THEN INSERT ("ID", "LABEL") VALUES ("SOURCE"."ID", ?)' +
         ' WHEN MATCHED AND ("TARGET"."LABEL" = ?) THEN DELETE' +
         ' WHEN MATCHED THEN UPDATE SET "LABEL" = "SOURCE"."LABEL"' +
-        ' WHEN NOT MATCHED THEN INSERT ("ID", "LABEL") VALUES ("SOURCE"."ID", ?)',
-      binds: ['a', 'first', '1', 'new', 'b', null],
+        ' WHEN NOT MATCHED THEN INSERT ("ID") VALUES ("SOURCE"."ID")',
+      binds: ['a', 'first', '1', 'new', 'b'],
     });
   });
 

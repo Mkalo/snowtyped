@@ -163,10 +163,9 @@ changes stable behavior:
 - MATCH_RECOGNIZE (#15)
 - DDL builders and migrations (#16)
 
-In progress and not yet part of this contract: raw-query cancellation (#2),
-expression and function helpers (#3), constraints and additional type codecs (#5), window frames (#6), and set
-operations (#7). Each joins the stable API when it merges and this document and
-the export snapshot are updated.
+In progress and not yet part of this contract: expression and function helpers (#3), constraints
+and additional type codecs (#5), and set operations (#7). Each joins the stable API when it merges
+and this document and the export snapshot are updated.
 
 Raw SQL remains available for Snowflake syntax beyond the modeled builders.
 

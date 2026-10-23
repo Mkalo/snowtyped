@@ -18,9 +18,17 @@ const source = snowflakeTable('SOURCE', {
   name: text('NAME').notNull(),
 });
 const other = snowflakeTable('OTHER', { id: integer('ID') });
+const generated = snowflakeTable('GENERATED', {
+  id: integer('ID').notNull().identity(),
+  label: text('LABEL'),
+  upper: text('UPPER').virtual(),
+});
 
 insertFrom(target, select(source, { id: source.columns.id, label: source.columns.name }));
 insertFrom(target, select(source, { id: source.columns.id }));
+insertFrom(generated, select(source, { label: source.columns.label }));
+// @ts-expect-error Virtual target columns cannot be inserted.
+insertFrom(generated, select(source, { upper: source.columns.label }));
 // @ts-expect-error Required target columns must be selected.
 insertFrom(target, select(source, { label: source.columns.label }));
 // @ts-expect-error Selected names must be target columns.
