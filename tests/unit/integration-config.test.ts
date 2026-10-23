@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { defaultIntegrationWorkers, integrationWorkers } from '../support/integration-workers.js';
 import { integrationConfig } from '../support/snowflake.js';
 
 const environment = {
@@ -89,5 +90,25 @@ describe('integration configuration', () => {
         SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: 'example-passphrase',
       }),
     ).toHaveProperty('privateKeyPass', 'example-passphrase');
+  });
+});
+
+describe('integration worker count', () => {
+  it('defaults when unset or blank', () => {
+    expect(integrationWorkers({})).toBe(defaultIntegrationWorkers);
+    expect(integrationWorkers({ SNOWTYPED_INTEGRATION_WORKERS: ' ' })).toBe(
+      defaultIntegrationWorkers,
+    );
+  });
+
+  it('reads a positive integer', () => {
+    expect(integrationWorkers({ SNOWTYPED_INTEGRATION_WORKERS: '1' })).toBe(1);
+    expect(integrationWorkers({ SNOWTYPED_INTEGRATION_WORKERS: ' 6 ' })).toBe(6);
+  });
+
+  it.each(['0', '-2', '1.5', 'four', '2e'])('rejects %j', (value) => {
+    expect(() => integrationWorkers({ SNOWTYPED_INTEGRATION_WORKERS: value })).toThrow(
+      'SNOWTYPED_INTEGRATION_WORKERS must be a positive integer',
+    );
   });
 });
