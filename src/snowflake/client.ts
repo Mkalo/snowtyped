@@ -2,6 +2,7 @@ import type { StatementOption } from 'snowflake-sdk';
 import type * as z from 'zod';
 import type { MutationQuery } from '../mutations.js';
 import type { SelectQuery, SetQuery } from '../query.js';
+import { type LoadedQuery, run, stream as streamLoaded } from '../relations.js';
 import {
   type InferSelection,
   type Projection,
@@ -23,6 +24,10 @@ export interface QueryResult<Row> {
   readonly rows: readonly Row[];
   readonly queryId: string;
 }
+export interface LoadedResult<Row> extends QueryResult<Row> {
+  /** The parent query's ID first, then each related query's in execution order. */
+  readonly queryIds: readonly string[];
+}
 export interface MutationResult {
   readonly queryId: string;
   readonly affectedRows: number;
@@ -33,6 +38,7 @@ export interface SnowflakeClient {
     options?: ExecuteOptions,
   ): Promise<QueryResult<InferSelection<S, Nullable>>>;
   execute<Row>(query: SetQuery<Row>, options?: ExecuteOptions): Promise<QueryResult<Row>>;
+  execute<Row>(query: LoadedQuery<Row>, options?: ExecuteOptions): Promise<LoadedResult<Row>>;
   execute(query: MutationQuery, options?: ExecuteOptions): Promise<MutationResult>;
   queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: SqlInterpolation[]): Promise<T>;
   queryRaw<T = unknown>(query: RawQuery<T>, options?: ExecuteOptions): Promise<T>;
@@ -42,6 +48,7 @@ export interface SnowflakeClient {
     options?: ExecuteOptions,
   ): AsyncIterable<InferSelection<S, Nullable>>;
   stream<Row>(query: SetQuery<Row>, options?: ExecuteOptions): AsyncIterable<Row>;
+  stream<Row>(query: LoadedQuery<Row>, options?: ExecuteOptions): AsyncIterable<Row>;
   streamRaw<T = unknown>(query: RawQuery, options?: ExecuteOptions): AsyncIterable<T>;
   transaction<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T>;
 }
@@ -146,9 +153,39 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
         queryId: result.statement.getQueryId(),
       };
     }
+    async function* rows(query: RowQuery, options: ExecuteOptions) {
+      check();
+      const decode = prepared(query);
+      streams++;
+      try {
+        for await (const { row, statement } of streamRequest(
+          connection,
+          driverOptions(query, 'array'),
+          requestSignal(options),
+        ))
+          yield decode(normalizeWireRow(row, statement));
+      } finally {
+        streams--;
+      }
+    }
+    async function load(query: LoadedQuery<unknown>, options: ExecuteOptions) {
+      check();
+      const result = await run(
+        query,
+        (item) => execute(item, options) as Promise<QueryResult<unknown>>,
+      );
+      return {
+        rows: result.rows,
+        queryId: result.queryIds[0] as string,
+        queryIds: result.queryIds,
+      };
+    }
     return Object.freeze({
-      execute: (query: RowQuery | MutationQuery, options?: ExecuteOptions) =>
-        tracked(execute(query, options), session),
+      execute: (query: RowQuery | MutationQuery | LoadedQuery<unknown>, options?: ExecuteOptions) =>
+        tracked(
+          query.kind === 'loaded' ? load(query, options ?? {}) : execute(query, options),
+          session,
+        ),
       async queryRaw<T = unknown>(
         input: TemplateStringsArray | RawQuery<T>,
         ...values: SqlInterpolation[] | [ExecuteOptions?]
@@ -164,20 +201,14 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
           session,
         );
       },
-      async *stream(query: RowQuery, options: ExecuteOptions = {}) {
+      stream(query: RowQuery | LoadedQuery<unknown>, options: ExecuteOptions = {}) {
+        if (query.kind !== 'loaded') return rows(query, options);
         check();
-        const decode = prepared(query);
-        streams++;
-        try {
-          for await (const { row, statement } of streamRequest(
-            connection,
-            driverOptions(query, 'array'),
-            requestSignal(options),
-          ))
-            yield decode(normalizeWireRow(row, statement));
-        } finally {
-          streams--;
-        }
+        return streamLoaded(
+          query,
+          (parent) => rows(parent, options),
+          (child) => execute(child, options) as Promise<QueryResult<unknown>>,
+        );
       },
       async *streamRaw<T = unknown>(
         query: RawQuery,
@@ -232,7 +263,7 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
           activeSession = undefined;
         }
       },
-    }) as SnowflakeClient;
+    }) as unknown as SnowflakeClient;
   }
   return factory();
 }
