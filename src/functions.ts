@@ -408,13 +408,9 @@ export function avg<E extends NumericExpression>(
   (NonNullable<InferExpression<E>> extends number ? number : string) | null,
   ExpressionScope<E>
 > {
-  return derive(
-    { kind: 'function', name: 'AVG', args: Object.freeze([value.expression]) },
-    domain(numeric([value], true)),
-    true,
-    [value],
-    { phase: 'aggregate' },
-  ) as Expression<
+  return derive(call('AVG', [value.expression]), domain(numeric([value], true)), true, [value], {
+    phase: 'aggregate',
+  }) as Expression<
     (NonNullable<InferExpression<E>> extends number ? number : string) | null,
     ExpressionScope<E>
   >;
@@ -463,14 +459,10 @@ export function coalesce(first: AnyExpression, ...rest: unknown[]): AnyExpressio
     rest.some((value) => !isExpression(value)) ||
     guards.some((value) => value.nullRefs.length === 0);
   return derive(
-    {
-      kind: 'function',
-      name: 'COALESCE',
-      args: Object.freeze([
-        first.expression,
-        ...rest.map((value) => (isExpression(value) ? value.expression : literal(first, value))),
-      ]),
-    },
+    call('COALESCE', [
+      first.expression,
+      ...rest.map((value) => (isExpression(value) ? value.expression : literal(first, value))),
+    ]),
     first,
     !guards.length && !certain,
     values,
