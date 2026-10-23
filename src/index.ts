@@ -14,6 +14,8 @@ export {
   type JoinNode,
   type MergeNode,
   type OrderNode,
+  type PivotLiteral,
+  type PivotNode,
   quoteIdentifier,
   type RelationNode,
   type SelectNode,
@@ -21,6 +23,7 @@ export {
   type StatementNode,
   type TableNode,
   type TemporalNode,
+  type UnpivotNode,
   type UpdateNode,
   type WireType,
 } from './ast.js';
@@ -73,6 +76,17 @@ export {
   type UpdateValues,
   update,
 } from './mutations.js';
+export {
+  dynamicPivot,
+  type PivotAggregate,
+  type PivotColumns,
+  type PivotOptions,
+  type PivotValue,
+  pivot,
+  type UnpivotColumns,
+  type UnpivotOptions,
+  unpivot,
+} from './pivot.js';
 export { type SelectQuery, select } from './query.js';
 export {
   type AnyColumn,

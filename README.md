@@ -106,6 +106,19 @@ const prices = select(trades)
 
 `over(aggregate, options)` supports aggregate windows. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
+```ts
+const quarterly = pivot(sales, 'quarterly', {
+  aggregate: 'sum',
+  value: 'amount',
+  for: 'quarter',
+  in: { q1: 'Q1', q2: 'Q2' },
+  default: '0',
+});
+const monthly = unpivot(budget, 'monthly', { value: 'amount', for: 'month', in: ['jan', 'feb'] });
+```
+
+`pivot` groups by every other source column; narrow the source with `.as()` first. Pivoted columns are nullable unless `aggregate` is `count` or a `default` is given, and `in` values are rendered as escaped literals because Snowflake does not accept binds there. `unpivot` requires same-typed columns, types `for` as the union of their keys, and drops nulls unless `includeNulls` is set. `dynamicPivot` compiles `IN (ANY)` to a raw query with `unknown` rows, since its columns are only known at execution.
+
 `timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Database retention and supported selector rules still apply.
 
 ## Writes
