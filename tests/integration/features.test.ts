@@ -392,6 +392,31 @@ describe('complete query and execution paths against Snowflake', () => {
     }
   });
 
+  it('destroys a pooled connection whose ROLLBACK failed', async () => {
+    const pool = await createPool(integrationConfig(), { max: 1 });
+    try {
+      let aborted: string | undefined;
+      const failure = await pool
+        .transaction(async (tx) => {
+          const [row] = await tx.queryRaw<{ ID: string }[]>`SELECT CURRENT_SESSION() AS ID`;
+          aborted = row?.ID;
+          await tx.queryRaw`SELECT SYSTEM$ABORT_SESSION(${Number(aborted)})`;
+          throw new Error('aborted session fixture');
+        })
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors[0]).toHaveProperty(
+        'message',
+        'aborted session fixture',
+      );
+      const [row] = await pool.queryRaw<{ ID: string }[]>`SELECT CURRENT_SESSION() AS ID`;
+      expect(row?.ID).toBeDefined();
+      expect(row?.ID).not.toBe(aborted);
+    } finally {
+      await pool.close();
+    }
+  });
+
   it('introspects the dedicated schema and produces schema declarations', async () => {
     const tables = await introspect(db, namespace);
     expect(

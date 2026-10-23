@@ -2,6 +2,7 @@ import { Readable } from 'node:stream';
 import type { Column, RowStatement, SnowflakeError, StatementOption } from 'snowflake-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { insert, integer, select, snowflakeTable, sql, text } from '../../src/index.js';
+import { isUnusable } from '../../src/snowflake/client.js';
 import { createClient, type SnowflakeClient } from '../../src/snowflake/index.js';
 import { normalizeWireRow } from '../../src/snowflake/wire.js';
 
@@ -396,13 +397,28 @@ describe('transaction sessions', () => {
     expect(commits.execute.mock.calls.at(-1)?.[0].sqlText).toBe('ROLLBACK');
   });
   it('retains both failures if rollback fails and unlocks after BEGIN failure', async () => {
-    const connection = transactionDriver({ ROLLBACK: new Error('rollback') });
+    const callback = new Error('callback');
+    const rollback = new Error('rollback');
+    const connection = transactionDriver({ ROLLBACK: rollback });
     const db = createClient(connection);
+    expect(isUnusable(connection)).toBe(false);
+    const failure = await db
+      .transaction(async () => {
+        throw callback;
+      })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([callback, rollback]);
+    expect(isUnusable(connection)).toBe(true);
+    const calls = connection.execute.mock.calls.length;
+    await expect(db.execute(query)).rejects.toThrow('ROLLBACK failed');
+    await expect(db.queryRaw`SELECT 1`).rejects.toThrow('ROLLBACK failed');
+    await expect(db.transaction(async () => 1)).rejects.toThrow('ROLLBACK failed');
+    await expect(createClient(connection).execute(query)).rejects.toThrow('ROLLBACK failed');
     await expect(
-      db.transaction(async () => {
-        throw new Error('callback');
-      }),
-    ).rejects.toBeInstanceOf(AggregateError);
+      createClient(connection).stream(query)[Symbol.asyncIterator]().next(),
+    ).rejects.toThrow('ROLLBACK failed');
+    expect(connection.execute).toHaveBeenCalledTimes(calls);
     const errors = { BEGIN: new Error('begin') };
     const begin = transactionDriver(errors);
     const client = createClient(begin);
