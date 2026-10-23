@@ -11,6 +11,7 @@ import { createPool } from '../../src/snowflake/index.js';
 const table = snowflakeTable('T', { id: integer('ID').notNull() });
 function fakePool(error?: Error, errors: Record<string, Error> = {}) {
   const connection = {
+    isUp: () => true,
     execute: vi.fn((options: StatementOption) => {
       const failure = errors[options.sqlText] ?? error;
       const rows = options.rowMode === 'array' ? [['1']] : [{ ID: '1' }];
