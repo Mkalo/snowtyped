@@ -2,12 +2,18 @@ import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightTypeDoc, { typeDocSidebarGroup } from 'starlight-typedoc';
+import { baseLinksIntegration, siteLocation } from './src/site.ts';
 
 const repository = 'https://github.com/Mkalo/snowtyped';
+const { site, base } = siteLocation(process.env.DOCS_URL || undefined);
+const sourceRef = process.env.DOCS_SOURCE_REF || 'main';
 
 export default defineConfig({
+  site,
+  base,
   vite: { server: { fs: { allow: ['..'] } } },
   integrations: [
+    baseLinksIntegration(base),
     starlight({
       title: 'Snowtyped',
       description:
@@ -16,6 +22,7 @@ export default defineConfig({
       editLink: { baseUrl: `${repository}/edit/main/website/` },
       lastUpdated: false,
       components: { SiteTitle: './src/components/SiteTitle.astro' },
+      routeMiddleware: './src/route-data.ts',
       plugins: [
         starlightLinksValidator({ errorOnLocalLinks: true }),
         starlightTypeDoc({
@@ -31,7 +38,7 @@ export default defineConfig({
             name: 'API reference',
             readme: './src/api-readme.md',
             plugin: ['./typedoc-modules.mjs'],
-            sourceLinkTemplate: `${repository}/blob/main/{path}#L{line}`,
+            sourceLinkTemplate: `${repository}/blob/${sourceRef}/{path}#L{line}`,
           },
         }),
       ],

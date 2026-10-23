@@ -107,7 +107,8 @@ For each release:
    `npm stage approve <stage-id>` and 2FA, or approve it on npm's Staged Packages UI.
 4. Dispatch **Release package → finalize** with the same SHA/version. It verifies
    registry bytes, provenance identity, and signatures before creating `v<version>`
-   and GitHub release notes from the matching changelog section.
+   and GitHub release notes from the matching changelog section, then deploys that
+   tag's [documentation](docs-deployment.md).
 
 Alpha uses `alpha`, beta uses `beta`; neither advances `latest`. Stable uses
 `latest` only with `NPM_STABLE_RELEASES_ENABLED=true` after the stable gates in

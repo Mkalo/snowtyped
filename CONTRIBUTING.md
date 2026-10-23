@@ -18,7 +18,9 @@ Package checks install the actual tarball in a temporary consumer and verify ESM
 
 The documentation site lives in `website/` as a separate pnpm project (Node.js 22.23.4+).
 Its examples are type-checked snippets under `website/src/snippets/`; run `pnpm check` in
-`website/` after changing public APIs or docs.
+`website/` after changing public APIs or docs. Write internal links root-relative, such
+as `/guides/queries/`; the build adds the deployment base path. See
+[documentation deployment](docs/docs-deployment.md).
 
 See [CI and release checks](docs/ci.md) for required-check configuration, diagnostics,
 action updates, and the manual gate when hosted enforcement is unavailable.

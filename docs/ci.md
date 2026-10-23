@@ -15,8 +15,10 @@ failure, cancellation, and skipped jobs cannot satisfy the gate. Keep this name 
 across workflows. `Changesets` checks PR changeset policy and exercises disposable
 versioning/prerelease flows. `Docs` type checks the documentation snippets against
 the library source, builds the `website/` Starlight site with internal link
-validation, and tests the built output on Node 24. See [versioning policy](versioning.md)
-for exemptions and the version bot's GitHub App setup.
+validation, and tests the built output on Node 24. It uploads the site as the
+`docs-site` artifact, which [documentation deployment](docs-deployment.md) uses for
+previews. See [versioning policy](versioning.md) for exemptions and the version
+bot's GitHub App setup.
 
 Pushes, pull requests, and merge queues run the workflow without path filters.
 A new commit cancels superseded runs for the same pull request. Push runs are
