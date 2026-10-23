@@ -12,7 +12,8 @@ with its exact physical names, exported as `table0`, `table1`, and so on in a st
 declarations carry NUMBER precision and scale, VARCHAR length, and TIME and TIMESTAMP precision when
 they differ from Snowflake's defaults. `INFORMATION_SCHEMA` does not report BINARY length. Column
 defaults, identity settings, and virtual column expressions become `.serverDefault()`, `.identity()`,
-and `.virtual()` modifiers.
+and `.virtual()` modifiers. Structured ARRAY, OBJECT, and MAP columns become `structured()`
+declarations, with exact field names read from `SHOW COLUMNS`.
 
 <Snippet code={introspect} />
 

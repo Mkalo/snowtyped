@@ -217,3 +217,10 @@ export {
 export { type FlattenOptions, flatten } from './snowflake-syntax.js';
 export type { GeoJsonGeometry, GeoPosition } from './spatial.js';
 export { type RawQuery, type SqlInterpolation, type SqlParameter, sql } from './sql.js';
+export {
+  type AnyStructuredType,
+  type InferStructured,
+  type StructuredType,
+  structured,
+} from './structured.js';
+export * as structuredType from './structured-types.js';

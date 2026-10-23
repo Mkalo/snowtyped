@@ -36,7 +36,8 @@ export type DataType =
   | 'binary'
   | 'geography'
   | 'geometry'
-  | 'vector';
+  | 'vector'
+  | 'structured';
 export interface ServerValues {
   readonly none: null;
   readonly default: { readonly kind: 'default'; readonly expression?: string };
@@ -111,7 +112,12 @@ function identityValue(options: IdentityOptions) {
   }
   return Object.freeze({ kind: 'identity' as const, ...options });
 }
-function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
+const writeSchemas = new WeakMap<AnyColumn, z.ZodType>();
+/** The constrained schema a required column validates INSERT, UPDATE, and MERGE values with. */
+export function writeSchema<T>(value: Column<T, true>): z.ZodType<T> {
+  return writeSchemas.get(value as AnyColumn) as z.ZodType<T>;
+}
+export function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
   name: string,
   dataType: DataType,
   read: z.ZodType<T>,
@@ -160,7 +166,7 @@ function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
     : ['array', 'object', 'vector'].includes(dataType)
       ? 'variant'
       : (dataType as WireType);
-  return Object.freeze({
+  const result = Object.freeze({
     ...expression(node, readSchema, {
       valueSchema,
       ...(wireType ? { wireType } : {}),
@@ -208,6 +214,8 @@ function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
         serverExpression('virtual', expression),
       ),
   }) as Column<T, R, string, S>;
+  writeSchemas.set(result as AnyColumn, writeSchema);
+  return result;
 }
 /** A NULL bind still parses to a typed NULL, so mixed rows keep one SQL type. */
 function parseJson(dataType: DataType, value: unknown): ExpressionNode {
