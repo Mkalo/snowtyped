@@ -1063,6 +1063,60 @@ describe('server values', () => {
       'LABEL: Cannot change a DEFAULT to a virtual expression in place.',
     ]);
   });
+
+  it('compares constant defaults, which Snowflake stores verbatim', () => {
+    const defaults = defineTable(
+      snowflakeTable(
+        'EVENTS',
+        {
+          s: text('S').serverDefault("'abc'"),
+          n: integer('N').serverDefault('5'),
+          b: boolean('B').serverDefault('true'),
+          e: float('E').serverDefault(' 1e3 '),
+          d: date('D').serverDefault('CURRENT_DATE()'),
+          x: text('X').serverDefault("'x'"),
+        },
+        target,
+      ),
+    );
+    const current = table([
+      { ...column('S', sqlType.varchar()), serverValue: { kind: 'default', expression: "'zzz'" } },
+      { ...column('N', sqlType.number()), serverValue: { kind: 'default', expression: '6' } },
+      { ...column('B', sqlType.boolean()), serverValue: { kind: 'default', expression: 'TRUE' } },
+      { ...column('E', sqlType.float()), serverValue: { kind: 'default', expression: '1E3' } },
+      {
+        ...column('D', sqlType.date()),
+        serverValue: { kind: 'default', expression: 'CURRENT_DATE' },
+      },
+      {
+        ...column('X', sqlType.varchar()),
+        serverValue: { kind: 'default', expression: 'UPPER(Y)' },
+      },
+    ]);
+    expect(unsupportedOf(current, defaults)).toEqual([
+      "S: Cannot change the DEFAULT from 'zzz' to 'abc' in place.",
+      'N: Cannot change the DEFAULT from 6 to 5 in place.',
+    ]);
+  });
+
+  it('treats a NULL default as no default for NOT NULL additions', () => {
+    const entry = defineTable(
+      snowflakeTable(
+        'EVENTS',
+        {
+          required: text('REQUIRED').notNull().serverDefault(' null '),
+          optional: text('OPTIONAL').serverDefault('NULL'),
+        },
+        target,
+      ),
+    );
+    expect(unsupportedOf(table([]), entry)).toEqual([
+      'REQUIRED: Adding a NOT NULL column to an existing table needs a default or backfill.',
+    ]);
+    expect(sqlChanges(table([]), entry)).toEqual([
+      'ALTER TABLE "DB"."APP"."EVENTS" ADD COLUMN "OPTIONAL" VARCHAR DEFAULT NULL',
+    ]);
+  });
 });
 
 describe('DDL declarations keep column codecs usable', () => {

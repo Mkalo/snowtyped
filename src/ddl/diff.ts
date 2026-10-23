@@ -28,6 +28,13 @@ export interface SchemaDiff {
   readonly unsupported: readonly UnsupportedChange[];
 }
 const constant = /^\s*(?:[+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?|'(?:[^']|'')*'|TRUE|FALSE|NULL)\s*$/i;
+const nullDefault = /^\s*NULL\s*$/i;
+/** Snowflake stores constant defaults verbatim, so they can be compared; other expressions cannot. */
+function constantText(expression: string | undefined): string | undefined {
+  if (expression === undefined || !constant.test(expression)) return undefined;
+  const text = expression.trim();
+  return text.startsWith("'") ? text : text.toUpperCase();
+}
 
 /** Snowflake adds identity and non-constant default columns only to empty tables. */
 function additionBlocker(column: ColumnDefinition): string | undefined {
@@ -36,7 +43,7 @@ function additionBlocker(column: ColumnDefinition): string | undefined {
     return 'Adding an identity column to an existing table needs a rebuild.';
   if (value?.kind === 'default' && !constant.test(value.expression as string))
     return 'Snowflake only accepts constant defaults when adding a column.';
-  if (column.notNull && value?.kind !== 'default')
+  if (column.notNull && (value?.kind !== 'default' || nullDefault.test(value.expression as string)))
     return 'Adding a NOT NULL column to an existing table needs a default or backfill.';
   return undefined;
 }
@@ -50,7 +57,7 @@ const serverLabel = (value: ServerValue | null) =>
         virtual: 'a virtual expression',
       }[value.kind];
 
-/** Expressions are not compared, since Snowflake stores them rewritten. */
+/** Only constant defaults are compared; Snowflake stores other expressions rewritten. */
 function serverValueBlocker(
   desired: ServerValue | undefined,
   observed: ServerValue | null,
@@ -58,6 +65,13 @@ function serverValueBlocker(
   if (!desired) return undefined;
   if (desired.kind !== observed?.kind)
     return `Cannot change ${serverLabel(observed)} to ${serverLabel(desired)} in place.`;
+  if (desired.kind === 'default' && observed.kind === 'default') {
+    const from = constantText(observed.expression);
+    const to = constantText(desired.expression);
+    return from !== undefined && to !== undefined && from !== to
+      ? `Cannot change the DEFAULT from ${from} to ${to} in place.`
+      : undefined;
+  }
   if (desired.kind !== 'identity' || observed.kind !== 'identity') return undefined;
   const changed = (['start', 'increment', 'order'] as const).filter(
     (key) => desired[key] !== undefined && desired[key] !== observed[key],

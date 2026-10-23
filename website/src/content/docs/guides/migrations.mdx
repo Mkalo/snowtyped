@@ -67,15 +67,15 @@ applied, pending, and incomplete migrations without changing anything.
 `inspectSchema` reads base tables through `INFORMATION_SCHEMA`. `diffSchema` compares them with the
 desired schema in declaration order and only emits changes Snowflake makes in place: widening
 VARCHAR, changing NUMBER precision, toggling NOT NULL, adding nullable columns, dropping columns and
-tables, and setting comments. A missing column with a constant default (including NOT NULL) or a
-virtual expression is added. Narrowing NUMBER precision and setting NOT NULL fail when existing data
+tables, and setting comments. A missing column with a constant default (NOT NULL needs a non-NULL
+one) or a virtual expression is added. Narrowing NUMBER precision and setting NOT NULL fail when existing data
 does not fit. Other changes, such as a new NUMBER scale or a NOT NULL column on an existing table,
 are listed under `unsupported` for a hand-written migration. So are identity columns on an existing
 table, which Snowflake adds only to empty tables, non-constant defaults, which it accepts only at
 table creation, and any change between no server value, a default, identity, and a virtual
-expression. Identity start, increment,
-and order are compared when declared. Default and virtual expressions are not compared, because
-Snowflake stores them rewritten. Renames are never inferred.
+expression. Identity start, increment, and order are compared when declared. Constant defaults are
+stored verbatim, so a changed constant is listed under `unsupported`. Other default and virtual
+expressions are not compared, because Snowflake stores them rewritten. Renames are never inferred.
 
 `checkDrift` runs the same comparison while ignoring the history tables. `pushSchema` applies a diff
 without history or locking and refuses unsupported or destructive changes unless `allowDestructive`

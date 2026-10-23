@@ -439,6 +439,8 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
           note: text('NOTE').serverDefault("'n'"),
           started: timestamp('STARTED', 'ltz').serverDefault('CURRENT_TIMESTAMP()'),
           serial: integer('SERIAL').identity(),
+          source: text('SOURCE').notNull().serverDefault("'app'"),
+          nulled: text('NULLED').notNull().serverDefault('NULL'),
         },
         typed,
       ),
@@ -451,6 +453,11 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
       }),
       expect.objectContaining({ column: 'STARTED', reason: expect.stringContaining('constant') }),
       expect.objectContaining({ column: 'SERIAL', reason: expect.stringContaining('identity') }),
+      expect.objectContaining({
+        column: 'SOURCE',
+        reason: "Cannot change the DEFAULT from 'web' to 'app' in place.",
+      }),
+      expect.objectContaining({ column: 'NULLED', reason: expect.stringContaining('NOT NULL') }),
     ]);
     const alter = alterTable(events);
     for (const statement of [
@@ -458,6 +465,10 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
         serverValue: { kind: 'default', expression: 'CURRENT_TIMESTAMP()' },
       }),
       alter.addColumn('SERIAL', sqlType.number(), { serverValue: { kind: 'identity' } }),
+      alter.addColumn('NULLED', sqlType.varchar(), {
+        notNull: true,
+        serverValue: { kind: 'default', expression: 'NULL' },
+      }),
     ])
       await expect(db.queryRaw(sql.unsafe(statement.compile().sql))).rejects.toThrow();
     await db.queryRaw(sql.unsafe(alter.dropDefault('KIND').compile().sql));
