@@ -53,4 +53,8 @@ from the right side are nullable.
 the third argument for BEFORE semantics. Time travel applies only to base tables, and the
 database's retention period and selector rules still apply.
 
+Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset such as
+`2026-10-22T15:00:00-07:00` selects that instant. A timestamp without an offset is read in the
+session `TIMEZONE`, which defaults to `America/Los_Angeles`; append `Z` or `+00:00` for UTC.
+
 <Snippet code={timeTravel} />
