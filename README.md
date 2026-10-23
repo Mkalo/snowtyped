@@ -104,7 +104,7 @@ const prices = select(trades)
   .select({ at: trades.columns.at, price: quotes.columns.price });
 ```
 
-`over(aggregate, options)` supports aggregate windows. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
+`over(aggregate, options)` supports aggregate windows. `rank` and `denseRank` take the same options with a required `orderBy`. `lag(value, options)` and `lead` also accept `offset` and a `default` in the value's domain; they are nullable unless both the value and the default are non-null. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
 `timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Database retention and supported selector rules still apply.
 

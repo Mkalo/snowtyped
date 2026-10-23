@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   add,
+  asc,
   avg,
   binary,
   boolean,
@@ -15,6 +16,8 @@ import {
   datePart,
   dateTrunc,
   decimal,
+  denseRank,
+  desc,
   div,
   eq,
   float,
@@ -23,8 +26,11 @@ import {
   integer,
   isNull,
   jsonPath,
+  lag,
+  lead,
   length,
   mul,
+  rank,
   select,
   snowflakeTable,
   sub,
@@ -423,5 +429,64 @@ describe('string and date helpers', () => {
     expect(() => dateTrunc('decade' as never, day)).toThrow('Unsupported date part: decade.');
     expect(() => dateTrunc('day', label)).toThrow('Date helpers require');
     expect(() => dateDiff('day', day, label)).toThrow('Date helpers require');
+  });
+});
+
+describe('ranking and offset windows', () => {
+  it('compiles ranking windows that require ordering', () => {
+    const ranked = rank({ partitionBy: [name], orderBy: [desc(id)] });
+    const dense = denseRank({ orderBy: [asc(amount)] });
+    const query = select(t, { ranked, dense }).qualify(eq(ranked, 1n));
+    expect(query.compile().sql).toContain(
+      'RANK() OVER (PARTITION BY "NAME" ORDER BY "ID" DESC) AS "ranked"',
+    );
+    expect(query.compile().sql).toContain('DENSE_RANK() OVER (ORDER BY "AMOUNT" ASC) AS "dense"');
+    expect(query.compile().sql).toContain('QUALIFY (RANK() OVER');
+    expect(ranked).toMatchObject({ phase: 'window', wireType: 'integer', nullRefs: [] });
+    expect(ranked.refs).toEqual([t.ref]);
+    expect(resultSchema({ ranked }).parse({ ranked: '1' })).toEqual({ ranked: 1n });
+    expect(() => resultSchema({ ranked }).parse({ ranked: null })).toThrow();
+    expect(() => rank({} as never)).toThrow('RANK requires ORDER BY.');
+    expect(() => denseRank({ orderBy: [] } as never)).toThrow('DENSE_RANK requires ORDER BY.');
+  });
+
+  it('binds LAG/LEAD offsets and defaults in the value domain', () => {
+    const previous = lag(amount, { orderBy: [asc(id)] });
+    const next = lead(amount, { partitionBy: [name], orderBy: [asc(id)], offset: 2, default: '0' });
+    const compiled = select(t, { previous, next }).compile();
+    expect(compiled.sql).toContain('LAG("AMOUNT", ?) OVER (ORDER BY "ID" ASC)');
+    expect(compiled.sql).toContain(
+      'LEAD("AMOUNT", ?, CAST(? AS NUMBER(38,0))) OVER (PARTITION BY "NAME" ORDER BY "ID" ASC)',
+    );
+    expect(compiled.binds).toEqual([1, 2, '0']);
+    expect(previous).toMatchObject({ phase: 'window', wireType: 'decimal' });
+    expect(previous.readSchema.parse(null)).toBeNull();
+    expect(next.readSchema.safeParse(null).success).toBe(false);
+    expect(lead(id, { orderBy: [asc(id)], default: id }).readSchema.safeParse(null).success).toBe(
+      false,
+    );
+    expect(lag(price, { orderBy: [asc(id)], default: '0' }).readSchema.parse(null)).toBeNull();
+    expect(lag(amount, { orderBy: [asc(id)], default: price }).readSchema.parse(null)).toBeNull();
+    expect(lag(id, { orderBy: [asc(id)], offset: 0 }).expression).toMatchObject({
+      value: { args: [{}, { kind: 'parameter', value: 0 }] },
+    });
+    const joined = select(t)
+      .leftJoin(o, eq(t.columns.id, o.columns.id))
+      .select({ prior: lag(o.columns.id, { orderBy: [asc(t.columns.id)], default: 0n }) });
+    expect(joined.selection.prior.refs).toEqual([o.ref, t.ref]);
+    expect(resultSchema(joined.selection, joined.nullableSources).parse({ prior: null })).toEqual({
+      prior: null,
+    });
+    expect(
+      select(t, { total: lag(sum(amount), { orderBy: [asc(name)] }) })
+        .groupBy(name)
+        .compile().sql,
+    ).toContain('LAG(SUM("AMOUNT"), ?) OVER (ORDER BY "NAME" ASC)');
+    expect(() => lag(day, { orderBy: [asc(id)], default: label })).toThrow(
+      'LAG values must share one SQL domain.',
+    );
+    for (const value of [-1, 1.5])
+      expect(() => lead(id, { orderBy: [asc(id)], offset: value })).toThrow('LEAD offset');
+    expect(() => lag(id, {} as never)).toThrow('LAG requires ORDER BY.');
   });
 });

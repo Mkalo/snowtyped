@@ -14,6 +14,8 @@ import {
   datePart,
   dateTrunc,
   decimal,
+  denseRank,
+  desc,
   div,
   eq,
   float,
@@ -21,8 +23,11 @@ import {
   insert,
   integer,
   isNull,
+  lag,
+  lead,
   length,
   mul,
+  rank,
   select,
   snowflakeTable,
   sql,
@@ -320,5 +325,49 @@ describe('typed expression helpers against Snowflake', () => {
         nanos: 0n,
       },
     ]);
+  });
+
+  it('ranks rows and reads offset rows with nullable defaults', async () => {
+    const byPrice = rank({ partitionBy: [m.grp], orderBy: [desc(m.price)] });
+    const query = select(metrics, {
+      ranked: rank({ orderBy: [asc(m.grp)] }),
+      dense: denseRank({ orderBy: [asc(m.grp)] }),
+      byPrice,
+      previous: lag(m.price, { orderBy: [asc(m.id)] }),
+      next: lead(m.price, { partitionBy: [m.grp], orderBy: [asc(m.id)], default: '0' }),
+      skip: lead(m.qty, { orderBy: [asc(m.id)], offset: 2, default: m.id }),
+      prevNote: lag(m.note, { orderBy: [asc(m.id)], default: '-' }),
+    }).orderBy(asc(m.id));
+    expect((await db.execute(query)).rows).toEqual([
+      {
+        ranked: 1n,
+        dense: 1n,
+        byPrice: 1n,
+        previous: null,
+        next: '2.2500',
+        skip: 7n,
+        prevNote: '-',
+      },
+      {
+        ranked: 1n,
+        dense: 1n,
+        byPrice: 2n,
+        previous: '10.5000',
+        next: '0.0000',
+        skip: 2n,
+        prevNote: ' x ',
+      },
+      {
+        ranked: 3n,
+        dense: 2n,
+        byPrice: 1n,
+        previous: '2.2500',
+        next: '0.0000',
+        skip: 3n,
+        prevNote: null,
+      },
+    ]);
+    const top = select(metrics, { id: m.id }).qualify(eq(byPrice, 1n)).orderBy(asc(m.id));
+    expect((await db.execute(top)).rows).toEqual([{ id: 1n }, { id: 3n }]);
   });
 });

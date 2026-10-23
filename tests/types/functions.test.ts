@@ -1,6 +1,7 @@
 import { expectTypeOf } from 'vitest';
 import {
   add,
+  asc,
   avg,
   boolean,
   caseWhen,
@@ -13,6 +14,8 @@ import {
   datePart,
   dateTrunc,
   decimal,
+  denseRank,
+  desc,
   div,
   eq,
   float,
@@ -21,12 +24,16 @@ import {
   integer,
   isNull,
   jsonPath,
+  lag,
+  lead,
   length,
   mul,
+  rank,
   select,
   snowflakeTable,
   sub,
   substring,
+  sum,
   text,
   timestamp,
   trim,
@@ -201,3 +208,41 @@ datePart('millisecond', seen);
 dateAdd('day', 1, opened);
 // @ts-expect-error DATEADD amounts are integer expressions.
 dateAdd('day', balance, opened);
+
+const ranked = rank({ partitionBy: [code], orderBy: [desc(balance)] });
+const windows = select(accounts, {
+  ranked,
+  dense: denseRank({ orderBy: [asc(id)] }),
+  previous: lag(balance, { orderBy: [asc(id)] }),
+  next: lead(balance, { orderBy: [asc(id)], offset: 2, default: '0' }),
+  nextCode: lead(code, { orderBy: [asc(id)], default: 'none' }),
+  prior: lag(sum(balance), { orderBy: [asc(code)] }),
+}).qualify(eq(ranked, 1n));
+expectTypeOf<InferSelection<typeof windows.selection>>().toEqualTypeOf<{
+  readonly ranked: bigint;
+  readonly dense: bigint;
+  readonly previous: string | null;
+  readonly next: string;
+  readonly nextCode: string | null;
+  readonly prior: string | null;
+}>();
+const joinedWindows = select(accounts)
+  .leftJoin(owners, eq(accounts.columns.id, owners.columns.id))
+  .select({
+    owner: lag(owners.columns.id, { orderBy: [asc(id)], default: 0n }),
+    ranked: rank({ orderBy: [asc(owners.columns.id)] }),
+  });
+expectTypeOf<InferSelection<typeof joinedWindows.selection, 'OWNERS'>>().toEqualTypeOf<{
+  readonly owner: bigint | null;
+  readonly ranked: bigint;
+}>();
+// @ts-expect-error Ranking requires ORDER BY.
+rank({ partitionBy: [code] });
+// @ts-expect-error Ranking requires at least one ordering.
+denseRank({ orderBy: [] });
+// @ts-expect-error LAG requires ORDER BY.
+lag(balance, {});
+// @ts-expect-error LEAD defaults share the value representation.
+lead(balance, { orderBy: [asc(id)], default: 0n });
+// @ts-expect-error Window ordering keeps its source scope.
+select(owners, { value: rank({ orderBy: [asc(id)] }) });

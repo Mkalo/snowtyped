@@ -16,7 +16,10 @@ import {
   type InferExpression,
   isExpression,
   metadata,
+  type Ordering,
+  over,
   scalarParameter,
+  type WindowOptions,
 } from './expressions.js';
 import {
   type AnyColumn,
@@ -124,6 +127,18 @@ export type DatePart =
   | 'millisecond'
   | 'microsecond'
   | 'nanosecond';
+export type OrderedWindowOptions<S extends string = string> = Pick<
+  WindowOptions<S>,
+  'partitionBy'
+> & { readonly orderBy: readonly [Ordering<S>, ...Ordering<S>[]] };
+export type OffsetWindowOptions<S extends string = string> = OrderedWindowOptions<S> & {
+  readonly offset?: number;
+};
+type DefaultResult<E extends AnyExpression, S extends string, D> = Expression<
+  NonNullable<InferExpression<E>> | NullOf<InferExpression<E>> | NullOf<ValueOf<D>>,
+  ExpressionScope<E> | S | ExpressionScope<D>,
+  ExpressionNullScope<E> | ExpressionNullScope<D>
+>;
 type Numeric = bigint | number | string;
 type NumericExpression = Expression<Numeric | null, string, string>;
 type Operand<L> = NoInfer<NonNullable<InferExpression<L>>> | NumericExpression;
@@ -276,6 +291,38 @@ function partNode(
 }
 function call(name: string, args: readonly ExpressionNode[]): ExpressionNode {
   return { kind: 'function', name, args: Object.freeze([...args]) };
+}
+function ordered(name: string, options: OrderedWindowOptions): void {
+  if (!options.orderBy?.length) throw new TypeError(`${name} requires ORDER BY.`);
+}
+function ranking(name: string, options: OrderedWindowOptions): AnyExpression {
+  ordered(name, options);
+  return over(derive(call(name, []), domain('integer'), false, []), options);
+}
+function offset(
+  name: 'LAG' | 'LEAD',
+  value: AnyExpression,
+  options: OffsetWindowOptions & { readonly default?: unknown },
+): AnyExpression {
+  const { offset: rows = 1, default: fallback, ...window } = options;
+  ordered(name, window);
+  if (!Number.isSafeInteger(rows) || rows < 0)
+    throw new TypeError(`${name} offset must be a nonnegative safe integer.`);
+  const defaults = isExpression(fallback) ? [fallback] : [];
+  same(value, defaults, name);
+  const inner = derive(
+    call(name, [
+      value.expression,
+      scalarParameter(rows),
+      ...(fallback === undefined
+        ? []
+        : [isExpression(fallback) ? fallback.expression : literal(value, fallback)]),
+    ]),
+    value,
+    fallback === undefined || nullable(value) || defaults.some(nullable),
+    [value, ...defaults],
+  );
+  return Object.freeze({ ...over(inner, window), nullRefs: inner.nullRefs });
 }
 function caseExpression(
   branches: readonly (readonly [AnyExpression, unknown])[],
@@ -571,4 +618,42 @@ export function datePart<E extends TextExpression>(
   return derive(call('DATE_PART', [node, value.expression]), domain('integer'), nullable(value), [
     value,
   ]) as Expression<bigint | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>>;
+}
+export function rank<S extends string = never>(
+  options: OrderedWindowOptions<S>,
+): Expression<bigint, S, never> {
+  return ranking('RANK', options) as Expression<bigint, S, never>;
+}
+export function denseRank<S extends string = never>(
+  options: OrderedWindowOptions<S>,
+): Expression<bigint, S, never> {
+  return ranking('DENSE_RANK', options) as Expression<bigint, S, never>;
+}
+export function lag<E extends AnyExpression, D extends SameValue<E>, S extends string = never>(
+  value: E,
+  options: OffsetWindowOptions<S> & { readonly default: D },
+): DefaultResult<E, S, D>;
+export function lag<E extends AnyExpression, S extends string = never>(
+  value: E,
+  options: OffsetWindowOptions<S>,
+): Expression<InferExpression<E> | null, ExpressionScope<E> | S, ExpressionNullScope<E>>;
+export function lag(
+  value: AnyExpression,
+  options: OffsetWindowOptions & { readonly default?: unknown },
+): AnyExpression {
+  return offset('LAG', value, options);
+}
+export function lead<E extends AnyExpression, D extends SameValue<E>, S extends string = never>(
+  value: E,
+  options: OffsetWindowOptions<S> & { readonly default: D },
+): DefaultResult<E, S, D>;
+export function lead<E extends AnyExpression, S extends string = never>(
+  value: E,
+  options: OffsetWindowOptions<S>,
+): Expression<InferExpression<E> | null, ExpressionScope<E> | S, ExpressionNullScope<E>>;
+export function lead(
+  value: AnyExpression,
+  options: OffsetWindowOptions & { readonly default?: unknown },
+): AnyExpression {
+  return offset('LEAD', value, options);
 }
