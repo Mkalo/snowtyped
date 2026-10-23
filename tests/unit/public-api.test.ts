@@ -10,23 +10,29 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc eq flatten float
-      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath
-      like lower lt lte max mergeInto min ne not or over recursiveCte rowNumber select snowflakeTable sql
-      sum text time timeTravel timestamp update upper variant`,
+      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date
+      dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div eq
+      flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
+      integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte max
+      mergeInto min mul ne not object or over rangeBetween rank recursiveCte rowNumber rowsBetween select
+      snowflakeTable sql sub substring sum text time timeTravel timestamp trim update
+      updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
-      `AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue
-      CompatibleOperand CompiledQuery DataType Expression FilteredMutation FlattenOptions
-      InferColumn InferExpression InferSelection InsertValues IntersectRow IntrospectedColumn
-      IntrospectedTable MergeQuery MutationQuery OperandRow Ordering Predicate RawQuery
-      RecursiveName RecursiveOperand RecursiveRow
-      SelectQuery Selection SetColumns SetOperand SetOperator SetQuery SetScope
-      SqlInterpolation SqlParameter Table TableOptions UnionRow UpdateValues`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
-      InsertNode JoinNode MergeNode OrderNode QueryNode RelationNode SelectNode
-      SelfReferenceNode SetOperationNode SourceReference StatementNode TableNode TemporalNode UpdateNode WireType`,
+      `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
+      ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType DatePart Expression
+      FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
+      GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
+      InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
+      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering Predicate
+      RangeBoundary RawQuery RecursiveName RecursiveOperand RecursiveRow SelectQuery Selection ServerValue ServerValueKind ServerValues
+      SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation SqlParameter Table
+      TableOptions UnionRow UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
+      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode
+      MergeNode OrderNode QueryNode RelationNode SelectNode SelfReferenceNode SetOperationNode SourceReference
+      StatementNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {

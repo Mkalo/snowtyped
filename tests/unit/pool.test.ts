@@ -9,9 +9,11 @@ import { insert, integer, select, snowflakeTable, sql } from '../../src/index.js
 import { createPool } from '../../src/snowflake/index.js';
 
 const table = snowflakeTable('T', { id: integer('ID').notNull() });
-function fakePool(error?: Error) {
+function fakePool(error?: Error, errors: Record<string, Error> = {}) {
   const connection = {
+    isUp: () => true,
     execute: vi.fn((options: StatementOption) => {
+      const failure = errors[options.sqlText] ?? error;
       const rows = options.rowMode === 'array' ? [['1']] : [{ ID: '1' }];
       const statement = {
         getQueryId: () => 'q',
@@ -19,13 +21,14 @@ function fakePool(error?: Error) {
         getNumUpdatedRows: () => 1,
         streamRows: () => Readable.from(rows, { objectMode: true }),
       } as RowStatement;
-      options.complete?.(error as SnowflakeError | undefined, statement, rows);
+      options.complete?.(failure as SnowflakeError | undefined, statement, rows);
       return statement;
     }),
   };
   const pool = {
     acquire: vi.fn(async () => connection),
     release: vi.fn(async () => {}),
+    destroy: vi.fn(async () => {}),
     drain: vi.fn(async () => {}),
     clear: vi.fn(async () => {}),
   };
@@ -109,5 +112,76 @@ describe('SDK-backed pool leases', () => {
     }).rejects.toThrow('query failed');
     expect(failed.release).toHaveBeenCalledTimes(2);
     await other.close();
+  });
+
+  it('rejects aborted calls before leasing and releases only after cancellation completes', async () => {
+    const driver = fakePool();
+    const db = await createPool({});
+    const controller = new AbortController();
+    expect(
+      await db.queryRaw<{ ID: string }[]>(sql`SELECT 1`, {
+        signal: controller.signal,
+        timeoutMs: 1000,
+      }),
+    ).toEqual([{ ID: '1' }]);
+    expect(driver.release).toHaveBeenCalledOnce();
+    const reason = new Error('stop');
+    controller.abort(reason);
+    await expect(db.queryRaw(sql`SELECT 1`, { signal: controller.signal })).rejects.toBe(reason);
+    await expect(db.execute(select(table), { signal: controller.signal })).rejects.toBe(reason);
+    await expect(async () => {
+      for await (const _row of db.stream(select(table), { signal: controller.signal })) {
+        /* consume */
+      }
+    }).rejects.toBe(reason);
+    await expect(async () => {
+      for await (const _row of db.streamRaw(sql`SELECT 1`, { signal: controller.signal })) {
+        /* consume */
+      }
+    }).rejects.toBe(reason);
+    expect(driver.acquire).toHaveBeenCalledOnce();
+    expect(driver.release).toHaveBeenCalledOnce();
+    let cancelled: ((error?: SnowflakeError) => void) | undefined;
+    const statement = {
+      cancel: vi.fn((callback?: (error?: SnowflakeError) => void) => {
+        cancelled = callback;
+      }),
+    } as unknown as RowStatement;
+    const connection = await driver.acquire();
+    connection.execute.mockImplementation(() => statement);
+    const pending = db.queryRaw(sql`SELECT SYSTEM$WAIT(10)`, { timeoutMs: 1 });
+    await vi.waitFor(() => expect(statement.cancel).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(driver.release).toHaveBeenCalledOnce();
+    cancelled?.();
+    await expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(driver.release).toHaveBeenCalledTimes(2);
+    await db.close();
+    await expect(db.queryRaw(sql`SELECT 1`, { timeoutMs: 1000 })).rejects.toThrow('closed');
+  });
+
+  it('destroys the lease instead of releasing it when ROLLBACK fails', async () => {
+    const rollback = new Error('rollback failed');
+    const driver = fakePool(undefined, { ROLLBACK: rollback });
+    const db = await createPool({});
+    const callback = new Error('callback');
+    const failure = await db
+      .transaction(async () => {
+        throw callback;
+      })
+      .catch((error: unknown) => error);
+    expect((failure as AggregateError).errors).toEqual([callback, rollback]);
+    expect(driver.destroy).toHaveBeenCalledExactlyOnceWith(
+      await driver.acquire.mock.results[0]?.value,
+    );
+    expect(driver.release).not.toHaveBeenCalled();
+    await db.close();
+  });
+
+  it('passes testOnBorrow through to the SDK pool', async () => {
+    fakePool();
+    const db = await createPool({}, { testOnBorrow: true });
+    expect(sdk.createPool).toHaveBeenCalledWith({}, { min: 0, max: 5, testOnBorrow: true });
+    await db.close();
   });
 });

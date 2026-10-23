@@ -20,20 +20,29 @@ CI runs the library checks on Linux and Windows with Node 22 and 24.
 ## First-class APIs
 
 - Declared schemas for text, integer, decimal, float, boolean, date, time, timestamp, binary, and
-  VARIANT columns. See [schema declarations](/guides/schemas/).
+  VARIANT columns, with precision, scale, and length constraints. See
+  [schema declarations](/guides/schemas/).
 - SELECT with projections, joins, aliases, grouping, aggregates, ordering, DISTINCT, pagination,
   derived tables, CTEs, recursive CTEs, and set operations. See [queries](/guides/queries/).
-- Window functions, QUALIFY, FLATTEN, ASOF JOIN, and time travel. See
+- Typed expression helpers: arithmetic, CASE, COALESCE, casts, text and date functions, and ranking
+  and offset windows. See [queries](/guides/queries/) and [Snowflake syntax](/guides/snowflake-syntax/).
+- Window functions with ROWS and RANGE frames, QUALIFY, FLATTEN, ASOF JOIN, and time travel. See
   [Snowflake syntax](/guides/snowflake-syntax/).
-- INSERT, UPDATE, DELETE, and MERGE. See [mutations](/guides/mutations/).
+- INSERT, UPDATE, DELETE, and MERGE, including INSERT … SELECT, UPDATE … FROM, DELETE … USING,
+  conditional MERGE branches, server defaults, identity, and virtual columns. See
+  [mutations](/guides/mutations/).
 - Parameterized raw SQL. See [raw SQL](/guides/raw-sql/).
 - Execution, streaming, cancellation, transactions, and pooling. See
-  [execution](/guides/execution/).
+  [execution](/guides/execution/). The production scenarios that gate a stable release
+  (cancellation, pool waits and pressure, streaming, transactions, failures, no implicit
+  retries, and sustained use) have unit and live coverage; see
+  [production use](/guides/production/) for operational limits.
 - Introspection and declaration generation. See [introspection](/guides/introspection/).
 
 ## Not first-class in this alpha
 
-MATCH_RECOGNIZE, PIVOT/UNPIVOT, complex nested relation projections, advanced window frames,
-default/generated columns, migrations, DDL builders, and ORM relation loading are not modeled. A public third-party AST registration protocol is not implemented.
+MATCH_RECOGNIZE, PIVOT/UNPIVOT, complex nested relation projections, migrations, DDL builders,
+and ORM relation loading are not modeled. A public third-party AST registration protocol is not
+implemented.
 
 [Raw SQL](/guides/raw-sql/) can execute Snowflake syntax beyond the modeled builder surface.
