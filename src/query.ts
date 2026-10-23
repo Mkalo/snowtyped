@@ -370,7 +370,7 @@ function containsAggregate(node: ExpressionNode): boolean {
 function containsWindow(node: ExpressionNode): boolean {
   return node.kind === 'window' || children(node).some(containsWindow);
 }
-function sameNode(left: unknown, right: unknown): boolean {
+export function sameNode(left: unknown, right: unknown): boolean {
   if (left === right) return true;
   if (typeof left !== 'object' || typeof right !== 'object' || !left || !right) return false;
   const keys = Object.keys(left);
@@ -802,6 +802,28 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
   operands.set(query, operand);
   states.set(query, state);
   return query as unknown as SelectQuery<S, Scope, Nullable>;
+}
+
+/** Adds a predicate to the query's WHERE clause with AND. */
+export function narrow<Q extends SelectQuery<Projection, string, string>>(
+  query: Q,
+  predicate: Predicate,
+): Q {
+  const previous = states.get(query)?.ast.where;
+  const next = query.where(predicate);
+  if (!previous) return next as Q;
+  const state = states.get(next) as State;
+  return build({
+    ...state,
+    ast: Object.freeze({
+      ...state.ast,
+      where: Object.freeze({
+        kind: 'logical',
+        operator: 'AND',
+        operands: Object.freeze([previous as ExpressionNode, predicate.expression]),
+      }),
+    }),
+  }) as unknown as Q;
 }
 
 export function select<C extends ColumnMap, N extends string>(

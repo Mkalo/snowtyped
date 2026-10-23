@@ -1,0 +1,340 @@
+import { type AnyExpression, type Expression, inArray } from './expressions.js';
+import { narrow, type SelectQuery, sameNode, select } from './query.js';
+import {
+  type ColumnMap,
+  type InferSelection,
+  type Projection,
+  projectionLeaves,
+  type Table,
+} from './schema.js';
+
+/** SQL types whose decoded values identify a row unambiguously. */
+export type RelationKeyType = 'integer' | 'decimal' | 'text' | 'date';
+export type RelationCardinality = 'one' | 'many';
+type AnySelect = SelectQuery<Projection, string, string>;
+interface ChildQuery {
+  readonly kind: 'select' | 'loaded';
+  readonly rowType?: unknown;
+}
+type Runtime = AnySelect | LoadedQuery<unknown>;
+type ChildRow<Q> = Q extends { readonly rowType?: infer R } ? R : never;
+
+export interface Relation<
+  C extends RelationCardinality = RelationCardinality,
+  Row = unknown,
+  Parent extends string = string,
+> {
+  readonly kind: 'relation';
+  readonly cardinality: C;
+  readonly from: AnyExpression;
+  readonly to: AnyExpression;
+  readonly query: ChildQuery;
+  readonly rowType?: Row;
+  readonly parentScopeType?: Parent;
+}
+export type RelationRow<R> =
+  R extends Relation<infer C, infer Row> ? (C extends 'many' ? Row[] : Row | null) : never;
+type Simplify<T> = { [K in keyof T]: T[K] };
+export type LoadedRow<Row, R> = Simplify<Row & { -readonly [K in keyof R]: RelationRow<R[K]> }>;
+export interface LoadedQuery<Row> {
+  readonly kind: 'loaded';
+  readonly query: AnySelect;
+  readonly relations: Readonly<Record<string, Relation>>;
+  readonly batchSize: number;
+  readonly rowType?: Row;
+}
+export interface LoadOptions {
+  /** Distinct parent keys per child query; streams also load children per this many parents. */
+  readonly batchSize?: number;
+}
+
+function relation(
+  cardinality: RelationCardinality,
+  table: Table,
+  keys: { readonly from: AnyExpression; readonly to: AnyExpression },
+  query: ((rows: AnySelect) => ChildQuery) | undefined,
+): Relation {
+  for (const key of [keys.from, keys.to])
+    if (!['integer', 'decimal', 'text', 'date'].includes(key.dataType))
+      throw new TypeError(
+        `Relation keys must be INTEGER, DECIMAL, TEXT, or DATE, not ${key.dataType.toUpperCase()}.`,
+      );
+  if (keys.from.dataType !== keys.to.dataType)
+    throw new TypeError('Relation keys must share one SQL type.');
+  if (keys.from.phase !== 'scalar' || keys.to.phase !== 'scalar')
+    throw new TypeError('Relation keys must be scalar expressions.');
+  const base = select(table) as unknown as AnySelect;
+  const child = (query ? query(base) : base) as Runtime;
+  const parent = child.kind === 'loaded' ? child.query : child;
+  if (parent.ast.limit !== undefined || parent.ast.offset !== undefined)
+    throw new TypeError(
+      'Related queries cannot use LIMIT or OFFSET across parents; use QUALIFY with rowNumber() partitioned by the key.',
+    );
+  narrow(parent, inArray(keys.to as Expression<unknown, string, string, 'integer'>, []));
+  return Object.freeze({ kind: 'relation', cardinality, ...keys, query: child });
+}
+
+/** Declares that each parent row has at most one row of `table` whose `to` equals its `from`. */
+export function one<
+  C extends ColumnMap,
+  N extends string,
+  P extends string,
+  D extends RelationKeyType,
+  Q extends ChildQuery = SelectQuery<C, N>,
+>(
+  table: Table<C, N>,
+  keys: {
+    readonly from: Expression<unknown, P, string, D>;
+    readonly to: Expression<unknown, NoInfer<N>, string, NoInfer<D>>;
+  },
+  query?: (rows: SelectQuery<C, N>) => Q,
+): Relation<'one', ChildRow<Q>, P> {
+  return relation('one', table, keys, query as never) as Relation<'one', ChildRow<Q>, P>;
+}
+/** Declares that each parent row has any number of rows of `table` whose `to` equals its `from`. */
+export function many<
+  C extends ColumnMap,
+  N extends string,
+  P extends string,
+  D extends RelationKeyType,
+  Q extends ChildQuery = SelectQuery<C, N>,
+>(
+  table: Table<C, N>,
+  keys: {
+    readonly from: Expression<unknown, P, string, D>;
+    readonly to: Expression<unknown, NoInfer<N>, string, NoInfer<D>>;
+  },
+  query?: (rows: SelectQuery<C, N>) => Q,
+): Relation<'many', ChildRow<Q>, P> {
+  return relation('many', table, keys, query as never) as Relation<'many', ChildRow<Q>, P>;
+}
+
+/**
+ * Loads relations with one query for the parents and, per relation, one query per batch of
+ * distinct parent keys, so parent pagination and row counts are unaffected by children.
+ */
+export function withRelations<
+  S extends Projection,
+  Scope extends string,
+  Nullable extends string,
+  const R extends Readonly<Record<string, Relation<RelationCardinality, unknown, Scope>>>,
+>(
+  query: SelectQuery<S, Scope, Nullable>,
+  relations: R & {
+    readonly [K in keyof R & keyof S]: { readonly relationNameRepeatsAProjectionKey: K };
+  },
+  options: LoadOptions = {},
+): LoadedQuery<LoadedRow<InferSelection<S, Nullable>, R>> {
+  const batchSize = options.batchSize ?? 1000;
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 16384)
+    throw new TypeError('Relation batch size must be an integer from 1 to 16384.');
+  const names = Object.keys(relations);
+  if (!names.length) throw new TypeError('withRelations needs at least one relation.');
+  for (const name of names) {
+    if (name === '__proto__') throw new TypeError('Reserved relation name.');
+    if (Object.hasOwn(query.selection, name))
+      throw new TypeError(`Relation ${name} repeats a projection key.`);
+    const value = (relations as Record<string, Relation>)[name];
+    if (value?.kind !== 'relation') throw new TypeError(`${name} is not a relation.`);
+  }
+  const loaded = Object.freeze({
+    kind: 'loaded',
+    query: query as unknown as AnySelect,
+    relations: Object.freeze({ ...relations }) as Readonly<Record<string, Relation>>,
+    batchSize,
+  });
+  plan(loaded);
+  return loaded as LoadedQuery<LoadedRow<InferSelection<S, Nullable>, R>>;
+}
+
+interface Key {
+  readonly path: readonly string[];
+}
+interface Plan {
+  readonly query: AnySelect;
+  /** Aliases added only to match rows, removed from decoded rows. */
+  readonly hidden: readonly string[];
+  readonly batchSize: number;
+  readonly relations: readonly {
+    readonly name: string;
+    readonly value: Relation;
+    readonly from: Key;
+    readonly to: Key;
+    readonly query: AnySelect;
+    /** Hidden keys of the related rows, removed once they are matched. */
+    readonly hidden: readonly string[];
+    readonly child?: Plan;
+  }[];
+}
+/** Projects every key rows are matched by, reusing projected leaves and hiding the rest. */
+function keyed(query: AnySelect, keys: readonly AnyExpression[]) {
+  const leaves = projectionLeaves(query.selection);
+  const extra: Record<string, AnyExpression> = {};
+  const used = new Set(Object.keys(query.selection));
+  const paths = keys.map((key): Key => {
+    const leaf = leaves.find(([, value]) => sameNode(value.expression, key.expression));
+    if (leaf) return { path: leaf[0] };
+    const existing = Object.entries(extra).find(([, value]) =>
+      sameNode(value.expression, key.expression),
+    );
+    if (existing) return { path: [existing[0]] };
+    let alias = '__sflib_key';
+    while (used.has(alias)) alias += '_';
+    used.add(alias);
+    extra[alias] = key;
+    return { path: [alias] };
+  });
+  const hidden = Object.keys(extra);
+  if (!hidden.length) return { query, paths, hidden };
+  if (query.ast.distinct)
+    throw new TypeError('A DISTINCT query must project the keys its relations match on.');
+  const next = query.select({ ...query.selection, ...extra } as never) as unknown as AnySelect;
+  next.compile();
+  return { query: next, paths, hidden };
+}
+const plans = new WeakMap<object, Plan>();
+function plan(loaded: LoadedQuery<unknown>): Plan {
+  const cached = plans.get(loaded);
+  if (cached) return cached;
+  const entries = Object.entries(loaded.relations);
+  const parent = keyed(
+    loaded.query,
+    entries.map(([, value]) => value.from),
+  );
+  const result: Plan = {
+    query: parent.query,
+    hidden: parent.hidden,
+    batchSize: loaded.batchSize,
+    relations: entries.map(([name, value], index) => {
+      const related = value.query as Runtime;
+      const inner = related.kind === 'loaded' ? plan(related) : undefined;
+      const target = keyed(inner ? inner.query : (related as AnySelect), [value.to]);
+      return {
+        name,
+        value,
+        from: parent.paths[index] as Key,
+        to: target.paths[0] as Key,
+        query: target.query,
+        hidden: [...(inner?.hidden ?? []), ...target.hidden],
+        ...(inner ? { child: inner } : {}),
+      };
+    }),
+  };
+  plans.set(loaded, result);
+  return result;
+}
+
+function read(row: unknown, path: readonly string[]): unknown {
+  let value = row;
+  for (const part of path) value = (value as Record<string, unknown> | null)?.[part] ?? null;
+  return value;
+}
+/** Decoded keys compare by value; DECIMAL text can differ in scale only. */
+function canonical(value: unknown): string {
+  if (typeof value === 'bigint') return value.toString();
+  const text = String(value);
+  const match = /^(-?)0*(\d+?)(?:\.(\d*?)0*)?$/.exec(text);
+  if (!match) return `t${text}`;
+  const [, sign, whole, fraction] = match;
+  const number = `${whole}${fraction ? `.${fraction}` : ''}`;
+  return number === '0' ? '0' : `${sign}${number}`;
+}
+function strip(rows: readonly Record<string, unknown>[], hidden: readonly string[]) {
+  for (const row of rows) for (const alias of hidden) delete row[alias];
+}
+
+export type Execute = (query: AnySelect) => Promise<{ rows: readonly unknown[]; queryId: string }>;
+
+async function fetch(
+  current: Plan,
+  query: AnySelect,
+  execute: Execute,
+  queryIds: string[],
+): Promise<Record<string, unknown>[]> {
+  const result = await execute(query);
+  queryIds.push(result.queryId);
+  const rows = result.rows as Record<string, unknown>[];
+  await attach(current, rows, execute, queryIds);
+  return rows;
+}
+/** Leaves each plan's hidden keys in place; the caller strips them after matching. */
+async function attach(
+  current: Plan,
+  rows: Record<string, unknown>[],
+  execute: Execute,
+  queryIds: string[],
+): Promise<void> {
+  for (const item of current.relations) {
+    const parentKeys = rows.map((row) => read(row, item.from.path));
+    const distinct = new Map<string, unknown>();
+    for (const key of parentKeys) if (key !== null) distinct.set(canonical(key), key);
+    const values = [...distinct.values()];
+    const matched = new Map<string, Record<string, unknown>[]>();
+    for (let start = 0; start < values.length; start += current.batchSize) {
+      const query = narrow(
+        item.query,
+        inArray(
+          item.value.to as Expression<unknown, string, string, 'integer'>,
+          values.slice(start, start + current.batchSize) as never[],
+        ),
+      );
+      const found = item.child
+        ? await fetch(item.child, query, execute, queryIds)
+        : await execute(query).then((result) => {
+            queryIds.push(result.queryId);
+            return result.rows as Record<string, unknown>[];
+          });
+      for (const row of found) {
+        const id = canonical(read(row, item.to.path));
+        const list = matched.get(id);
+        if (list) list.push(row);
+        else matched.set(id, [row]);
+      }
+      strip(found, item.hidden);
+    }
+    rows.forEach((row, index) => {
+      const key = parentKeys[index];
+      const list = key === null ? [] : (matched.get(canonical(key)) ?? []);
+      if (item.value.cardinality === 'many') row[item.name] = [...list];
+      else if (list.length > 1)
+        throw new TypeError(
+          `Relation ${item.name} matched ${list.length} rows for one parent key.`,
+        );
+      else row[item.name] = list[0] ?? null;
+    });
+  }
+}
+
+export interface Executed {
+  readonly rows: readonly unknown[];
+  readonly queryIds: readonly string[];
+}
+/** Runs the parent query, then each relation's batches in declaration order. */
+export async function run(loaded: LoadedQuery<unknown>, execute: Execute): Promise<Executed> {
+  const current = plan(loaded);
+  const queryIds: string[] = [];
+  const rows = await fetch(current, current.query, execute, queryIds);
+  strip(rows, current.hidden);
+  return { rows, queryIds };
+}
+/** Streams parents and loads their relations per batch of parent rows. */
+export async function* stream(
+  loaded: LoadedQuery<unknown>,
+  parents: (query: AnySelect) => AsyncIterable<unknown>,
+  execute: Execute,
+): AsyncGenerator<unknown> {
+  const current = plan(loaded);
+  let batch: Record<string, unknown>[] = [];
+  const flush = async () => {
+    await attach(current, batch, execute, []);
+    strip(batch, current.hidden);
+    const rows = batch;
+    batch = [];
+    return rows;
+  };
+  for await (const row of parents(current.query)) {
+    batch.push(row as Record<string, unknown>);
+    if (batch.length === current.batchSize) yield* await flush();
+  }
+  if (batch.length) yield* await flush();
+}

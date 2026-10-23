@@ -5,10 +5,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const sdk = vi.hoisted(() => ({ createPool: vi.fn() }));
 vi.mock('snowflake-sdk', () => ({ default: sdk }));
 
-import { insert, integer, select, snowflakeTable, sql } from '../../src/index.js';
+import {
+  insert,
+  integer,
+  many,
+  select,
+  snowflakeTable,
+  sql,
+  withRelations,
+} from '../../src/index.js';
 import { createPool } from '../../src/snowflake/index.js';
 
 const table = snowflakeTable('T', { id: integer('ID').notNull() });
+const children = snowflakeTable('C', { parentId: integer('PARENT_ID').notNull() });
+const loaded = withRelations(select(table), {
+  children: many(children, { from: table.columns.id, to: children.columns.parentId }),
+});
 function fakePool(error?: Error, errors: Record<string, Error> = {}) {
   const connection = {
     isUp: () => true,
@@ -48,7 +60,8 @@ describe('SDK-backed pool leases', () => {
     expect(await db.queryRaw`SELECT 1`).toEqual([{ ID: '1' }]);
     expect(await db.queryRaw(sql`SELECT 1`)).toEqual([{ ID: '1' }]);
     expect((await db.execute(select(table).union(select(table)))).rows).toEqual([{ id: 1n }]);
-    expect(driver.release).toHaveBeenCalledTimes(5);
+    expect((await db.execute(loaded)).rows).toEqual([{ id: 1n, children: [{ parentId: 1n }] }]);
+    expect(driver.release).toHaveBeenCalledTimes(6);
     await db.close();
     await db.close();
     expect(driver.drain).toHaveBeenCalledOnce();
@@ -73,6 +86,10 @@ describe('SDK-backed pool leases', () => {
     for await (const row of db.stream(select(table).except(select(table)))) combined.push(row);
     expect(combined).toEqual([{ id: 1n }]);
     expect(driver.release).toHaveBeenCalledTimes(3);
+    const related = [];
+    for await (const row of db.stream(loaded)) related.push(row);
+    expect(related).toEqual([{ id: 1n, children: [{ parentId: 1n }] }]);
+    expect(driver.release).toHaveBeenCalledTimes(4);
     await db.close();
     await expect(async () => {
       for await (const _row of db.stream(select(table))) {

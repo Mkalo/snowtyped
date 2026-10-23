@@ -1,6 +1,7 @@
 import type { Connection, ConnectionOptions } from 'snowflake-sdk';
 import type { MutationQuery } from '../mutations.js';
 import type { SelectQuery, SetQuery } from '../query.js';
+import type { LoadedQuery } from '../relations.js';
 import type { Projection } from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation } from '../sql.js';
 import { createClient, isUnusable, type SnowflakeClient } from './client.js';
@@ -74,6 +75,7 @@ export async function createPool(
       query:
         | SelectQuery<Projection, string, string>
         | SetQuery<Record<string, unknown>>
+        | LoadedQuery<unknown>
         | MutationQuery,
       executeOptions?: ExecuteOptions,
     ) =>
@@ -83,7 +85,9 @@ export async function createPool(
             ? client.execute(query, options)
             : query.kind === 'set'
               ? client.execute(query, options)
-              : client.execute(query, options),
+              : query.kind === 'loaded'
+                ? client.execute(query, options)
+                : client.execute(query, options),
         executeOptions,
       ),
     queryRaw<T = unknown>(
@@ -100,7 +104,10 @@ export async function createPool(
       );
     },
     async *stream(
-      query: SelectQuery<Projection, string, string> | SetQuery<Record<string, unknown>>,
+      query:
+        | SelectQuery<Projection, string, string>
+        | SetQuery<Record<string, unknown>>
+        | LoadedQuery<unknown>,
       executeOptions?: ExecuteOptions,
     ) {
       const signal = requestSignal(executeOptions ?? {});
@@ -110,7 +117,9 @@ export async function createPool(
         const options = signal ? { signal } : {};
         yield* query.kind === 'select'
           ? client.stream(query, options)
-          : client.stream(query, options);
+          : query.kind === 'set'
+            ? client.stream(query, options)
+            : client.stream(query, options);
       } finally {
         await release(connection);
       }
