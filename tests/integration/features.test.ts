@@ -433,6 +433,21 @@ describe('complete query and execution paths against Snowflake', () => {
         .where(eq(docs.columns.meta, { ok: true, note: null })),
     );
     expect(matched.rows).toEqual([{ id: 2n }]);
+    const items = select(docs)
+      .select({ items: docs.columns.items })
+      .where(eq(docs.columns.id, 100n));
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = PARSE_JSON(${'[1.50, 2.5e-3, 9007199254740991, 1e300]'}) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([
+      { items: [1.5, 0.0025, 9007199254740991, 1e300] },
+    ]);
+    for (const json of ['[12345678901234567890]', '[0.1234567890123456789]']) {
+      await db.queryRaw(
+        sql`UPDATE ${name(docs)} SET ITEMS = PARSE_JSON(${json}) WHERE ID = ${100}`,
+      );
+      await expect(db.execute(items)).rejects.toThrow('does not fit a JavaScript number');
+    }
     await db.queryRaw(sql`UPDATE ${name(docs)} SET TAGS = ARRAY_CONSTRUCT(1) WHERE ID = ${101}`);
     await expect(db.execute(select(docs))).rejects.toThrow();
 
