@@ -19,6 +19,7 @@ this section.
   `timestamp`, `binary`, `variant`), and `.notNull()`.
 - Query construction: `select` and the `SelectQuery` methods documented in the
   README, `flatten`, the expression, aggregate, window, and ordering helpers,
+  the subquery helpers (`exists`, `notExists`, `scalar`, `inSubquery`),
   `insert`, `update`, `deleteFrom`, and `mergeInto`.
 - `.compile()` results (`CompiledQuery`, `BindValue`); the bound values and SQL
   semantics are stable, the exact SQL text is not.
@@ -155,7 +156,6 @@ comment on #1. Missing, pending, skipped, or cancelled runs do not count.
 Not required for `1.0.0`; each can ship later as a minor release unless it
 changes stable behavior:
 - MERGE source and condition extensions (#8)
-- Scalar, EXISTS, and correlated subqueries (#9)
 - PIVOT and UNPIVOT (#10)
 - Stronger SQL semantic validation (#11)
 - Recursive CTEs (#12)

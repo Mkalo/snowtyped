@@ -10,10 +10,10 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc eq flatten float
-      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath like
-      lower lt lte max mergeInto min ne not or over rowNumber select snowflakeTable sql sum text
-      time timestamp timeTravel update upper variant`,
+      `alias and asc binary boolean count date decimal deleteFrom desc eq exists flatten float
+      generateSchema gt gte ilike inArray inSubquery insert integer introspect isNotNull isNull
+      jsonPath like lower lt lte max mergeInto min ne not notExists or over rowNumber scalar select
+      snowflakeTable sql sum text time timestamp timeTravel update upper variant`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
@@ -21,9 +21,9 @@ const expected = {
       DataType Expression FilteredMutation FlattenOptions InferColumn InferExpression InferSelection
       InsertValues IntrospectedColumn IntrospectedTable MergeQuery MutationQuery Ordering Predicate
       RawQuery SelectQuery Selection SqlInterpolation SqlParameter Table TableOptions UpdateValues`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
-      InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode SourceReference StatementNode
-      TableNode TemporalNode UpdateNode WireType`,
+      `CteNode DeleteNode DerivedNode EqualityNode ExistsNode ExpressionNode FlattenNode
+      IdentifierNode InSubqueryNode InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode
+      SourceReference StatementNode SubqueryNode TableNode TemporalNode UpdateNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
