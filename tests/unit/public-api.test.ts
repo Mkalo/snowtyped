@@ -10,26 +10,34 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc eq exists flatten float
-      generateSchema gt gte ilike inArray inSubquery insert integer introspect isNotNull isNull
-      jsonPath like lower lt lte max mergeInto min ne not notExists or over rowNumber scalar select
-      snowflakeTable sql sum text time timestamp timeTravel update upper variant`,
+      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date dateAdd
+      dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div eq exists
+      flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
+      inSubquery integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte max
+      mergeInto min mul ne not notExists object or over rangeBetween rank rowNumber rowsBetween
+      scalar select snowflakeTable sql sub substring sum text time timestamp timeTravel trim update
+      updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
-      `AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue CompiledQuery
-      DataType Expression FilteredMutation FlattenOptions InferColumn InferExpression InferSelection
-      InsertValues IntrospectedColumn IntrospectedTable MergeQuery MutationQuery Ordering Predicate
-      RawQuery SelectQuery Selection SqlInterpolation SqlParameter Table TableOptions UpdateValues`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExistsNode ExpressionNode FlattenNode
-      IdentifierNode InSubqueryNode InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode
-      SourceReference StatementNode SubqueryNode TableNode TemporalNode UpdateNode WireType`,
+      `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
+      ColumnMap ColumnValue CompiledQuery DataType DatePart Expression FilteredMutation
+      FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry GeoPosition
+      IdentityOptions InferColumn InferExpression InferSelection InsertSource InsertValues
+      IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
+      OffsetWindowOptions OrderedWindowOptions Ordering Predicate RangeBoundary RawQuery
+      SelectQuery Selection ServerValue ServerValueKind ServerValues SqlInterpolation
+      SqlParameter Table TableOptions UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExistsNode
+      ExpressionNode FlattenNode FrameBoundaryNode IdentifierNode InsertNode InSubqueryNode
+      JoinNode MergeBranchNode MergeNode OrderNode RelationNode SelectNode SourceReference
+      StatementNode SubqueryNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
     values: names('createClient createPool'),
     types: names(
-      'ExecuteOptions MutationResult PooledClient PoolOptions QueryResult SnowflakeClient',
+      'ExecuteOptions MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
     ),
   },
 };

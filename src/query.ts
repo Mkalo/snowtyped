@@ -133,6 +133,9 @@ function correlations(node: unknown): SourceReference[] {
         : correlations(value),
   );
 }
+function derivedServerValue(): never {
+  throw new TypeError('Server values can only be declared on base table columns.');
+}
 function validateSelection(selection: Selection): readonly AnyExpression[] {
   const entries = Object.entries(selection);
   if (!entries.length) throw new TypeError('A query needs at least one projected column.');
@@ -246,13 +249,19 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
           node: identifier(key),
           dataType: 'text',
           required: true,
+          constraints: Object.freeze({}),
+          encodeWrite: value.encode,
           readSchema: read,
           valueSchema: value.nullRefs.some((ref) => state.nullable.has(ref.id))
             ? value.valueSchema.nullable()
             : value.valueSchema,
+          serverValue: null,
           notNull() {
             return this as Column<unknown, true>;
           },
+          serverDefault: derivedServerValue,
+          identity: derivedServerValue,
+          virtual: derivedServerValue,
         });
         return [key, col];
       }),

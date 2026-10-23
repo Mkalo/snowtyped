@@ -20,7 +20,8 @@ this section.
 - Query construction: `select` and the `SelectQuery` methods documented in the
   README, `flatten`, the expression, aggregate, window, and ordering helpers,
   the subquery helpers (`exists`, `notExists`, `scalar`, `inSubquery`),
-  `insert`, `update`, `deleteFrom`, and `mergeInto`.
+  `insert`, `insertFrom`, `update`, `updateFrom`, `deleteFrom`, `deleteUsing`,
+  and `mergeInto` with its conditional branches.
 - `.compile()` results (`CompiledQuery`, `BindValue`); the bound values and SQL
   semantics are stable, the exact SQL text is not.
 - Raw SQL: `sql`, `sql.identifier`, `sql.join`, `sql.json`, `sql.unsafe`,
@@ -97,33 +98,32 @@ guarantees:
 
 These scenarios from #17 must pass on the release commit. Unit tests cover
 SDK-independent behavior; live tests run in the protected integration workflow.
+[Production behavior](production.md#scenario-coverage) maps each scenario to its
+tests.
 1. **Cancellation:** pre-aborted requests never execute; abort and timeout wait
    for SDK cancellation; late completions are ignored; a long-running live
-   statement is cancelled. _Today:_ unit tests and a live timeout test.
+   statement is cancelled.
 2. **Pool waits:** cancellation or `acquireTimeoutMillis` while waiting for a
-   connection rejects without leaking a lease. _Today:_ missing.
+   connection rejects without leaking a lease.
 3. **Streaming:** early `break`, `return`, or a consumer error destroys the row
    stream and releases its lease; a large live result streams with bounded
-   memory. _Today:_ unit early exit and live lease release; bounded memory is
-   untested.
+   memory.
 4. **Pool pressure:** concurrent work above `max` never exceeds `max`
    connections and completes; `close()` with work in flight has defined
-   behavior and leaves no open connections. _Today:_ unit lease tests only.
+   behavior and leaves no open connections.
 5. **Transactions:** commit, rollback, preserved errors, and rejected nested or
    expired use; a pooled connection whose rollback failed is destroyed instead
-   of released for reuse. _Today:_ unit tests; the pool currently releases it.
+   of released for reuse.
 6. **Failures:** synchronous, callback, network, and mid-stream SDK errors
    reject with the original error, return no partial result, and release the
-   lease. _Today:_ unit SDK error tests; network and mid-stream errors are
-   untested.
-7. **Retries:** no statement is retried implicitly. _Today:_ true by
-   construction; no dedicated regression test.
+   lease.
+7. **Retries:** no statement is retried implicitly.
 8. **Sustained use:** a live run mixes concurrent queries, streams, and
    transactions above pool `max` and ends with every connection closed.
-   _Today:_ missing.
 
-Inference and editor-performance benchmarks, throughput baselines, and soak
-tests remain #17 work but do not block the first supported release.
+Inference and editor benchmarks (`pnpm bench:types`) and baselines are in
+[production behavior](production.md#baselines). Longer soak and throughput suites
+remain #17 work but do not block the first supported release.
 
 ## Release gates
 
@@ -155,7 +155,6 @@ comment on #1. Missing, pending, skipped, or cancelled runs do not count.
 
 Not required for `1.0.0`; each can ship later as a minor release unless it
 changes stable behavior:
-- MERGE source and condition extensions (#8)
 - PIVOT and UNPIVOT (#10)
 - Stronger SQL semantic validation (#11)
 - Recursive CTEs (#12)
@@ -164,11 +163,9 @@ changes stable behavior:
 - MATCH_RECOGNIZE (#15)
 - DDL builders and migrations (#16)
 
-In progress and not yet part of this contract: raw-query cancellation (#2),
-expression and function helpers (#3), default, identity, and generated columns
-(#4), constraints and additional type codecs (#5), window frames (#6), and set
-operations (#7). Each joins the stable API when it merges and this document and
-the export snapshot are updated.
+In progress and not yet part of this contract: constraints and additional type codecs (#5) and set
+operations (#7). Each joins the stable API when it merges and this document and the export snapshot
+are updated.
 
 Raw SQL remains available for Snowflake syntax beyond the modeled builders.
 
