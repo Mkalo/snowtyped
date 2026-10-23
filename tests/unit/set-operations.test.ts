@@ -110,7 +110,7 @@ describe('set operation composition', () => {
       .union(select(b, { name: b.columns.name }).where(eq(b.columns.name, 'y')))
       .limit(3);
     expect(bound.compile()).toEqual({
-      sql: 'SELECT "__sflib_result"."name" AS "name" FROM ((SELECT "NAME" AS "name" FROM "A" WHERE ("NAME" = ?) ORDER BY "ID" ASC LIMIT 1) UNION (SELECT "NAME" AS "name" FROM "B" WHERE ("NAME" = ?))) AS "__sflib_result" LIMIT 3',
+      sql: 'SELECT "__sflib_result"."name" AS "name" FROM ((SELECT "NAME" AS "name" FROM "A" WHERE ("NAME" = ?) ORDER BY "A"."ID" ASC LIMIT 1) UNION (SELECT "NAME" AS "name" FROM "B" WHERE ("NAME" = ?))) AS "__sflib_result" LIMIT 3',
       binds: ['x', 'y'],
     });
     expect(bound.intersect(branch).compile().sql).toContain(

@@ -10,22 +10,26 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc eq flatten float
-      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath
-      like lower lt lte max mergeInto min ne not or over rowNumber select snowflakeTable sql
-      sum text time timeTravel timestamp update upper variant`,
+      `alias and array asc binary boolean count date decimal deleteFrom deleteUsing desc eq
+      flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
+      integer introspect isNotNull isNull jsonPath like lower lt lte max mergeInto min ne not
+      object or over rangeBetween rowNumber rowsBetween select snowflakeTable sql sum text time
+      timeTravel timestamp update updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
       `AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue
       CompatibleOperand CompiledQuery DataType Expression FilteredMutation FlattenOptions
-      InferColumn InferExpression InferSelection InsertValues IntersectRow IntrospectedColumn
-      IntrospectedTable MergeQuery MutationQuery OperandRow Ordering Predicate RawQuery
-      SelectQuery Selection SetColumns SetOperand SetOperator SetQuery SetScope
-      SqlInterpolation SqlParameter Table TableOptions UnionRow UpdateValues`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
-      InsertNode JoinNode MergeNode OrderNode QueryNode RelationNode SelectNode
-      SetOperationNode SourceReference StatementNode TableNode TemporalNode UpdateNode WireType`,
+      FrameBoundary FramedWindowOptions GeoJsonGeometry GeoPosition IdentityOptions InferColumn
+      InferExpression InferSelection InsertSource InsertValues IntersectRow IntervalUnit
+      IntrospectedColumn IntrospectedTable MergeQuery MutationQuery OperandRow Ordering
+      Predicate RangeBoundary RawQuery SelectQuery Selection ServerValue ServerValueKind
+      ServerValues SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation
+      SqlParameter Table TableOptions UnionRow UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
+      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode
+      MergeNode OrderNode QueryNode RelationNode SelectNode SetOperationNode SourceReference
+      StatementNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {

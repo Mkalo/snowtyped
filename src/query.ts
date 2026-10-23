@@ -158,6 +158,9 @@ export function assertScope(
   if (values.some((value) => value.refs.some((ref) => !available.has(ref.id))))
     throw new TypeError('Expression does not belong to the available table scope.');
 }
+function derivedServerValue(): never {
+  throw new TypeError('Server values can only be declared on base table columns.');
+}
 function validateSelection(selection: Selection, tables: readonly Table[]): void {
   const entries = Object.entries(selection);
   if (!entries.length) throw new TypeError('A query needs at least one projected column.');
@@ -230,11 +233,17 @@ function outputColumn(key: string, output: Output): AnyColumn {
     node: identifier(key),
     dataType: 'text',
     required: true,
+    constraints: Object.freeze({}),
+    encodeWrite: output.source.encode,
     readSchema: output.nullable ? output.read.nullable() : output.read,
     valueSchema: output.nullable ? output.value.nullable() : output.value,
+    serverValue: null,
     notNull() {
       return this as Column<unknown, true>;
     },
+    serverDefault: derivedServerValue,
+    identity: derivedServerValue,
+    virtual: derivedServerValue,
   });
 }
 function derivedTable(
