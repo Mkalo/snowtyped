@@ -124,7 +124,10 @@ describe('declared column constraints', () => {
       expect(amount.encodeWrite(value)).toEqual({ kind: 'parameter', value });
     for (const value of ['1000', '1.001', '-1000.00', '0.005'])
       expect(() => amount.encodeWrite(value)).toThrow('NUMBER(5,2)');
-    expect(() => amount.encodeWrite('1e3')).toThrow();
+    for (const value of ['1e3', '+1.5', '.5', '1.', 'abc']) {
+      expect(() => amount.encodeWrite(value)).toThrow(z.ZodError);
+      expect(() => amount.readSchema.parse(value)).toThrow(z.ZodError);
+    }
     expect(amount.readSchema.parse('999.99')).toBe('999.99');
     expect(() => amount.readSchema.parse('1000.00')).toThrow('NUMBER(5,2)');
     expect(decimal('A', { scale: 4 }).constraints).toEqual({ precision: 38, scale: 4 });
@@ -166,11 +169,26 @@ describe('declared column constraints', () => {
       '2026-01-01T12:34:56.000Z',
       '2026-01-01 12:34:56.000000000 -08:00',
       '1700000000',
+      '1700000000000',
+      '1700000000000000',
+      '1700000000000000000',
+      '-1700000000123',
       '01.02.2026 12:34:56',
     ])
       expect(() => at.encodeWrite(value)).not.toThrow();
-    for (const value of ['2026-01-01 12:34:56.7', '2026-01-01T12:34:56.5+02:00', '1700000000.5'])
+    for (const value of [
+      '2026-01-01 12:34:56.7',
+      '2026-01-01T12:34:56.5+02:00',
+      '1700000000.5',
+      '1700000000123',
+      '1700000000123456',
+      '1700000000123456789',
+    ])
       expect(() => at.encodeWrite(value)).toThrow('TIMESTAMP_LTZ(0)');
+    const millis = timestamp('AT', 'ntz', { precision: 3 });
+    expect(() => millis.encodeWrite('1700000000123')).not.toThrow();
+    expect(() => millis.encodeWrite('1700000000123000')).not.toThrow();
+    expect(() => millis.encodeWrite('1700000000123400')).toThrow('TIMESTAMP_NTZ(3)');
     expect(() => at.readSchema.parse('2026-01-01 12:34:56.100000000 -08:00')).toThrow();
     expect(timestamp('AT').constraints).toEqual({});
     expect(
