@@ -64,7 +64,7 @@ The account field takes an account identifier, not a full `https://` URL. Relati
 pnpm test:integration
 ```
 
-Each run creates a schema named `SFLIB_TEST_<random UUID>`, seeds three deterministic customers including a 38-digit-capable integer and an exact decimal, executes the library's queries, and drops that schema in teardown. Setup failures after schema creation also attempt cleanup. No existing schema is selected for deletion.
+Each test file creates a schema named `SFLIB_TEST_<random UUID>`, seeds three deterministic customers including a 38-digit-capable integer and an exact decimal plus the tables it needs, executes the library's queries, and drops that schema in teardown. [Live coverage](live-coverage.md) maps the files to features. Setup failures after schema creation also attempt cleanup. No existing schema is selected for deletion.
 
 If the process is killed or the network fails during cleanup, a schema can remain. Inspect only schemas with the `SFLIB_TEST_` prefix in the dedicated database and remove known abandoned test schemas manually. There is no automatic sweep of old schemas.
 
