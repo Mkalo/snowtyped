@@ -49,6 +49,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   const migrated = { database, schema: `${fixture.schemaName}_MIGRATED` };
   const pushed = { database, schema: `${fixture.schemaName}_PUSHED` };
   const typed = { database, schema: `${fixture.schemaName}_TYPED` };
+  const shaped = { database, schema: `${fixture.schemaName}_SHAPED` };
   const accounts = snowflakeTable(
     'ACCOUNTS',
     {
@@ -71,7 +72,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   });
   afterAll(async () => {
     try {
-      for (const target of [migrated, pushed, typed])
+      for (const target of [migrated, pushed, typed, shaped])
         await db.queryRaw(
           sql`DROP SCHEMA IF EXISTS ${sql.identifier(target.database, target.schema)} CASCADE`,
         );
@@ -481,13 +482,13 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
           ids: structured('IDS', st.map(st.integer({ precision: 9 }), st.text())),
           first: structured('FIRST', st.array(st.integer())).virtual('[1]::ARRAY(NUMBER(38,0))'),
         },
-        typed,
+        shaped,
       );
     const current = shapes(false);
-    const v1 = defineSchema(typed, [current]);
+    const v1 = defineSchema(shaped, [current]);
     await pushSchema(db, v1);
     expect(await checkDrift(db, v1)).toEqual({ changes: [], unsupported: [] });
-    const table = sql.identifier(database, typed.schema, 'SHAPES');
+    const table = sql.identifier(database, shaped.schema, 'SHAPES');
     await db.queryRaw(
       sql`INSERT INTO ${table} (ID, COUNTS) SELECT 1, ARRAY_CONSTRUCT(1, 2)::ARRAY(NUMBER(38,0))`,
     );
@@ -502,7 +503,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
     await db.queryRaw(
       sql`ALTER TABLE ${table} ALTER COLUMN "PROFILE" SET DATA TYPE ${sql.unsafe(profile(true).sql)}`,
     );
-    const v2 = defineSchema(typed, [shapes(true)]);
+    const v2 = defineSchema(shaped, [shapes(true)]);
     expect(await checkDrift(db, v2)).toEqual({ changes: [], unsupported: [] });
     expect((await checkDrift(db, v1)).unsupported).toEqual([
       {
