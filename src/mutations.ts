@@ -75,8 +75,8 @@ function checkTable(table: Table): void {
 }
 function checkSource(target: Table, source: Table): void {
   checkTable(target);
-  if (source.source.kind !== 'table' && source.source.kind !== 'derived')
-    throw new TypeError('Mutation sources must be tables or derived queries.');
+  if (!['table', 'derived', 'cte'].includes(source.source.kind))
+    throw new TypeError('Mutation sources must be tables, derived queries, or CTEs.');
   if (target.ref.name === source.ref.name)
     throw new TypeError('Mutation sources need distinct names.');
 }

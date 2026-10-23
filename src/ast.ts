@@ -473,6 +473,12 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;
   }
+  // DML has no WITH clause of its own, so a CTE source is inlined as a derived query.
+  function mutationSource(node: RelationNode): string {
+    return source(
+      node.kind === 'cte' ? { kind: 'derived', query: node.query, alias: node.name } : node,
+    );
+  }
   function assignments(values: readonly AssignmentNode[], qualified: boolean): string {
     return values
       .map(({ column, value }) => `${quoteIdentifier(column)} = ${expression(value, qualified)}`)
@@ -508,19 +514,19 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     case 'update': {
       const qualified = Boolean(statement.from);
       sql = `UPDATE ${quoteIdentifier(statement.table)}${statement.alias ? ` AS ${quoteIdentifier(statement.alias)}` : ''} SET ${assignments(statement.assignments, qualified)}`;
-      if (statement.from) sql += ` FROM ${source(statement.from)}`;
+      if (statement.from) sql += ` FROM ${mutationSource(statement.from)}`;
       if (statement.where) sql += ` WHERE ${expression(statement.where, qualified)}`;
       break;
     }
     case 'delete': {
       const qualified = Boolean(statement.using);
       sql = `DELETE FROM ${quoteIdentifier(statement.table)}${statement.alias ? ` AS ${quoteIdentifier(statement.alias)}` : ''}`;
-      if (statement.using) sql += ` USING ${source(statement.using)}`;
+      if (statement.using) sql += ` USING ${mutationSource(statement.using)}`;
       if (statement.where) sql += ` WHERE ${expression(statement.where, qualified)}`;
       break;
     }
     case 'merge': {
-      sql = `MERGE INTO ${source(statement.target)} USING ${source(statement.source)} ON ${expression(statement.on, true)}`;
+      sql = `MERGE INTO ${source(statement.target)} USING ${mutationSource(statement.source)} ON ${expression(statement.on, true)}`;
       const branches: MergeBranchNode[] = [
         ...(statement.deleteMatched ? [{ kind: 'matched-delete' as const }] : []),
         ...(statement.matched
