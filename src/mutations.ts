@@ -2,6 +2,7 @@ import {
   type CompiledQuery,
   compileAst,
   type DeleteNode,
+  type ExpressionNode,
   type MergeBranchNode,
   type MergeNode,
   type SourceReference,
@@ -158,13 +159,25 @@ export function insertFrom<
 function filtered<N extends string>(
   refs: readonly SourceReference[],
   ast: UpdateNode | DeleteNode,
+  on?: ExpressionNode,
 ): FilteredMutation<N> {
   return Object.freeze({
     ...mutation(ast),
     where(predicate: Predicate<N>) {
+      const where = condition(predicate, refs, 'Mutation filters');
       return filtered(
         refs,
-        Object.freeze({ ...ast, where: condition(predicate, refs, 'Mutation filters') }),
+        Object.freeze({
+          ...ast,
+          where: on
+            ? Object.freeze({
+                kind: 'logical',
+                operator: 'AND',
+                operands: Object.freeze([on, where]),
+              })
+            : where,
+        }),
+        on,
       );
     },
   });
@@ -187,10 +200,12 @@ export function updateFrom<
 >(
   target: Table<C, T>,
   source: Table<S, N>,
+  on: Predicate<T | N>,
   values: NoInfer<UpdateValues<C, T | N>>,
 ): FilteredMutation<T | N> {
   checkSource(target, source);
   const refs = [target.ref, source.ref];
+  const join = condition(on, refs, 'UPDATE FROM join predicates');
   return filtered(
     refs,
     Object.freeze({
@@ -199,7 +214,9 @@ export function updateFrom<
       alias: target.ref.qualifier,
       assignments: entries(target, values, refs),
       from: source.source,
+      where: join,
     }),
+    join,
   );
 }
 export function deleteFrom<C extends ColumnMap, N extends string>(
@@ -213,16 +230,20 @@ export function deleteUsing<
   T extends string,
   S extends ColumnMap,
   N extends string,
->(target: Table<C, T>, source: Table<S, N>): FilteredMutation<T | N> {
+>(target: Table<C, T>, source: Table<S, N>, on: Predicate<T | N>): FilteredMutation<T | N> {
   checkSource(target, source);
+  const refs = [target.ref, source.ref];
+  const join = condition(on, refs, 'DELETE USING join predicates');
   return filtered(
-    [target.ref, source.ref],
+    refs,
     Object.freeze({
       kind: 'delete',
       table: target.node,
       alias: target.ref.qualifier,
       using: source.source,
+      where: join,
     }),
+    join,
   );
 }
 

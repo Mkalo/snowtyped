@@ -79,15 +79,20 @@ describe('INSERT from SELECT', () => {
 
 describe('UPDATE FROM and DELETE USING', () => {
   it('qualifies the aliased target and binds in statement order', () => {
-    const query = updateFrom(target, source, { label: source.columns.label, id: 5n }).where(
-      eq(target.columns.id, source.columns.id),
-    );
+    const join = eq(target.columns.id, source.columns.id);
+    const query = updateFrom(target, source, join, {
+      label: source.columns.label,
+      id: 5n,
+    }).where(eq(source.columns.label, 'new'));
     expect(query.compile()).toEqual({
-      sql: 'UPDATE "APP"."TARGET" AS "TARGET" SET "LABEL" = "SOURCE"."LABEL", "ID" = ? FROM "SOURCE" WHERE ("TARGET"."ID" = "SOURCE"."ID")',
-      binds: ['5'],
+      sql: 'UPDATE "APP"."TARGET" AS "TARGET" SET "LABEL" = "SOURCE"."LABEL", "ID" = ? FROM "SOURCE" WHERE (("TARGET"."ID" = "SOURCE"."ID") AND ("SOURCE"."LABEL" = ?))',
+      binds: ['5', 'new'],
     });
-    expect(updateFrom(target, source, { label: 'x' }).compile().sql).toBe(
-      'UPDATE "APP"."TARGET" AS "TARGET" SET "LABEL" = ? FROM "SOURCE"',
+    expect(updateFrom(target, source, join, { label: 'x' }).compile().sql).toBe(
+      'UPDATE "APP"."TARGET" AS "TARGET" SET "LABEL" = ? FROM "SOURCE" WHERE ("TARGET"."ID" = "SOURCE"."ID")',
+    );
+    expect(query.where(gt(target.columns.id, 1n)).compile().sql).toMatch(
+      /WHERE \(\("TARGET"."ID" = "SOURCE"."ID"\) AND \("TARGET"."ID" > \?\)\)$/,
     );
   });
 
@@ -97,28 +102,44 @@ describe('UPDATE FROM and DELETE USING', () => {
       .where(eq(source.columns.label, 'stale'))
       .as('D');
     expect(
-      deleteUsing(renamed, derived).where(eq(renamed.columns.id, derived.columns.id)).compile(),
+      deleteUsing(renamed, derived, eq(renamed.columns.id, derived.columns.id)).compile(),
     ).toEqual({
       sql: 'DELETE FROM "APP"."TARGET" AS "t" USING (SELECT "ID" AS "id" FROM "SOURCE" WHERE ("LABEL" = ?)) AS "D" WHERE ("t"."ID" = "D"."id")',
       binds: ['stale'],
     });
-    expect(deleteUsing(target, source).compile().sql).toBe(
-      'DELETE FROM "APP"."TARGET" AS "TARGET" USING "SOURCE"',
+    expect(
+      deleteUsing(target, source, eq(target.columns.id, source.columns.id))
+        .where(eq(source.columns.label, 'gone'))
+        .compile().sql,
+    ).toBe(
+      'DELETE FROM "APP"."TARGET" AS "TARGET" USING "SOURCE" WHERE (("TARGET"."ID" = "SOURCE"."ID") AND ("SOURCE"."LABEL" = ?))',
     );
   });
 
   it('enforces source kinds, names, and scope', () => {
-    expect(() => updateFrom(target, other, { id: source.columns.id } as never)).toThrow('scope');
-    expect(() => deleteUsing(target, other).where(eq(source.columns.id, 1n) as never)).toThrow(
+    const join = eq(target.columns.id, source.columns.id);
+    const otherJoin = eq(target.columns.id, other.columns.id);
+    expect(() => updateFrom(target, other, otherJoin, { id: source.columns.id } as never)).toThrow(
       'scope',
     );
-    expect(() => deleteUsing(target, source).where(gt(count(), 0n))).toThrow('scalar');
-    expect(() => deleteUsing(target, alias(source, 'TARGET'))).toThrow('distinct names');
-    expect(() => deleteUsing(target, select(source).asCte('S'))).toThrow('tables or derived');
-    expect(() => deleteUsing(target, flatten(jsonPath(source.columns.data, 'x'), 'F'))).toThrow(
+    expect(() => deleteUsing(target, other, join as never)).toThrow('scope');
+    expect(() =>
+      deleteUsing(target, other, otherJoin).where(eq(source.columns.id, 1n) as never),
+    ).toThrow('scope');
+    expect(() => deleteUsing(target, source, gt(count(), 0n))).toThrow('scalar');
+    expect(() => deleteUsing(target, source, join).where(gt(count(), 0n))).toThrow('scalar');
+    expect(() => deleteUsing(target, alias(source, 'TARGET'), join as never)).toThrow(
+      'distinct names',
+    );
+    expect(() => deleteUsing(target, select(source).asCte('S'), join as never)).toThrow(
       'tables or derived',
     );
-    expect(() => updateFrom(select(target).as('D'), source, { id: 1n })).toThrow('base table');
+    expect(() =>
+      deleteUsing(target, flatten(jsonPath(source.columns.data, 'x'), 'F'), join as never),
+    ).toThrow('tables or derived');
+    expect(() => updateFrom(select(target).as('D'), source, join as never, { id: 1n })).toThrow(
+      'base table',
+    );
   });
 });
 

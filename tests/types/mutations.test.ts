@@ -35,16 +35,21 @@ const outer = select(source)
 // @ts-expect-error Outer-joined sources become nullable.
 insertFrom(target, outer);
 
-updateFrom(target, source, { label: source.columns.label }).where(
-  eq(target.columns.id, source.columns.id),
+const join = eq(target.columns.id, source.columns.id);
+updateFrom(target, source, join, { label: source.columns.label }).where(
+  eq(source.columns.name, 'x'),
 );
 // @ts-expect-error Update values must come from the target or source scope.
-updateFrom(target, source, { id: other.columns.id });
+updateFrom(target, source, join, { id: other.columns.id });
 // @ts-expect-error Update values must match the target column domain.
-updateFrom(target, source, { id: source.columns.name });
+updateFrom(target, source, join, { id: source.columns.name });
+// @ts-expect-error A join predicate is required.
+deleteUsing(target, source);
+// @ts-expect-error Join predicates cannot reference tables outside the mutation scope.
+deleteUsing(target, source, eq(other.columns.id, 1n));
 // @ts-expect-error Filters cannot reference tables outside the mutation scope.
-deleteUsing(target, source).where(eq(other.columns.id, 1n));
-deleteUsing(target, source).where(eq(target.columns.id, source.columns.id));
+deleteUsing(target, source, join).where(eq(other.columns.id, 1n));
+deleteUsing(target, source, join).where(eq(source.columns.name, 'x'));
 
 const merge = mergeInto(target, source, eq(target.columns.id, source.columns.id));
 merge

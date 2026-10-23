@@ -84,20 +84,20 @@ describe('mutation sources and conditional MERGE against Snowflake', () => {
 
   it('updates from and deletes using a scoped source', async () => {
     const updated = await db.execute(
-      updateFrom(accounts, changes, { label: changes.columns.label }).where(
-        eq(accounts.columns.id, changes.columns.id),
-      ),
+      updateFrom(accounts, changes, eq(accounts.columns.id, changes.columns.id), {
+        label: changes.columns.label,
+      }).where(gt(changes.columns.id, 1n)),
     );
-    expect(updated.affectedRows).toBe(3);
+    expect(updated.affectedRows).toBe(2);
     const doomed = select(changes, { id: changes.columns.id })
       .where(eq(changes.columns.action, 'delete'))
       .as('DOOMED');
     const deleted = await db.execute(
-      deleteUsing(accounts, doomed).where(eq(accounts.columns.id, doomed.columns.id)),
+      deleteUsing(accounts, doomed, eq(accounts.columns.id, doomed.columns.id)),
     );
     expect(deleted.affectedRows).toBe(1);
     expect(await rows()).toEqual([
-      { id: 1n, label: 'One' },
+      { id: 1n, label: 'a' },
       { id: 3n, label: 'Three' },
     ]);
   });
