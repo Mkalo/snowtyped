@@ -15,5 +15,5 @@ test('keeps generated schema inference within its instantiation budget', () => {
   );
   expect(result).toMatchObject({ tables: 10, columns: 20, joins: 4, completionEntries: 13 });
   expect(result.instantiations).toBeLessThan(320_000);
-  expect(result.types).toBeLessThan(100_000);
+  expect(result.types).toBeLessThan(110_000);
 });

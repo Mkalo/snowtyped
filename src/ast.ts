@@ -140,6 +140,25 @@ export interface CastNode {
     | `VECTOR(${'INT' | 'FLOAT'}, ${number})`
     | `${'ARRAY' | 'OBJECT' | 'MAP'}(${string})`;
 }
+/** `correlated` lists the enclosing sources the inner query may reference. */
+export interface SubqueryNode {
+  readonly kind: 'subquery';
+  readonly query: SelectNode;
+  readonly correlated: readonly SourceReference[];
+}
+export interface ExistsNode {
+  readonly kind: 'exists';
+  readonly query: SelectNode;
+  readonly correlated: readonly SourceReference[];
+  readonly negate: boolean;
+}
+export interface InSubqueryNode {
+  readonly kind: 'in-subquery';
+  readonly operand: ExpressionNode;
+  readonly query: SelectNode;
+  readonly correlated: readonly SourceReference[];
+  readonly negate: boolean;
+}
 /** Navigation inside MATCH_RECOGNIZE; Snowflake requires constant offsets. */
 export interface NavigationNode {
   readonly kind: 'navigation';
@@ -172,6 +191,9 @@ export type ExpressionNode =
   | WindowNode
   | JsonPathNode
   | CastNode
+  | SubqueryNode
+  | ExistsNode
+  | InSubqueryNode
   | NavigationNode
   | SemanticsNode
   | StarNode;
@@ -467,6 +489,12 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         );
       case 'cast':
         return `CAST(${expression(node.value, qualify)} AS ${node.target})`;
+      case 'subquery':
+        return `(${selectStatement(node.query, false, true)})`;
+      case 'exists':
+        return `(${node.negate ? 'NOT ' : ''}EXISTS (${selectStatement(node.query, false, true)}))`;
+      case 'in-subquery':
+        return `(${expression(node.operand, qualify)} ${node.negate ? 'NOT IN' : 'IN'} (${selectStatement(node.query, false, true)}))`;
       case 'navigation': {
         if (node.offset !== undefined && (!Number.isSafeInteger(node.offset) || node.offset < 0))
           throw new TypeError('Navigation offsets must be nonnegative safe integers.');
@@ -674,7 +702,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;
   }
-  function selectStatement(node: SelectNode, wireOutput = false): string {
+  function selectStatement(node: SelectNode, wireOutput = false, nested = false): string {
     if (wireOutput && node.projections.some((item) => item.wireType)) {
       // Serialize only after relational operations, preserving native numeric/temporal sort,
       // DISTINCT, grouping, and the SQL types of nested CTEs and subqueries.
@@ -705,8 +733,12 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         .join(', ');
       return `SELECT ${projected} FROM (${native}) AS "__sflib_result"${ordering.length ? ` ORDER BY ${ordering.join(', ')}` : ''}`;
     }
+    // Nested queries qualify every reference so correlated outer columns cannot be captured.
     const qualified =
-      Boolean(node.joins?.length) || node.from.kind === 'derived' || node.from.kind === 'cte';
+      nested ||
+      Boolean(node.joins?.length) ||
+      node.from.kind === 'derived' ||
+      node.from.kind === 'cte';
     let text = withClause(node.with);
     const projected = node.projections.length
       ? node.projections

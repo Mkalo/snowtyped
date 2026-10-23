@@ -107,6 +107,18 @@ const page = all.orderBy(asc(all.columns.id)).limit(50);
 
 `.union()`, `.unionAll()`, `.intersect()`, and `.except()` combine queries whose projections have the same aliases and domains; branches are aligned by alias. UNION results are nullable when either branch is, INTERSECT only when both are, and EXCEPT keeps the left branch's types. Mixed numeric families (integer, decimal, float) or temporal kinds are rejected; same-family precision and scale widen in Snowflake. Chained calls apply to the whole preceding query, and nesting groups explicitly: every operand is parenthesized, so INTERSECT's higher keyword precedence never regroups a query. Order and paginate a combined query with its own `.columns`; branch CTEs are hoisted into one leading WITH, and serialization happens only after the set operation. Combined queries also support `.as()` and `.asCte()`.
 
+`exists`, `notExists`, `scalar`, and `inSubquery` embed a query as an expression. `.correlate(outer)` lets a subquery reference an enclosing source; correlated queries cannot execute on their own, and Snowflake only resolves correlations against the immediately enclosing query. Scalar subqueries project one column and are nullable because an empty result reads as NULL; correlated scalar subqueries must be ungrouped aggregates, and correlated subqueries cannot use LIMIT or OFFSET.
+
+```ts
+const theirs = select(orders)
+  .correlate(customers)
+  .where(eq(orders.columns.customerId, customers.columns.id));
+select(customers, {
+  name: customers.columns.name,
+  orders: scalar(theirs.select({ n: count() })),
+}).where(exists(theirs));
+```
+
 ## Snowflake syntax
 
 ```ts
