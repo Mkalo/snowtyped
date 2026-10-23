@@ -1,0 +1,27 @@
+---
+import { Badge } from '@astrojs/starlight/components';
+import Default from '@astrojs/starlight/components/SiteTitle.astro';
+import { release } from '../release';
+
+const releases = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/project/releases/`;
+const label = release.stable ? 'Stable release' : `Prerelease (${release.channel})`;
+---
+
+<div class="sl-flex">
+  <Default />
+  <a href={releases} aria-label={`${label}, version ${release.version}`}>
+    <Badge text={`v${release.version}`} variant={release.stable ? 'success' : 'caution'} />
+  </a>
+</div>
+
+<style>
+  div {
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  a {
+    text-decoration: none;
+    white-space: nowrap;
+  }
+</style>

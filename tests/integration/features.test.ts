@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import {
   alias,
@@ -119,6 +119,23 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const nullable = snowflakeTable(
+    'NULLABLE_TYPES',
+    {
+      id: integer('ID').notNull(),
+      data: binary('DATA'),
+      payload: variant('PAYLOAD', z.object({ ok: z.boolean() })),
+      at: timestamp('AT_VALUE'),
+      day: date('DAY'),
+    },
+    namespace,
+  );
+  const nullSource = snowflakeTable('NULL_SOURCE', { id: integer('ID').notNull() }, namespace);
+  const doubles = snowflakeTable(
+    'DOUBLES',
+    { id: integer('ID').notNull(), value: float('VALUE').notNull() },
+    namespace,
+  );
   const name = (table: { node: { parts: readonly string[] } }) =>
     sql.identifier(...(table.node.parts as [string, ...string[]]));
 
@@ -170,6 +187,10 @@ describe('complete query and execution paths against Snowflake', () => {
     await db.queryRaw(
       sql`CREATE TABLE ${name(docs)} (ID NUMBER(38,0) NOT NULL, TAGS ARRAY NOT NULL, ITEMS ARRAY, META OBJECT, EXTRA OBJECT)`,
     );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(nullable)} (ID NUMBER(38,0) NOT NULL, DATA BINARY, PAYLOAD VARIANT, AT_VALUE TIMESTAMP_NTZ(9), DAY DATE)`,
+    );
+    await db.queryRaw(sql`CREATE TABLE ${name(nullSource)} (ID NUMBER(38,0) NOT NULL)`);
   });
   afterAll(() => fixture.cleanup());
 
@@ -229,6 +250,52 @@ describe('complete query and execution paths against Snowflake', () => {
     ]);
   });
 
+  it('orders grouped queries by windows over aggregates', async () => {
+    const rank = rowNumber({ orderBy: [desc(sum(orders.columns.amount))] });
+    const projected = select(orders, { customer: orders.columns.customerId, rank })
+      .groupBy(orders.columns.customerId)
+      .orderBy(desc(rank));
+    expect((await db.execute(projected)).rows).toEqual([
+      { customer: 2n, rank: 2n },
+      { customer: 9007199254740993n, rank: 1n },
+    ]);
+    expect((await db.execute(projected.limit(1))).rows).toEqual([{ customer: 2n, rank: 2n }]);
+    const hidden = select(orders, { customer: orders.columns.customerId })
+      .groupBy(orders.columns.customerId)
+      .orderBy(asc(rank));
+    expect((await db.execute(hidden)).rows).toEqual([
+      { customer: 9007199254740993n },
+      { customer: 2n },
+    ]);
+  });
+
+  it('orders by a column that shares its name with another projection alias', async () => {
+    const byName = [{ NAME: null }, { NAME: 'grace@example.test' }, { NAME: 'linus@example.test' }];
+    const { email, id, name } = customers.columns;
+    expect((await db.execute(select(customers, { NAME: email }).orderBy(asc(name)))).rows).toEqual(
+      byName,
+    );
+    expect(
+      (
+        await db.execute(
+          select(customers, { NAME: email })
+            .orderBy(asc(lower(name)))
+            .limit(1),
+        )
+      ).rows,
+    ).toEqual(byName.slice(0, 1));
+    expect(
+      (await db.execute(select(customers, { NAME: email, ID: name }).orderBy(asc(id)))).rows.map(
+        (row) => row.ID,
+      ),
+    ).toEqual(['Grace', 'Linus', 'Ada']);
+    expect((await db.execute(select(customers, { NAME: id }).orderBy(desc(name)))).rows).toEqual([
+      { NAME: 3n },
+      { NAME: 2n },
+      { NAME: 9007199254740993n },
+    ]);
+  });
+
   it('composes derived sources and CTEs with validated wire decoding', async () => {
     const source = select(orders, {
       customer: orders.columns.customerId,
@@ -282,6 +349,24 @@ describe('complete query and execution paths against Snowflake', () => {
     expect(
       (await db.execute(select(historical, { name: historical.columns.name }))).rows,
     ).toHaveLength(3);
+  });
+
+  it('honors the UTC offset of time-travel timestamps', async () => {
+    const history = snowflakeTable('HISTORY', { id: integer('ID').notNull() }, namespace);
+    await db.queryRaw(sql`CREATE TABLE ${name(history)} (ID NUMBER(38,0) NOT NULL)`);
+    await db.execute(insert(history, { id: 1n }));
+    await db.queryRaw(sql`SELECT SYSTEM$WAIT(1)`);
+    const [moment] = await db.queryRaw<{ AT: string }[]>(
+      sql`SELECT TO_VARCHAR(CONVERT_TIMEZONE('Etc/GMT+7', CURRENT_TIMESTAMP()), 'YYYY-MM-DD"T"HH24:MI:SS.FF9TZH:TZM') AS AT`,
+    );
+    const timestamp = moment?.AT as string;
+    expect(timestamp).toMatch(/-07:00$/);
+    await db.queryRaw(sql`SELECT SYSTEM$WAIT(1)`);
+    await db.execute(insert(history, { id: 2n }));
+    for (const mode of ['AT', 'BEFORE'] as const) {
+      const snapshot = timeTravel(history, { timestamp }, mode);
+      expect((await db.execute(select(snapshot))).rows).toEqual([{ id: 1n }]);
+    }
   });
 
   it('supports INSERT, UPDATE, DELETE, and MERGE', async () => {
@@ -486,6 +571,83 @@ describe('complete query and execution paths against Snowflake', () => {
     }
   });
 
+  it('writes NULL to typed columns alone and mixed with values', async () => {
+    const empty = { data: null, payload: null, at: null, day: null };
+    await db.execute(insert(nullable, { id: 1n, ...empty }));
+    await db.execute(
+      insert(nullable, [
+        {
+          id: 2n,
+          data: new Uint8Array([1, 2]),
+          payload: { ok: true },
+          at: '2026-10-23 01:02:03.000000000',
+          day: '2026-10-23',
+        },
+        { id: 3n, ...empty },
+        { id: 4n },
+      ]),
+    );
+    await db.execute(insert(nullable, [{ id: 5n }, { id: 6n, payload: { ok: false } }]));
+    const read = async () =>
+      (await db.execute(select(nullable).orderBy(asc(nullable.columns.id)))).rows.map((row) => ({
+        ...row,
+        data: row.data && [...row.data],
+      }));
+    expect(await read()).toEqual([
+      { id: 1n, ...empty },
+      {
+        id: 2n,
+        data: [1, 2],
+        payload: { ok: true },
+        at: '2026-10-23 01:02:03.000000000',
+        day: '2026-10-23',
+      },
+      { id: 3n, ...empty },
+      { id: 4n, ...empty },
+      { id: 5n, ...empty },
+      { id: 6n, ...empty, payload: { ok: false } },
+    ]);
+    await db.execute(update(nullable, empty).where(eq(nullable.columns.id, 2n)));
+    await db.execute(insert(nullSource, [{ id: 1n }, { id: 7n }]));
+    await db.execute(
+      mergeInto(
+        nullable,
+        nullSource,
+        eq(nullable.columns.id, nullSource.columns.id),
+      ).whenNotMatchedInsert({
+        id: nullSource.columns.id,
+        payload: null,
+      }),
+    );
+    const rows = await read();
+    expect(rows.find((row) => row.id === 2n)).toEqual({ id: 2n, ...empty });
+    expect(rows.filter((row) => row.id >= 7n)).toEqual([{ id: 7n, ...empty }]);
+  });
+
+  it('reads every DOUBLE exactly, including extremes and subnormals', async () => {
+    const values = [
+      123456789.12345679,
+      0.30000000000000004,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      Number.MIN_VALUE,
+      2.225073858507201e-308,
+      2.2250738585072014e-308,
+      9007199254740991,
+    ];
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(doubles)} (ID NUMBER(38,0) NOT NULL, VALUE DOUBLE NOT NULL)`,
+    );
+    await db.execute(
+      insert(
+        doubles,
+        values.map((value, index) => ({ id: BigInt(index), value })),
+      ),
+    );
+    const rows = (await db.execute(select(doubles).orderBy(asc(doubles.columns.id)))).rows;
+    expect(rows.map((row) => row.value)).toEqual(values);
+  });
+
   it('streams schema-validated results and raw rows', async () => {
     const rows = [];
     for await (const row of db.stream(select(customers, { id: customers.columns.id })))
@@ -505,6 +667,50 @@ describe('complete query and execution paths against Snowflake', () => {
         /* consume */
       }
     }).rejects.toThrow();
+  });
+
+  it('cancels live buffered raw queries on deadline and abort', async () => {
+    const cancelled = sql`
+      SELECT QUERY_TEXT, ERROR_CODE
+      FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION())
+      WHERE QUERY_TEXT LIKE 'SELECT SYSTEM$WAIT(10) AS RAW!_%' ESCAPE '!'
+      ORDER BY QUERY_TEXT
+    `;
+    const started = Date.now();
+    await expect(
+      db.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_DEADLINE`, { timeoutMs: 1_000 }),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    const controller = new AbortController();
+    const reason = new Error('live abort');
+    const pending = db.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_ABORT`, {
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(reason), 1_000);
+    await expect(pending).rejects.toBe(reason);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    await vi.waitFor(
+      async () =>
+        expect(await db.queryRaw(cancelled)).toEqual([
+          { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_ABORT', ERROR_CODE: '604' },
+          { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_DEADLINE', ERROR_CODE: '604' },
+        ]),
+      { timeout: 8_000, interval: 500 },
+    );
+    const pool = await createPool(integrationConfig(), { max: 1 });
+    try {
+      await expect(
+        pool.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_POOLED`, { timeoutMs: 1_000 }),
+      ).rejects.toMatchObject({ name: 'TimeoutError' });
+      await vi.waitFor(
+        async () =>
+          expect(await pool.queryRaw(cancelled)).toEqual([
+            { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_POOLED', ERROR_CODE: '604' },
+          ]),
+        { timeout: 8_000, interval: 500 },
+      );
+    } finally {
+      await pool.close();
+    }
   });
 
   it('commits and rolls back DML on a pinned session', async () => {
@@ -536,6 +742,31 @@ describe('complete query and execution paths against Snowflake', () => {
           async (tx) => (await tx.queryRaw<{ VALUE: string }[]>`SELECT 1 AS VALUE`)[0]?.VALUE,
         ),
       ).toBe('1');
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it('destroys a pooled connection whose ROLLBACK failed', async () => {
+    const pool = await createPool(integrationConfig(), { max: 1 });
+    try {
+      let aborted: string | undefined;
+      const failure = await pool
+        .transaction(async (tx) => {
+          const [row] = await tx.queryRaw<{ ID: string }[]>`SELECT CURRENT_SESSION() AS ID`;
+          aborted = row?.ID;
+          await tx.queryRaw`SELECT SYSTEM$ABORT_SESSION(${Number(aborted)})`;
+          throw new Error('aborted session fixture');
+        })
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors[0]).toHaveProperty(
+        'message',
+        'aborted session fixture',
+      );
+      const [row] = await pool.queryRaw<{ ID: string }[]>`SELECT CURRENT_SESSION() AS ID`;
+      expect(row?.ID).toBeDefined();
+      expect(row?.ID).not.toBe(aborted);
     } finally {
       await pool.close();
     }

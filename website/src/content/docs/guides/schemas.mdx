@@ -1,0 +1,64 @@
+---
+title: Schema declarations
+description: Declare Snowflake tables once and get result types and runtime validation from them.
+---
+
+import Snippet from '../../../components/Snippet.astro';
+import constraints from '../../../snippets/constraints.ts?raw';
+import schema from '../../../snippets/schema.ts?raw';
+import variantShape from '../../../snippets/variant-shape.ts?raw';
+
+A table declaration is the single source of truth for a structured query. It determines the
+TypeScript result type and the Zod validator that checks returned rows. You do not write result
+interfaces or decoders.
+
+<Snippet code={schema} />
+
+- The first argument to `snowflakeTable` is the physical table name. The optional third argument
+  qualifies it with a `database` and `schema`.
+- Each column builder takes the exact physical column name. Names are quoted, so case and
+  punctuation are preserved.
+- Columns are nullable by default. `.notNull()` removes `null` from the inferred type.
+- Declarations should match the physical schema. Declared precision, scale, and length are checked
+  by Snowtyped; other database constraints remain enforced by Snowflake.
+
+## Column types
+
+| Declaration                             | Non-null output | Notes                                       |
+| --------------------------------------- | --------------- | ------------------------------------------- |
+| `text('NAME')`                          | `string`        | Text                                        |
+| `integer('ID')`                         | `bigint`        | Exact integral NUMBER                       |
+| `decimal('BALANCE')`                    | `string`        | Exact fixed-point decimal text              |
+| `float('VALUE')`                        | `number`        | Finite floating-point values                |
+| `boolean('ACTIVE')`                     | `boolean`       | No truthiness coercion                      |
+| `date('DAY')`                           | `string`        | Calendar date                               |
+| `time('CLOCK')`                         | `string`        | Time with up to nine fractional digits      |
+| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`        | Nanoseconds retained; LTZ/TZ include offset |
+| `binary('DATA')`                        | `Uint8Array`    | SDK Buffers are accepted                    |
+| `variant('PAYLOAD')`                    | `unknown`       | JSON without an assumed shape               |
+
+See [validation and representations](/guides/validation/) for why numbers and temporal values use
+these representations.
+
+## Precision, scale, and length
+
+Declare the physical constraints of a column so values that would not fit are rejected instead of
+being rounded or truncated by Snowflake.
+
+<Snippet code={constraints} />
+
+INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including
+extra scale or fractional seconds. Zeros that do not change the value are accepted. VARCHAR length
+counts code points and BINARY length counts bytes. Predicate literals are not constrained.
+
+## Structured VARIANT columns
+
+Give `variant` a Zod schema to declare a JSON shape. The schema is checked at runtime, and read and
+write types are inferred from it. A type parameter alone cannot establish a VARIANT shape.
+
+<Snippet code={variantShape} />
+
+## Aliases
+
+Use `alias(table, 'name')` when the same table appears more than once in a query. See
+[joins](/guides/queries/#joins).
