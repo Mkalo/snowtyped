@@ -158,7 +158,6 @@ changes stable behavior:
 - Scalar, EXISTS, and correlated subqueries (#9)
 - PIVOT and UNPIVOT (#10)
 - Stronger SQL semantic validation (#11)
-- Recursive CTEs (#12)
 - A public AST extension protocol (#13)
 - Nested selections and relation loading (#14)
 - MATCH_RECOGNIZE (#15)

@@ -12,7 +12,7 @@ const expected = {
     values: names(
       `alias and asc binary boolean count date decimal deleteFrom desc eq flatten float
       generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath
-      like lower lt lte max mergeInto min ne not or over rowNumber select snowflakeTable sql
+      like lower lt lte max mergeInto min ne not or over recursiveCte rowNumber select snowflakeTable sql
       sum text time timeTravel timestamp update upper variant`,
       'compileAst identifier quoteIdentifier',
     ),
@@ -21,11 +21,12 @@ const expected = {
       CompatibleOperand CompiledQuery DataType Expression FilteredMutation FlattenOptions
       InferColumn InferExpression InferSelection InsertValues IntersectRow IntrospectedColumn
       IntrospectedTable MergeQuery MutationQuery OperandRow Ordering Predicate RawQuery
+      RecursiveName RecursiveOperand RecursiveRow
       SelectQuery Selection SetColumns SetOperand SetOperator SetQuery SetScope
       SqlInterpolation SqlParameter Table TableOptions UnionRow UpdateValues`,
       `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
       InsertNode JoinNode MergeNode OrderNode QueryNode RelationNode SelectNode
-      SetOperationNode SourceReference StatementNode TableNode TemporalNode UpdateNode WireType`,
+      SelfReferenceNode SetOperationNode SourceReference StatementNode TableNode TemporalNode UpdateNode WireType`,
     ),
   },
   'snowtyped/snowflake': {

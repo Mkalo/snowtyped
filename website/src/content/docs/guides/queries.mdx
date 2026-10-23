@@ -9,6 +9,7 @@ import derived from '../../../snippets/derived.ts?raw';
 import firstQuery from '../../../snippets/first-query.ts?raw';
 import grouping from '../../../snippets/grouping.ts?raw';
 import joins from '../../../snippets/joins.ts?raw';
+import recursiveCtes from '../../../snippets/recursive-ctes.ts?raw';
 import setOperations from '../../../snippets/set-operations.ts?raw';
 
 `select(table)` selects every declared column. `select(table, projection)` or `.select(projection)`
@@ -78,3 +79,28 @@ are rejected; precision and scale within a family widen in Snowflake. Chained ca
 whole preceding query and every operand is parenthesized, so INTERSECT's higher precedence never
 regroups a query. Order and paginate a combined query with its own `.columns`. Branch CTEs are
 hoisted into one leading WITH, and combined queries also support `.as()` and `.asCte()`.
+
+## Recursive CTEs
+
+`recursiveCte(name, anchor, recursive, options)` compiles
+`WITH RECURSIVE name (...) AS (anchor UNION ALL recursive)`. The callback receives `self`, the CTE
+as it is being defined, and returns the recursive branch. The result is a CTE table you can select,
+join, or combine like any other.
+
+<Snippet code={recursiveCtes} />
+
+The anchor's projection is the row contract: `self` and the result have its types. The recursive
+branch must produce the same aliases and domains, and it cannot add NULLs to a column unless that
+column is listed in `nullable`. Snowflake only treats uppercase names (`A-Z`, digits, `_`, `$`) as
+recursive, so other names are rejected.
+
+The recursive branch is one SELECT with scalar projections, filters, and joins. It must reference
+`self` exactly once in FROM or a join, keep it on the preserved side of outer joins, and place outer
+joins after every other join. Aggregates, windows, grouping, DISTINCT, ordering, pagination, and
+ASOF joins are rejected, and so is an anchor that reads another recursive CTE. `self` is only valid
+inside its own recursive branch. CTEs used by either branch are emitted before the recursive
+definition.
+
+Recursion ends only when the recursive branch returns no rows. An outer join that keeps `self` on
+its preserved side returns a row for every `self` row, so filter out unmatched rows (for example
+with `isNotNull`), or the query runs until the statement timeout.
