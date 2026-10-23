@@ -16,7 +16,15 @@ export function requestSignal(options: ExecuteOptions): AbortSignal | undefined 
   return options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
 }
 
-/** Resolve cancellation only after the SDK acknowledges it, so a pool lease is not released early. */
+/** Snowflake rejects a cancel that reaches it before the statement is registered. */
+const NOT_EXECUTING = '000605';
+const CANCELLED = '000604';
+const MAX_CANCEL_RETRY_MS = 1000;
+
+/**
+ * Resolve cancellation only after the SDK acknowledges it, so a pool lease is not released early.
+ * A cancel that never takes effect settles with the statement's real outcome instead.
+ */
 export function request(
   connection: DriverConnection,
   options: StatementOption,
@@ -30,36 +38,43 @@ export function request(
     let statement: RowStatement;
     let settled = false;
     let cancelling = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     function cleanup() {
+      clearTimeout(retry);
       signal?.removeEventListener('abort', abort);
     }
     function fail(error: unknown) {
-      if (settled) return;
       settled = true;
       cleanup();
       reject(error);
     }
+    function cancel(attempt: number) {
+      try {
+        statement.cancel((error) => {
+          if (settled) return;
+          if (!error) fail(signal?.reason);
+          else if (String(error.code) === NOT_EXECUTING)
+            retry = setTimeout(
+              cancel,
+              Math.min(50 * 2 ** attempt, MAX_CANCEL_RETRY_MS),
+              attempt + 1,
+            );
+        });
+      } catch {
+        // Without a working cancel, the completion callback still reports the real outcome.
+      }
+    }
     function abort() {
       cancelling = true;
-      try {
-        statement.cancel((error) =>
-          fail(
-            error
-              ? new AggregateError([signal?.reason, error], 'Query cancellation failed.')
-              : signal?.reason,
-          ),
-        );
-      } catch (error) {
-        fail(error);
-      }
+      cancel(0);
     }
     try {
       statement = connection.execute({
         ...options,
         complete(error, completed, rows) {
-          if (settled || cancelling) return;
+          if (settled) return;
           if (error) {
-            fail(error);
+            fail(cancelling && String(error.code) === CANCELLED ? signal?.reason : error);
             return;
           }
           settled = true;

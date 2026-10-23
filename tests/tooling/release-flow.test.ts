@@ -23,6 +23,10 @@ interface ReleaseTestState {
   metadata?: PublishedMetadata;
   attestations?: ProvenanceDocument;
   reference?: { object: { type: string; sha: string } };
+  unpublishedAt?: string;
+  registryStatus?: number;
+  approvalAfterPolls?: number;
+  signatureFailure?: boolean;
 }
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -60,11 +64,18 @@ test('real release CLI rehearses immutable packing, staging, and partial-failure
     const { version } = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
     const statePath = join(cwd, 'reports/state.json');
     const preload = join(cwd, 'reports/mock-services.mjs');
+    const fakeCli = join(cwd, 'reports/npm/bin/npm-cli.js');
+    await mkdir(join(cwd, 'reports/npm/bin'), { recursive: true });
+    await writeFile(
+      join(cwd, 'reports/npm/package.json'),
+      JSON.stringify({ name: 'npm', version: '12.2.1' }),
+    );
     await writeFile(
       preload,
       `
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 const statePath = process.env.RELEASE_TEST_STATE;
@@ -73,10 +84,22 @@ const save = () => fs.writeFileSync(statePath, JSON.stringify(state));
 const realExec = childProcess.execFileSync;
 childProcess.execFileSync = (command, args, options) => {
   if (command === 'git' || command === 'tar') return realExec(command, args, options);
-  if (command === process.execPath && args[0] === 'fake-npm-cli.mjs') {
+  if (command === process.execPath && args[0] === process.env.NPM_CLI_JS) {
     state.npmCalls.push(args.slice(1)); save();
-    assert.equal(args[1], 'stage'); assert.equal(args[2], 'publish');
-    if (state.conflict) throw new Error('409: staged version already exists; review required');
+    if (args[1] === 'stage' && args[2] === 'publish') {
+      if (state.conflict) throw new Error('409: staged version already exists; review required');
+      const manifest = JSON.parse(realExec('tar', ['-xOf', args[3], 'package/package.json'], { encoding: 'utf8' }));
+      if (manifest.version === '0.0.0-bootstrap.0') {
+        state.packageExists = true; delete state.unpublishedAt; save();
+        return JSON.stringify({ snowtyped: { name: manifest.name, version: manifest.version, stageId: '11111111-1111-4111-8111-111111111111', integrity: 'sha512-' + createHash('sha512').update(fs.readFileSync(args[3])).digest('base64') } });
+      }
+      return '';
+    }
+    if (args[1] === 'access' || args[1] === 'trust' || args[1] === 'install') return '';
+    if (args[1] === 'audit') { if (state.signatureFailure) throw new Error('Invalid npm signature'); return ''; }
+    assert.deepEqual(args.slice(1, 3), ['stage', 'reject']);
+    assert.equal(args[3], '11111111-1111-4111-8111-111111111111');
+    assert(state.metadata, 'Rejecting the only stage would unpublish the placeholder.');
     return '';
   }
   assert.equal(command, 'gh', 'Block every unexpected subprocess.');
@@ -99,10 +122,13 @@ globalThis.fetch = async (url, options = {}) => {
   } else if (route.includes('/releases/tags/')) value = state.release;
   else if (route.includes('registry.npmjs.org/-/npm/v1/attestations/')) value = state.attestations;
   else if (route.includes('registry.npmjs.org/-/package/snowtyped/dist-tags')) value = state.tags;
-  else if (route === 'https://registry.npmjs.org/snowtyped') value = state.packageExists ? { name: 'snowtyped' } : undefined;
-  else if (route.startsWith('https://registry.npmjs.org/snowtyped/')) value = state.metadata;
+  else if (route === 'https://registry.npmjs.org/snowtyped') value = state.unpublishedAt ? { time: { unpublished: { time: state.unpublishedAt } } } : state.packageExists ? { name: 'snowtyped', versions: { '0.0.0-stage': {} } } : undefined;
+  else if (route.startsWith('https://registry.npmjs.org/snowtyped/')) {
+    if (state.approvalAfterPolls > 0) { state.approvalAfterPolls--; save(); value = undefined; }
+    else value = state.metadata;
+  }
   else throw new Error('Block every unexpected HTTP request: ' + route);
-  return new Response(JSON.stringify(value || {}), { status: value === undefined ? 404 : 200 });
+  return new Response(JSON.stringify(value || {}), { status: route === 'https://registry.npmjs.org/snowtyped' && state.registryStatus ? state.registryStatus : value === undefined ? 404 : 200 });
 };
 `,
     );
@@ -146,11 +172,13 @@ globalThis.fetch = async (url, options = {}) => {
           env: {
             ...process.env,
             RELEASE_TEST_STATE: statePath,
+            GITHUB_OUTPUT: join(cwd, 'reports/github-output'),
+            GITHUB_STEP_SUMMARY: join(cwd, 'reports/github-summary'),
             GITHUB_REPOSITORY: 'Mkalo/snowtyped',
             GITHUB_REF: 'refs/heads/main',
             GITHUB_SHA: sha,
             GH_TOKEN: 'fake-test-token',
-            NPM_CLI_JS: 'fake-npm-cli.mjs',
+            NPM_CLI_JS: fakeCli,
             ACTIONS_ID_TOKEN_REQUEST_URL: 'https://oidc.invalid',
             NODE_AUTH_TOKEN: '',
             NPM_TOKEN: '',
@@ -160,9 +188,19 @@ globalThis.fetch = async (url, options = {}) => {
       );
       state = JSON.parse(await readFile(statePath, 'utf8'));
       assert.equal(result.status, expected, result.stdout + result.stderr);
+      return result.stdout + result.stderr;
     };
     await invoke('check');
     await invoke('inspect');
+    await invoke('candidate');
+    assert.match(await readFile(join(cwd, 'reports/github-output'), 'utf8'), /eligible=true/);
+    const unversioned = join(cwd, '.changeset/unversioned.md');
+    await writeFile(unversioned, '---\n"snowtyped": patch\n---\n\nUnversioned change.\n');
+    await invoke('candidate');
+    assert(
+      (await readFile(join(cwd, 'reports/github-output'), 'utf8')).endsWith('eligible=false\n'),
+    );
+    await rm(unversioned);
     const record = JSON.parse(await readFile(join(artifacts, 'release.json'), 'utf8'));
     assert.equal(record.tag, 'alpha');
     assert.equal(record.sha, sha);
@@ -173,11 +211,61 @@ globalThis.fetch = async (url, options = {}) => {
     state.packageExists = false;
     await invoke('stage', 1);
     assert.equal(state.npmCalls.length, 0);
+    await invoke('trust', 1);
+    await invoke('cleanup-bootstrap', 1);
+    assert.equal(state.npmCalls.length, 0);
+    state.unpublishedAt = new Date(Date.now() - 600_000).toISOString();
+    for (const operation of [
+      'bootstrap-check',
+      'bootstrap',
+      'trust',
+      'stage',
+      'cleanup-bootstrap',
+    ]) {
+      assert.match(await invoke(operation, 1), /npm name cooldown/);
+    }
+    assert.equal(state.npmCalls.length, 0);
+    delete state.unpublishedAt;
+    state.registryStatus = 503;
+    await invoke('bootstrap', 1);
+    assert.equal(state.npmCalls.length, 0);
+    delete state.registryStatus;
+    state.unpublishedAt = new Date(Date.now() - 86_400_001).toISOString();
+    await invoke('bootstrap');
+    assert.equal(state.npmCalls.length, 1);
+    const bootstrapArgs = state.npmCalls[0];
+    assert(bootstrapArgs);
+    assert.equal(bootstrapArgs[bootstrapArgs.indexOf('--tag') + 1], 'bootstrap');
+    assert(
+      bootstrapArgs.includes('--provenance=false') && bootstrapArgs.includes('--ignore-scripts'),
+    );
+    const holding = JSON.parse(await readFile(join(artifacts, 'bootstrap/receipt.json'), 'utf8'));
+    assert.equal(holding.version, '0.0.0-bootstrap.0');
+    assert.notEqual(holding.version, version);
+    await invoke('bootstrap', 1);
+    await invoke('cleanup-bootstrap', 1);
+    assert.equal(state.npmCalls.length, 1);
+    await invoke('trust');
+    assert.equal(state.npmCalls.length, 3);
+    const trust = state.npmCalls[2];
+    assert(trust?.includes('--allow-stage-publish'));
+    assert(!trust?.includes('--allow-publish'));
+    assert(state.npmCalls[1]?.includes('mfa=publish'));
+    await writeFile(
+      join(cwd, 'reports/npm/package.json'),
+      JSON.stringify({ name: 'npm', version: '12.0.2' }),
+    );
+    await invoke('trust', 1);
+    assert.equal(state.npmCalls.length, 3);
+    await writeFile(
+      join(cwd, 'reports/npm/package.json'),
+      JSON.stringify({ name: 'npm', version: '12.2.1' }),
+    );
     state.packageExists = true;
     await invoke('stage', 1, { GITHUB_SHA: 'b'.repeat(40) });
-    assert.equal(state.npmCalls.length, 0);
+    assert.equal(state.npmCalls.length, 3);
     await invoke('stage');
-    const args = state.npmCalls[0];
+    const args = state.npmCalls[3];
     assert(args);
     assert.deepEqual(args.slice(0, 2), ['stage', 'publish']);
     assert.equal(args[args.indexOf('--tag') + 1], 'alpha');
@@ -187,6 +275,7 @@ globalThis.fetch = async (url, options = {}) => {
     await invoke('stage', 1);
     assert.deepEqual(state.writes, []);
     await invoke('verify', 1);
+    await invoke('wait', 1, { NPM_APPROVAL_TIMEOUT_MS: '0' });
     state.metadata = {
       name: 'snowtyped',
       version,
@@ -240,8 +329,35 @@ globalThis.fetch = async (url, options = {}) => {
     await invoke('stage');
     assert.equal(state.npmCalls.length, calls);
     await invoke('verify');
+    await invoke('candidate');
+    assert(
+      (await readFile(join(cwd, 'reports/github-output'), 'utf8')).endsWith('eligible=true\n'),
+    );
+    state.approvalAfterPolls = 1;
+    await invoke('wait', 0, { NPM_APPROVAL_POLL_MS: '1' });
+    assert.equal(state.npmCalls.length, calls);
     await invoke('finalize');
     assert.deepEqual(state.writes, ['tag', 'release']);
+    await invoke('candidate');
+    assert(
+      (await readFile(join(cwd, 'reports/github-output'), 'utf8')).endsWith('eligible=false\n'),
+    );
+    const rejects = () =>
+      state.npmCalls.filter((call) => call[0] === 'stage' && call[1] === 'reject').length;
+    assert.equal(rejects(), 0);
+    await writeFile(
+      join(artifacts, 'bootstrap/receipt.json'),
+      JSON.stringify({ ...holding, version }),
+    );
+    await invoke('cleanup-bootstrap', 1);
+    assert.equal(rejects(), 0);
+    await writeFile(join(artifacts, 'bootstrap/receipt.json'), JSON.stringify(holding));
+    state.signatureFailure = true;
+    await invoke('cleanup-bootstrap', 1);
+    assert.equal(rejects(), 0);
+    state.signatureFailure = false;
+    await invoke('cleanup-bootstrap');
+    assert.equal(rejects(), 1);
     assert(state.reference);
     assert.equal(state.reference.object.sha, sha);
     await invoke('finalize');
