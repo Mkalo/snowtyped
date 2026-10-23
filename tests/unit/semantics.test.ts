@@ -63,6 +63,8 @@ import {
   scalar,
   select,
   snowflakeTable,
+  structured,
+  structuredType,
   sum,
   text,
   time,
@@ -248,6 +250,30 @@ describe('SQL type domains', () => {
     );
     expect(() => update(s, { list: loose(d.doc) })).toThrow(
       'Cannot assign a OBJECT expression to ARRAY column list.',
+    );
+  });
+
+  it('compares structured types only with structured types', () => {
+    const s = snowflakeTable('S', {
+      list: structured('LIST', structuredType.array(structuredType.integer())),
+      json: variant('JSON'),
+    });
+    const d = s.columns;
+    expect(eq(d.list, d.list).dataType).toBe('boolean');
+    expect(eq(d.list, [1n, 2n]).dataType).toBe('boolean');
+    expect(jsonPath(d.list, 0).dataType).toBe('variant');
+    expect(
+      select(s, { list: d.list, n: count() }).groupBy(d.list).orderBy(asc(d.list)).compile().sql,
+    ).toContain('GROUP BY "LIST"');
+    expect(() => eq(d.list, loose(d.json))).toThrow(
+      'Cannot compare STRUCTURED with VARIANT expressions.',
+    );
+    expect(() => eq(d.json, loose(d.list))).toThrow(
+      'Cannot compare VARIANT with STRUCTURED expressions.',
+    );
+    expect(() => max(loose(d.list))).toThrow('MAX does not accept STRUCTURED expressions.');
+    expect(() => update(s, { json: loose(d.list) })).toThrow(
+      'Cannot assign a STRUCTURED expression to VARIANT column json.',
     );
   });
 

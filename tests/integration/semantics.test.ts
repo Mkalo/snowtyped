@@ -34,6 +34,8 @@ import {
   select,
   snowflakeTable,
   sql,
+  structured,
+  structuredType,
   sum,
   text,
   timestamp,
@@ -197,6 +199,35 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
       .where(eq(d.embedding, d.embedding))
       .orderBy(asc(d.doc));
     expect((await db.execute(vectors)).rows).toEqual([{ id: 2n }, { id: 1n }, { id: 3n }]);
+  });
+
+  it('compares, indexes, groups, and orders structured values', async () => {
+    const tagged = snowflakeTable(
+      'TAGGED',
+      {
+        id: integer('ID').notNull(),
+        tags: structured('TAGS', structuredType.array(structuredType.integer()).notNull()),
+      },
+      { database, schema: fixture.schemaName },
+    );
+    const d = tagged.columns;
+    await db.queryRaw(
+      sql`CREATE TABLE ${sql.identifier(...(tagged.node.parts as [string, ...string[]]))} (ID NUMBER(38,0) NOT NULL, TAGS ARRAY(NUMBER(38,0)))`,
+    );
+    await db.execute(
+      insert(tagged, [
+        { id: 1n, tags: [2n, 1n] },
+        { id: 2n, tags: [1n] },
+        { id: 3n, tags: [2n, 1n] },
+      ]),
+    );
+    const grouped = select(tagged, { tags: d.tags, first: jsonPath(d.tags, 0), n: count() })
+      .where(eq(d.tags, [2n, 1n]))
+      .groupBy(d.tags)
+      .orderBy(asc(d.tags));
+    expect((await db.execute(grouped)).rows).toEqual([{ tags: [2n, 1n], first: 2, n: 2n }]);
+    const ordered = select(tagged, { id: d.id }).orderBy(asc(d.tags), asc(d.id));
+    expect((await db.execute(ordered)).rows).toEqual([{ id: 2n }, { id: 1n }, { id: 3n }]);
   });
 
   it('groups by expression helpers and compares their SQL types', async () => {

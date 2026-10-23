@@ -35,7 +35,9 @@ import {
   select,
   snowflakeTable,
   sql,
+  structured,
   sum,
+  structuredType as t,
   text,
   time,
   timestamp,
@@ -138,6 +140,28 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const shaped = snowflakeTable(
+    'SHAPED',
+    {
+      id: integer('ID').notNull(),
+      scores: structured('SCORES', t.array(t.integer())).notNull(),
+      address: structured(
+        'ADDRESS',
+        t.object({
+          city: t.text(),
+          'Zip Code': t.integer({ precision: 5 }),
+          CamelCase: t.boolean(),
+        }),
+      ),
+      prices: structured(
+        'PRICES',
+        t.map(t.text({ length: 3 }), t.decimal({ precision: 10, scale: 2 })),
+      ),
+      nested: structured('NESTED', t.array(t.object({ k: t.map(t.integer(), t.array(t.text())) }))),
+    },
+    namespace,
+  );
+  const floats = snowflakeTable('FLOATS', { id: integer('ID') }, namespace);
   const nullable = snowflakeTable(
     'NULLABLE_TYPES',
     {
@@ -597,30 +621,121 @@ describe('complete query and execution paths against Snowflake', () => {
     await db.queryRaw(sql`UPDATE ${name(docs)} SET TAGS = ARRAY_CONSTRUCT(1) WHERE ID = ${101}`);
     await expect(db.execute(select(docs))).rejects.toThrow();
 
-    const structured = snowflakeTable('STRUCTURED', { id: integer('ID') }, namespace);
+    const tables = await introspect(db, namespace);
+    const code = generateSchema(tables.filter((table) => table.name === 'DOCS'));
+    for (const declaration of [
+      '"TAGS": array("TAGS").notNull()',
+      '"ITEMS": array("ITEMS")',
+      '"META": object("META")',
+    ])
+      expect(code).toContain(declaration);
+  });
+
+  it('round-trips structured ARRAY, OBJECT, and MAP columns exactly', async () => {
     await db.queryRaw(
-      sql`CREATE TABLE ${name(structured)} (ID NUMBER, SA ARRAY(NUMBER), SO OBJECT(city VARCHAR))`,
+      sql`CREATE TABLE ${name(shaped)} (ID NUMBER(38,0) NOT NULL, SCORES ARRAY(NUMBER) NOT NULL, ADDRESS OBJECT(city VARCHAR, "Zip Code" NUMBER(5,0), CamelCase BOOLEAN), PRICES MAP(VARCHAR(3), NUMBER(10,2)), NESTED ARRAY(OBJECT(k MAP(NUMBER, ARRAY(VARCHAR)))))`,
     );
+    const address = { city: 'Lisbon', 'Zip Code': 12345n, CamelCase: true };
+    await db.execute(
+      insert(shaped, [
+        {
+          id: 1n,
+          scores: [99999999999999999999n, null, -1n],
+          address,
+          prices: new Map([
+            ['abc', '99999999.99'],
+            ['b', null],
+            ['c', '1.50'],
+          ]),
+          nested: [{ k: new Map([[-2n, ['x', null]]]) }, null],
+        },
+        { id: 2n, scores: [], address: null, prices: new Map() },
+      ]),
+    );
+    await db.execute(
+      update(shaped, { address: { city: null, 'Zip Code': null, CamelCase: null } }).where(
+        eq(shaped.columns.id, 2n),
+      ),
+    );
+    await db.execute(
+      mergeInto(shaped, staged, eq(shaped.columns.id, staged.columns.id)).whenNotMatchedInsert({
+        id: staged.columns.id,
+        scores: [7n],
+      }),
+    );
+    const rows = (await db.execute(select(shaped).orderBy(asc(shaped.columns.id)))).rows;
+    expect(rows).toEqual([
+      {
+        id: 1n,
+        scores: [99999999999999999999n, null, -1n],
+        address,
+        prices: new Map([
+          ['abc', '99999999.99'],
+          ['b', null],
+          ['c', '1.50'],
+        ]),
+        nested: [{ k: new Map([[-2n, ['x', null]]]) }, null],
+      },
+      {
+        id: 2n,
+        scores: [],
+        address: { city: null, 'Zip Code': null, CamelCase: null },
+        prices: new Map(),
+        nested: null,
+      },
+      ...[100n, 101n].map((id) => ({
+        id,
+        scores: [7n],
+        address: null,
+        prices: null,
+        nested: null,
+      })),
+    ]);
+    const matched = await db.execute(
+      select(shaped, { id: shaped.columns.id })
+        .where(eq(shaped.columns.address, address))
+        .orderBy(asc(shaped.columns.id)),
+    );
+    expect(matched.rows).toEqual([{ id: 1n }]);
+    expect(() =>
+      insert(shaped, { id: 3n, scores: [], prices: new Map([['abcd', '1']]) }),
+    ).toThrow();
+    const narrower = snowflakeTable(
+      'SHAPED',
+      { id: integer('ID').notNull(), scores: structured('SCORES', t.array(t.integer().notNull())) },
+      namespace,
+    );
+    await expect(db.execute(select(narrower))).rejects.toThrow();
+
+    const view = snowflakeTable('SHAPED_VIEW', shaped.columns, namespace);
+    await db.queryRaw(sql`CREATE VIEW ${name(view)} AS SELECT * FROM ${name(shaped)}`);
+    expect(
+      (
+        await db.execute(
+          select(view, { prices: view.columns.prices }).where(eq(view.columns.id, 1n)),
+        )
+      ).rows,
+    ).toEqual([{ prices: rows[0]?.prices }]);
+    const tables = await introspect(db, namespace);
+    const code = generateSchema(
+      tables.filter((table) => table.name === 'SHAPED' || table.name === 'SHAPED_VIEW'),
+    );
+    expect(code.split('structuredType.object({ "city"').length).toBe(3);
+    for (const declaration of [
+      '"SCORES": structured("SCORES", structuredType.array(structuredType.integer())).notNull()',
+      '"ADDRESS": structured("ADDRESS", structuredType.object({ "city": structuredType.text(), "Zip Code": structuredType.integer({ precision: 5 }), "CamelCase": structuredType.boolean() }))',
+      '"PRICES": structured("PRICES", structuredType.map(structuredType.text({ length: 3 }), structuredType.decimal({ precision: 10, scale: 2 })))',
+      '"NESTED": structured("NESTED", structuredType.array(structuredType.object({ "k": structuredType.map(structuredType.integer(), structuredType.array(structuredType.text())) })))',
+    ])
+      expect(code).toContain(declaration);
+    await db.queryRaw(sql`CREATE TABLE ${name(floats)} (F ARRAY(FLOAT))`);
     try {
-      const tables = await introspect(db, namespace);
-      const code = generateSchema(tables.filter((table) => table.name === 'DOCS'));
-      for (const declaration of [
-        '"TAGS": array("TAGS").notNull()',
-        '"ITEMS": array("ITEMS")',
-        '"META": object("META")',
-      ])
-        expect(code).toContain(declaration);
-      const table = tables.find((entry) => entry.name === 'STRUCTURED');
-      expect(table?.columns.map((column) => column.dataType)).toEqual([
-        'NUMBER',
-        'ARRAY(NUMBER)',
-        'OBJECT(CITY VARCHAR)',
-      ]);
-      expect(() => generateSchema(tables.filter((entry) => entry.name === 'STRUCTURED'))).toThrow(
-        'ARRAY(NUMBER)',
+      const withFloats = await introspect(db, namespace);
+      expect(() => generateSchema(withFloats.filter((table) => table.name === 'FLOATS'))).toThrow(
+        'Unsupported structured element type for code generation: REAL',
       );
     } finally {
-      await db.queryRaw(sql`DROP TABLE ${name(structured)}`);
+      await db.queryRaw(sql`DROP TABLE ${name(floats)}`);
     }
   });
 

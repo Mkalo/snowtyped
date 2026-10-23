@@ -50,17 +50,21 @@ export type NumericType = 'integer' | 'decimal' | 'float';
 export type DateTimeType = 'date' | 'timestamp_ntz' | 'timestamp_ltz' | 'timestamp_tz';
 export type TextType = 'text' | 'variant';
 export type SpatialType = 'geography' | 'geometry';
-export type SemiStructuredType = 'variant' | 'array' | 'object';
+export type SemiStructuredType = 'variant' | 'array' | 'object' | 'structured';
 /** SQL types that MIN and MAX reject. */
-export type UnorderedType = SpatialType | 'array' | 'object' | 'vector';
+export type UnorderedType = SpatialType | 'array' | 'object' | 'vector' | 'structured';
 /** SQL types usable as GROUP BY, ORDER BY, and PARTITION BY keys. */
 export type KeyType = Exclude<DataType, SpatialType>;
 /** SQL types Snowflake compares (or assigns) without a data-dependent string conversion. */
 export type ComparableType<D extends DataType> = D extends SpatialType
   ? never
-  : D extends 'variant'
-    ? Exclude<DataType, SpatialType>
-    : (D extends NumericType ? NumericType : D extends DateTimeType ? DateTimeType : D) | 'variant';
+  : D extends 'structured'
+    ? 'structured'
+    : D extends 'variant'
+      ? Exclude<DataType, SpatialType | 'structured'>
+      :
+          | (D extends NumericType ? NumericType : D extends DateTimeType ? DateTimeType : D)
+          | 'variant';
 
 const numericTypes: readonly DataType[] = ['integer', 'decimal', 'float'];
 const dateTimeTypes: readonly DataType[] = [
@@ -70,13 +74,21 @@ const dateTimeTypes: readonly DataType[] = [
   'timestamp_tz',
 ];
 export const spatialTypes: readonly DataType[] = ['geography', 'geometry'];
-const unorderedTypes: readonly DataType[] = [...spatialTypes, 'array', 'object', 'vector'];
+const unorderedTypes: readonly DataType[] = [
+  ...spatialTypes,
+  'array',
+  'object',
+  'vector',
+  'structured',
+];
 function comparisonClass(type: DataType): string {
   if (numericTypes.includes(type)) return 'number';
   return dateTimeTypes.includes(type) ? 'datetime' : type;
 }
 export function comparable(left: DataType, right: DataType): boolean {
   if (spatialTypes.includes(left) || spatialTypes.includes(right)) return false;
+  // Structured types convert to and from no other type, VARIANT included.
+  if (left === 'structured' || right === 'structured') return left === right;
   return (
     left === 'variant' || right === 'variant' || comparisonClass(left) === comparisonClass(right)
   );
@@ -742,7 +754,7 @@ export function jsonPath<E extends Expression<unknown, string, string, SemiStruc
 ): Expression<unknown, ExpressionScope<E>, ExpressionScope<E>, 'variant'> {
   if (path.some((part) => typeof part === 'number' && (!Number.isSafeInteger(part) || part < 0)))
     throw new TypeError('JSON indexes must be nonnegative safe integers.');
-  assertType(value, ['variant', 'array', 'object'], 'JSON path access');
+  assertType(value, ['variant', 'array', 'object', 'structured'], 'JSON path access');
   return expression(
     {
       kind: 'json-path',

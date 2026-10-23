@@ -15,7 +15,8 @@ export type WireType =
   | 'timestamp_tz'
   | 'variant'
   | 'geography'
-  | 'geometry';
+  | 'geometry'
+  | 'structured';
 export interface SourceReference {
   readonly id: symbol;
   readonly name: string;
@@ -138,7 +139,8 @@ export interface CastNode {
     | 'TIMESTAMP_TZ'
     | 'ARRAY'
     | 'OBJECT'
-    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`;
+    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`
+    | `${'ARRAY' | 'OBJECT' | 'MAP'}(${string})`;
 }
 /** `correlated` lists the enclosing sources the inner query may reference. */
 export interface SubqueryNode {
@@ -640,6 +642,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (type === 'variant') return `TO_JSON(${value})`;
     if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
     if (type === 'geometry') return `ST_ASEWKB(${value})`;
+    if (type === 'structured') return `TO_JSON(CAST(${value} AS VARIANT))`;
     if (type === 'float') {
       // Text conversion keeps at most 16 digits, so send an exact integer significand and a
       // binary exponent instead. The scale is split to stay finite for subnormals.

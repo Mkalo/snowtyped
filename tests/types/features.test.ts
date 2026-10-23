@@ -18,6 +18,8 @@ import {
   select,
   snowflakeTable,
   sql,
+  structured,
+  structuredType,
   text,
   time,
   timestamp,
@@ -197,3 +199,45 @@ update(spatial, { embedding: ['1'] });
 vector('V', 'double', 3);
 // @ts-expect-error SRID is a GEOMETRY option.
 geography('G', { srid: 4326 });
+const shaped = snowflakeTable('SHAPED', {
+  scores: structured('SCORES', structuredType.array(structuredType.integer())).notNull(),
+  address: structured(
+    'ADDRESS',
+    structuredType.object({
+      city: structuredType.text(),
+      zip: structuredType.decimal({ precision: 5 }).notNull(),
+    }),
+  ),
+  prices: structured(
+    'PRICES',
+    structuredType.map(structuredType.text(), structuredType.boolean().notNull()),
+  ),
+  ids: structured('IDS', structuredType.map(structuredType.integer(), structuredType.text())),
+});
+expectTypeOf(db.execute(select(shaped)))
+  .resolves.toHaveProperty('rows')
+  .toEqualTypeOf<
+    readonly {
+      readonly scores: (bigint | null)[];
+      readonly address: { city: string | null; zip: string } | null;
+      readonly prices: Map<string, boolean> | null;
+      readonly ids: Map<bigint, string | null> | null;
+    }[]
+  >();
+insert(shaped, {
+  scores: [1n, null],
+  address: { city: null, zip: '12345' },
+  prices: new Map([['a', true]]),
+});
+// @ts-expect-error Structured NUMBER elements are exact bigints.
+insert(shaped, { scores: [1] });
+// @ts-expect-error Every declared OBJECT field must be present.
+update(shaped, { address: { zip: '1' } });
+// @ts-expect-error Non-null fields reject NULL.
+update(shaped, { address: { city: 'x', zip: null } });
+// @ts-expect-error MAP values are Maps, not records.
+update(shaped, { prices: { a: true } });
+// @ts-expect-error MAP keys are VARCHAR or NUMBER types.
+structuredType.map(structuredType.boolean(), structuredType.text());
+// @ts-expect-error A structured column takes a structured type descriptor, not a Zod schema.
+structured('X', z.string());

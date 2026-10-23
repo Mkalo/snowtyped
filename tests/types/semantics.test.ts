@@ -50,6 +50,8 @@ import {
   scalar,
   select,
   snowflakeTable,
+  structured,
+  structuredType,
   sum,
   text,
   time,
@@ -188,6 +190,21 @@ asc(d.place);
 select(s).groupBy(d.shape);
 // @ts-expect-error GEOGRAPHY cannot be a PARTITION BY key.
 rowNumber({ partitionBy: [d.place] });
+
+const st = snowflakeTable('ST', {
+  tags: structured('TAGS', structuredType.array(structuredType.text())),
+});
+const tags = st.columns.tags;
+eq(tags, tags);
+eq(tags, ['a']);
+jsonPath(tags, 0);
+select(st).groupBy(tags);
+// @ts-expect-error Structured types do not compare with VARIANT.
+eq(tags, d.json);
+// @ts-expect-error A typed VARIANT does not compare with structured types.
+eq(c.label, tags);
+// @ts-expect-error MIN does not accept structured types.
+min(tags);
 
 expectTypeOf(add(c.id, 1n).dataType).toEqualTypeOf<'integer'>();
 expectTypeOf(add(c.id, c.amount).dataType).toEqualTypeOf<'decimal'>();
