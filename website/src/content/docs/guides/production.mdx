@@ -40,9 +40,10 @@ request ID.
 
 <Aside type="caution">
   A deadline that fires just as a statement is submitted can reach Snowflake before the
-  statement is executing. The cancel is refused, the request rejects with `AggregateError`, and
-  the statement may still complete. On a cold pool, login uses part of a pooled deadline and
-  makes this more likely. Treat that rejection as an unknown outcome for mutations.
+  statement is executing. The cancel is retried until Snowflake accepts it; if the statement
+  finishes first, the request settles with its real outcome, so a write can commit even though
+  its deadline passed. On a cold pool, login uses part of a pooled deadline and makes this more
+  likely.
 </Aside>
 
 ## Streaming memory
