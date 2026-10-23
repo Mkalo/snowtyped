@@ -11,12 +11,12 @@ const expected = {
   snowtyped: {
     values: names(
       `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date dateAdd
-      dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div eq exists
-      flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
+      dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div dynamicPivot eq
+      exists flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
       inSubquery integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte max
-      mergeInto min mul ne not notExists object or over rangeBetween rank recursiveCte rowNumber
-      rowsBetween scalar select snowflakeTable sql sub substring sum text time timestamp timeTravel
-      trim update updateFrom upper variant vector`,
+      mergeInto min mul ne not notExists object or over pivot rangeBetween rank recursiveCte
+      rowNumber rowsBetween scalar select snowflakeTable sql sub substring sum text time timestamp
+      timeTravel trim unpivot update updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
@@ -25,15 +25,17 @@ const expected = {
       FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
       GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
       InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
-      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering Predicate
-      RangeBoundary RawQuery RecursiveName RecursiveOperand RecursiveRow SelectQuery Selection ServerValue ServerValueKind ServerValues
-      SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation SqlParameter Table
-      TableOptions UnionRow UpdateValues WindowFrame`,
+      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering PivotAggregate
+      PivotColumns PivotOptions PivotValue Predicate RangeBoundary RawQuery RecursiveName
+      RecursiveOperand RecursiveRow Selection SelectQuery ServerValue ServerValueKind
+      ServerValues SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation
+      SqlParameter Table TableOptions UnionRow UnpivotColumns UnpivotOptions UpdateValues
+      WindowFrame`,
       `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExistsNode
       ExpressionNode FlattenNode FrameBoundaryNode IdentifierNode InsertNode InSubqueryNode
-      JoinNode MergeBranchNode MergeNode OrderNode QueryNode RelationNode SelectNode
-      SelfReferenceNode SetOperationNode SourceReference StatementNode SubqueryNode TableNode
-      TemporalNode UpdateNode WindowFrameNode WireType`,
+      JoinNode MergeBranchNode MergeNode OrderNode PivotLiteral PivotNode QueryNode RelationNode
+      SelectNode SelfReferenceNode SetOperationNode SourceReference StatementNode SubqueryNode
+      TableNode TemporalNode UnpivotNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {

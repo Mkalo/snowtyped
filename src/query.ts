@@ -220,7 +220,7 @@ function correlations(node: unknown): SourceReference[] {
         : correlations(value),
   );
 }
-function derivedServerValue(): never {
+export function derivedServerValue(): never {
   throw new TypeError('Server values can only be declared on base table columns.');
 }
 function validateSelection(selection: Selection): readonly AnyExpression[] {
@@ -781,9 +781,11 @@ type ComparableColumn<V, S extends Selection, N extends string> = [
 ] extends [NonNullable<V>]
   ? unknown
   : { readonly __subquery: 'project a column comparable with the operand' };
-type AnySelectQuery = SelectQuery<Selection, string, string, string>;
+interface Subquery {
+  readonly outerSources: readonly SourceReference[];
+}
 
-function subquery(query: AnySelectQuery, single: boolean) {
+function subquery(query: Subquery, single: boolean) {
   const state = states.get(query);
   if (!state) throw new TypeError('Subqueries require a query built by select().');
   const ast = checkedAst(state);
@@ -795,7 +797,7 @@ function subquery(query: AnySelectQuery, single: boolean) {
   return { state, ast, correlated };
 }
 function existence<Outer extends string>(
-  query: AnySelectQuery,
+  query: Subquery,
   negate: boolean,
 ): Expression<boolean, Outer, never> {
   const { ast, correlated } = subquery(query, false);
