@@ -96,6 +96,15 @@ Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.lim
 
 `.as('name')` turns a query into a derived table; `.asCte('name')` makes a CTE source. Its `.columns` retain inferred output types and outer-join nullability. Selecting or joining a CTE includes its definition automatically.
 
+```ts
+const active = select(customers, { id: customers.columns.id, email: customers.columns.email });
+const legacy = select(archived, { email: archived.columns.email, id: archived.columns.id });
+const all = active.union(legacy);
+const page = all.orderBy(asc(all.columns.id)).limit(50);
+```
+
+`.union()`, `.unionAll()`, `.intersect()`, and `.except()` combine queries whose projections have the same aliases and domains; branches are aligned by alias. UNION results are nullable when either branch is, INTERSECT only when both are, and EXCEPT keeps the left branch's types. Mixed numeric families (integer, decimal, float) or temporal kinds are rejected; same-family precision and scale widen in Snowflake. Chained calls apply to the whole preceding query, and nesting groups explicitly: every operand is parenthesized, so INTERSECT's higher keyword precedence never regroups a query. Order and paginate a combined query with its own `.columns`; branch CTEs are hoisted into one leading WITH, and serialization happens only after the set operation. Combined queries also support `.as()` and `.asCte()`.
+
 ## Snowflake syntax
 
 ```ts
@@ -226,7 +235,7 @@ Await running operations and close cursors before starting a transaction on a si
 
 ## Scope and distribution
 
-The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, recursive CTEs, set operations, complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, recursive CTEs, complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 

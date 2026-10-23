@@ -21,18 +21,20 @@ const expected = {
     ),
     types: names(
       `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
-      ColumnMap ColumnValue CompiledQuery DataType DatePart Expression FilteredMutation
-      FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry GeoPosition
-      IdentityOptions InferColumn InferExpression InferSelection InsertSource InsertValues
-      IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
-      OffsetWindowOptions OrderedWindowOptions Ordering PivotAggregate PivotColumns PivotOptions
-      PivotValue Predicate RangeBoundary RawQuery Selection SelectQuery ServerValue
-      ServerValueKind ServerValues SqlInterpolation SqlParameter Table TableOptions
-      UnpivotColumns UnpivotOptions UpdateValues WindowFrame`,
+      ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType DatePart Expression
+      FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
+      GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
+      InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
+      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering PivotAggregate
+      PivotColumns PivotOptions PivotValue Predicate RangeBoundary RawQuery Selection
+      SelectQuery ServerValue ServerValueKind ServerValues SetColumns SetOperand SetOperator
+      SetQuery SetScope SqlInterpolation SqlParameter Table TableOptions UnionRow UnpivotColumns
+      UnpivotOptions UpdateValues WindowFrame`,
       `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
       FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode MergeNode
-      OrderNode PivotLiteral PivotNode RelationNode SelectNode SourceReference StatementNode
-      TableNode TemporalNode UnpivotNode UpdateNode WindowFrameNode WireType`,
+      OrderNode PivotLiteral PivotNode QueryNode RelationNode SelectNode SetOperationNode
+      SourceReference StatementNode TableNode TemporalNode UnpivotNode UpdateNode
+      WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
