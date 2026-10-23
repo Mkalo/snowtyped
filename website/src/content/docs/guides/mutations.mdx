@@ -1,0 +1,26 @@
+---
+title: Mutations
+description: Typed INSERT, UPDATE, DELETE, and MERGE statements.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../../components/Snippet.astro';
+import merge from '../../../snippets/merge.ts?raw';
+import writes from '../../../snippets/writes.ts?raw';
+
+<Snippet code={writes} />
+
+- `insert(table, values)` accepts one row or an array of rows. Required columns must be present;
+  omitted nullable columns become SQL NULL.
+- `update(table, values)` accepts typed literal values and expressions from its own table.
+- Statements resolve to `{ affectedRows, queryId }`. There is no emulated RETURNING clause.
+
+<Aside type="caution">
+  UPDATE and DELETE without `.where()` affect every row in the table.
+</Aside>
+
+## MERGE
+
+`mergeInto(target, source, on)` supports matched update, matched delete, and unmatched insert.
+
+<Snippet code={merge} />
