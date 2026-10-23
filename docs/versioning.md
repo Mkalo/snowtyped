@@ -86,7 +86,9 @@ For each release:
    version PR.
 2. Successful main CI automatically starts **Release package**. Pending
    changesets and completed releases are skipped. CI builds and tests the
-   exact tarball, then stages it with OIDC and provenance.
+   exact tarball, runs the live [Snowflake integration](snowflake-setup.md#optional-github-actions-setup)
+   suite on that commit, then stages it with OIDC and provenance. A failed live
+   run stops the release before anything is staged.
 3. Review the CI stage's version, dist-tag, SHA-512, and provenance in npm's
    Staged Packages UI. Approve it with 2FA to publish the version.
 4. The same workflow waits up to one hour for approval, verifies the public bytes
