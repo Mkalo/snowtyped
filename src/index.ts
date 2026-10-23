@@ -105,6 +105,7 @@ export { type SelectQuery, select } from './query.js';
 export {
   type AnyColumn,
   alias,
+  array,
   type BoundColumns,
   binary,
   boolean,
@@ -115,9 +116,12 @@ export {
   date,
   decimal,
   float,
+  geography,
+  geometry,
   type InferColumn,
   type InferSelection,
   integer,
+  object,
   type Selection,
   snowflakeTable,
   type Table,
@@ -127,6 +131,8 @@ export {
   timestamp,
   timeTravel,
   variant,
+  vector,
 } from './schema.js';
 export { type FlattenOptions, flatten } from './snowflake-syntax.js';
+export type { GeoJsonGeometry, GeoPosition } from './spatial.js';
 export { type RawQuery, type SqlInterpolation, type SqlParameter, sql } from './sql.js';

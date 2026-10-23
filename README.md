@@ -51,20 +51,29 @@ Schema declarations determine both result types and runtime validation. Users do
 
 The compiler serializes exact numeric and temporal outputs after the native query's joins, grouping, window filtering, DISTINCT, ordering, and pagination. Nested sources retain their native SQL types; numeric sorting remains numeric. SDK NULL sentinels are normalized using result-column metadata, preserving a text value that happens to equal `NULL`.
 
-| Declaration                             | Non-null output | Notes                                       |
-| --------------------------------------- | --------------- | ------------------------------------------- |
-| `text('NAME')`                          | `string`        | Text                                        |
-| `integer('ID')`                         | `bigint`        | Exact integral NUMBER                       |
-| `decimal('BALANCE')`                    | `string`        | Exact fixed-point decimal text              |
-| `float('VALUE')`                        | `number`        | Finite floating-point values                |
-| `boolean('ACTIVE')`                     | `boolean`       | No truthiness coercion                      |
-| `date('DAY')`                           | `string`        | Calendar date                               |
-| `time('CLOCK')`                         | `string`        | Time with up to nine fractional digits      |
-| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`        | Nanoseconds retained; LTZ/TZ include offset |
-| `binary('DATA')`                        | `Uint8Array`    | SDK Buffers are accepted                    |
-| `variant('PAYLOAD')`                    | `unknown`       | JSON without an assumed shape               |
+| Declaration                             | Non-null output           | Notes                                       |
+| --------------------------------------- | ------------------------- | ------------------------------------------- |
+| `text('NAME')`                          | `string`                  | Text                                        |
+| `integer('ID')`                         | `bigint`                  | Exact integral NUMBER                       |
+| `decimal('BALANCE')`                    | `string`                  | Exact fixed-point decimal text              |
+| `float('VALUE')`                        | `number`                  | Finite floating-point values                |
+| `boolean('ACTIVE')`                     | `boolean`                 | No truthiness coercion                      |
+| `date('DAY')`                           | `string`                  | Calendar date                               |
+| `time('CLOCK')`                         | `string`                  | Time with up to nine fractional digits      |
+| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`                  | Nanoseconds retained; LTZ/TZ include offset |
+| `binary('DATA')`                        | `Uint8Array`              | SDK Buffers are accepted                    |
+| `variant('PAYLOAD')`                    | `unknown`                 | JSON without an assumed shape               |
+| `array('TAGS')`                         | `unknown[]`               | Semi-structured ARRAY                       |
+| `object('META')`                        | `Record<string, unknown>` | Semi-structured OBJECT                      |
+| `geography('LOCATION')`                 | `GeoJsonGeometry`         | GeoJSON geometry, exact coordinates         |
+| `geometry('SHAPE', { srid: 4326 })`     | `GeoJsonGeometry`         | Exact coordinates; SRID checked (default 0) |
+| `vector('EMBEDDING', 'float', 768)`     | `number[]`                | FLOAT32 or INT32 elements, fixed dimension  |
 
-Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. A type parameter alone cannot establish a VARIANT shape. The declaration is checked at runtime, and read/write types are inferred from it. Numeric precision/scale and other database constraints remain database-enforced; declarations should match the physical schema.
+Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. Likewise `array('TAGS', z.string())` declares element values and `object('META', z.object({ ok: z.boolean() }))` declares an OBJECT shape. A type parameter alone cannot establish a JSON shape. The declaration is checked at runtime, and read/write types are inferred from it. JSON numbers that a JavaScript number cannot hold exactly, such as integers beyond 2^53, reject the result instead of being rounded. Structured `ARRAY(type)`, `OBJECT(...)`, and `MAP` columns are not supported yet, and code generation rejects them.
+
+Spatial values are GeoJSON geometry objects; Features, `bbox`, and `crs` members are rejected. GEOMETRY results must carry the declared SRID. Snowflake does not support `=` on spatial values. VECTOR writes must match the declared dimension; FLOAT elements are stored as FLOAT32, so results return the nearest FLOAT32 value.
+
+Declare physical constraints with `integer('QTY', { precision: 9 })`, `decimal('BALANCE', { precision: 12, scale: 2 })`, `text('CODE', { length: 3 })`, `binary('HASH', { length: 32 })`, `time('CLOCK', { precision: 3 })`, or `timestamp('AT', 'ltz', { precision: 6 })`. INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including extra scale or fractional seconds that Snowflake would silently round or truncate; zeros that do not change the value are accepted. VARCHAR length counts code points and BINARY length counts bytes. Predicate literals are not constrained. Other database constraints remain database-enforced; declarations should match the physical schema.
 
 ## Query composition
 
@@ -108,7 +117,7 @@ const prices = select(trades)
 
 `over(aggregate, options)` supports aggregate windows. `rank` and `denseRank` take the same options with a required `orderBy`. `lag(value, options)` and `lead` also accept `offset` and a `default` in the value's domain; they are nullable unless both the value and the default are non-null. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
-`timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Database retention and supported selector rules still apply.
+`timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset (`2026-10-22T15:00:00-07:00`) is honored and a string without one is read in the session `TIMEZONE`. Database retention and supported selector rules still apply.
 
 ## Writes
 
@@ -158,6 +167,7 @@ Interpolated scalars become bindings. Nested fragments compose with bindings in 
 
 ```ts
 await db.execute(query, { signal: controller.signal, timeoutMs: 5_000 });
+await db.queryRaw<Row[]>(sql`SELECT ...`, { signal: controller.signal, timeoutMs: 5_000 });
 for await (const row of db.stream(query)) {
   /* typed and validated per row */
 }
@@ -178,15 +188,17 @@ try {
 }
 ```
 
-Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
+Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. Set `testOnBorrow: true` to heartbeat each connection before lending it, so a terminated session is replaced before a request runs on it. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
 
-Abort/deadline cancellation waits for the SDK's cancellation callback before releasing a request. Stopping consumption after a query has completed destroys the row stream; it does not attempt to cancel an already-completed server statement.
+A pooled request's `signal` and `timeoutMs` also cover the wait for a connection, so a request that stops waiting never runs; `acquireTimeoutMillis` bounds that wait for every request. A connection whose session has terminated is destroyed instead of returned to the pool, though the request that found it still rejects. `close()` rejects new work, waits for running and queued operations, including unfinished streams, and then closes every connection. See [production behavior](docs/production.md) for operational limits, cleanup, and benchmark baselines.
 
-Await running operations and close cursors before starting a transaction on a single client. Use the callback's client, await its queries, and consume/close streams within that callback. An expired client cannot join a later transaction. Nested transactions are unsupported. Transactions provide rollback for DML; Snowflake DDL can auto-commit and must not be used as rollback-protected work. Other callers using the original SDK connection directly are outside this client's coordination.
+Raw options require a `sql` query value; direct tagged templates take no options. Abort/deadline cancellation waits for Snowflake to accept the cancel before releasing a request. A cancel that arrives before Snowflake registers the statement is retried; if the statement finishes first, the request settles with its real outcome, so a committed write resolves rather than rejecting. Stopping consumption after a query has completed destroys the row stream; it does not attempt to cancel an already-completed server statement.
+
+Await running operations and close cursors before starting a transaction on a single client. Use the callback's client, await its queries, and consume/close streams within that callback. An expired client cannot join a later transaction. Nested transactions are unsupported. Transactions provide rollback for DML; Snowflake DDL can auto-commit and must not be used as rollback-protected work. Other callers using the original SDK connection directly are outside this client's coordination. If ROLLBACK itself fails, the transaction rejects with an `AggregateError` holding both failures and the connection's session state is unknown: a pool destroys that connection, and a single client rejects every later operation on it, so the caller should destroy and replace the SDK connection.
 
 ## Introspection
 
-`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
+`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Generated declarations carry NUMBER precision/scale, VARCHAR length, and TIME/TIMESTAMP precision when they differ from Snowflake's defaults; INFORMATION_SCHEMA does not report BINARY length. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
 
 ## Scope and distribution
 
