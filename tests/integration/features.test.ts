@@ -1010,7 +1010,7 @@ describe('complete query and execution paths against Snowflake', () => {
           { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_ABORT', ERROR_CODE: '604' },
           { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_DEADLINE', ERROR_CODE: '604' },
         ]),
-      { timeout: 8_000, interval: 500 },
+      { timeout: 20_000, interval: 1_000 },
     );
     const pool = await createPool(integrationConfig(), { max: 1 });
     try {
@@ -1022,7 +1022,7 @@ describe('complete query and execution paths against Snowflake', () => {
           expect(await pool.queryRaw(cancelled)).toEqual([
             { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_POOLED', ERROR_CODE: '604' },
           ]),
-        { timeout: 8_000, interval: 500 },
+        { timeout: 20_000, interval: 1_000 },
       );
     } finally {
       await pool.close();
