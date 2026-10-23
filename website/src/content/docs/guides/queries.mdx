@@ -10,6 +10,7 @@ import expressions from '../../../snippets/expressions.ts?raw';
 import firstQuery from '../../../snippets/first-query.ts?raw';
 import grouping from '../../../snippets/grouping.ts?raw';
 import joins from '../../../snippets/joins.ts?raw';
+import setOperations from '../../../snippets/set-operations.ts?raw';
 
 `select(table)` selects every declared column. `select(table, projection)` or `.select(projection)`
 selects specific columns and expressions. Projection keys become the exact output aliases.
@@ -79,3 +80,17 @@ result's `.columns` keep their inferred output types and outer-join nullability.
 joining a CTE includes its definition automatically.
 
 <Snippet code={derived} />
+
+## Set operations
+
+`.union()`, `.unionAll()`, `.intersect()`, and `.except()` combine queries whose projections have
+the same aliases and domains. Branches are aligned by alias, not position.
+
+<Snippet code={setOperations} />
+
+UNION results are nullable when either branch is, INTERSECT results only when both are, and EXCEPT
+keeps the left branch's types. Mixed numeric families (integer, decimal, float) or temporal kinds
+are rejected; precision and scale within a family widen in Snowflake. Chained calls apply to the
+whole preceding query and every operand is parenthesized, so INTERSECT's higher precedence never
+regroups a query. Order and paginate a combined query with its own `.columns`. Branch CTEs are
+hoisted into one leading WITH, and combined queries also support `.as()` and `.asCte()`.

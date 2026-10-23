@@ -1,6 +1,6 @@
 import type { Connection, ConnectionOptions } from 'snowflake-sdk';
 import type { MutationQuery } from '../mutations.js';
-import type { SelectQuery } from '../query.js';
+import type { SelectQuery, SetQuery } from '../query.js';
 import type { Selection } from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation } from '../sql.js';
 import { createClient, isUnusable, type SnowflakeClient } from './client.js';
@@ -71,12 +71,19 @@ export async function createPool(
   }
   return Object.freeze({
     execute: (
-      query: SelectQuery<Selection, string, string> | MutationQuery,
+      query:
+        | SelectQuery<Selection, string, string>
+        | SetQuery<Record<string, unknown>>
+        | MutationQuery,
       executeOptions?: ExecuteOptions,
     ) =>
       use<unknown>(
         (client, options) =>
-          query.kind === 'select' ? client.execute(query, options) : client.execute(query, options),
+          query.kind === 'select'
+            ? client.execute(query, options)
+            : query.kind === 'set'
+              ? client.execute(query, options)
+              : client.execute(query, options),
         executeOptions,
       ),
     queryRaw<T = unknown>(
@@ -92,11 +99,18 @@ export async function createPool(
         options,
       );
     },
-    async *stream(query: SelectQuery<Selection, string, string>, executeOptions?: ExecuteOptions) {
+    async *stream(
+      query: SelectQuery<Selection, string, string> | SetQuery<Record<string, unknown>>,
+      executeOptions?: ExecuteOptions,
+    ) {
       const signal = requestSignal(executeOptions ?? {});
       const connection = await acquire(signal);
       try {
-        yield* createClient(connection).stream(query, signal ? { signal } : {});
+        const client = createClient(connection);
+        const options = signal ? { signal } : {};
+        yield* query.kind === 'select'
+          ? client.stream(query, options)
+          : client.stream(query, options);
       } finally {
         await release(connection);
       }

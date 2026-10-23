@@ -21,17 +21,18 @@ const expected = {
     ),
     types: names(
       `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
-      ColumnMap ColumnValue CompiledQuery DataType DatePart Expression FilteredMutation
-      FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry GeoPosition
-      IdentityOptions InferColumn InferExpression InferSelection InsertSource InsertValues
-      IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
-      OffsetWindowOptions OrderedWindowOptions Ordering Predicate RangeBoundary RawQuery
-      SelectQuery Selection ServerValue ServerValueKind ServerValues SqlInterpolation
-      SqlParameter Table TableOptions UpdateValues WindowFrame`,
+      ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType DatePart Expression
+      FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
+      GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
+      InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
+      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering Predicate
+      RangeBoundary RawQuery SelectQuery Selection ServerValue ServerValueKind ServerValues
+      SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation SqlParameter Table
+      TableOptions UnionRow UpdateValues WindowFrame`,
       `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
       FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode
-      MergeNode OrderNode RelationNode SelectNode SourceReference StatementNode TableNode
-      TemporalNode UpdateNode WindowFrameNode WireType`,
+      MergeNode OrderNode QueryNode RelationNode SelectNode SetOperationNode SourceReference
+      StatementNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
