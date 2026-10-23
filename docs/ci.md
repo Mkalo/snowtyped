@@ -92,9 +92,9 @@ independently of the project's Node test matrix.
 
 ## Release gate
 
-Offline CI does not publish. Follow [npm publication](versioning.md#npm-publication)
-to stage MIT-licensed alpha/beta releases, verify the exact commit and tarball,
-and approve publication with npm 2FA.
+Successful main CI automatically stages versioned releases through the release
+workflow. Your npm 2FA approval publishes them; verification and GitHub release
+creation follow automatically. See [npm publication](versioning.md#npm-publication).
 
 A supported stable release additionally needs a successful protected hosted Snowflake run on that
 same SHA (#23), production-critical hardening evidence (#17/#24), and checked
