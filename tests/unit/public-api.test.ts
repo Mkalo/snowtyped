@@ -10,27 +10,35 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc dynamicPivot eq flatten float
-      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath like
-      lower lt lte max mergeInto min ne not or over pivot rowNumber select snowflakeTable sql sum
-      text time timestamp timeTravel unpivot update upper variant`,
+      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date
+      dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div
+      dynamicPivot eq flatten float generateSchema geography geometry gt gte ilike inArray
+      insert insertFrom integer introspect isNotNull isNull jsonPath lag lead length like lower
+      lt lte max mergeInto min mul ne not object or over pivot rangeBetween rank rowNumber
+      rowsBetween select snowflakeTable sql sub substring sum text time timestamp timeTravel
+      trim unpivot update updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
-      `AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue CompiledQuery
-      DataType Expression FilteredMutation FlattenOptions InferColumn InferExpression InferSelection
-      InsertValues IntrospectedColumn IntrospectedTable MergeQuery MutationQuery Ordering
-      PivotAggregate PivotColumns PivotOptions PivotValue Predicate RawQuery SelectQuery Selection
-      SqlInterpolation SqlParameter Table TableOptions UnpivotColumns UnpivotOptions UpdateValues`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
-      InsertNode JoinNode MergeNode OrderNode PivotLiteral PivotNode RelationNode SelectNode
-      SourceReference StatementNode TableNode TemporalNode UnpivotNode UpdateNode WireType`,
+      `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
+      ColumnMap ColumnValue CompiledQuery DataType DatePart Expression FilteredMutation
+      FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry GeoPosition
+      IdentityOptions InferColumn InferExpression InferSelection InsertSource InsertValues
+      IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
+      OffsetWindowOptions OrderedWindowOptions Ordering PivotAggregate PivotColumns PivotOptions
+      PivotValue Predicate RangeBoundary RawQuery Selection SelectQuery ServerValue
+      ServerValueKind ServerValues SqlInterpolation SqlParameter Table TableOptions
+      UnpivotColumns UnpivotOptions UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
+      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode MergeNode
+      OrderNode PivotLiteral PivotNode RelationNode SelectNode SourceReference StatementNode
+      TableNode TemporalNode UnpivotNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
     values: names('createClient createPool'),
     types: names(
-      'ExecuteOptions MutationResult PooledClient PoolOptions QueryResult SnowflakeClient',
+      'ExecuteOptions MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
     ),
   },
 };

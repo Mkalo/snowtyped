@@ -8,7 +8,7 @@ import {
   type UnpivotNode,
 } from './ast.js';
 import { type AnyExpression, count, expression, max, min, sum } from './expressions.js';
-import { select } from './query.js';
+import { derivedServerValue, select } from './query.js';
 import {
   type AnyColumn,
   type BoundColumns,
@@ -90,9 +90,20 @@ export type UnpivotColumns<
 function nonNull<T>(schema: z.ZodType<T>): z.ZodType<T> {
   return schema.refine((value) => value !== null, 'Expected a non-null value.');
 }
+function derived(encode: AnyExpression['encode']) {
+  return {
+    constraints: Object.freeze({}),
+    serverValue: null,
+    encodeWrite: encode,
+    serverDefault: derivedServerValue,
+    identity: derivedServerValue,
+    virtual: derivedServerValue,
+  };
+}
 function rename(key: string, value: AnyColumn): AnyColumn {
   return Object.freeze({
     ...value,
+    ...derived(value.encode),
     node: identifier(key),
     notNull: () => rename(key, value.notNull()) as Column<unknown, true>,
   });
@@ -106,12 +117,14 @@ function output(
   value = base.valueSchema,
 ): AnyColumn {
   const node = identifier(key);
+  const result = expression(node, nullable ? read : nonNull(read), {
+    valueSchema: nullable ? value : nonNull(value),
+    ...(base.wireType ? { wireType: base.wireType } : {}),
+    encode: (parsed: unknown) => base.encode(parsed),
+  });
   return Object.freeze({
-    ...expression(node, nullable ? read : nonNull(read), {
-      valueSchema: nullable ? value : nonNull(value),
-      ...(base.wireType ? { wireType: base.wireType } : {}),
-      encode: (parsed: unknown) => base.encode(parsed),
-    }),
+    ...result,
+    ...derived(result.encode),
     node,
     dataType,
     required: !nullable,
@@ -333,8 +346,10 @@ export function unpivot(
       ),
   });
   const keys = z.enum(options.in as [string, ...string[]]);
+  const tag = expression(identifier(options.for), keys);
   const label: AnyColumn = Object.freeze({
-    ...expression(identifier(options.for), keys),
+    ...tag,
+    ...derived(tag.encode),
     node: identifier(options.for),
     dataType: 'text',
     required: true,

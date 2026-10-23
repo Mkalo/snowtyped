@@ -127,6 +127,19 @@ describe('PIVOT', () => {
     const query = select(totals).where(eq(totals.columns.q1, '5'));
     expect(query.compile().binds).toEqual(['5']);
     expect(query.compile().sql).toContain('WHERE ("q1" = ?)');
+    const ids = snowflakeTable('IDS', {
+      id: integer('ID').notNull().identity(),
+      tag: text('TAG').notNull(),
+      n: integer('N').notNull(),
+    });
+    const tagged = pivot(ids, 'G', { aggregate: 'max', value: 'n', for: 'tag', in: { a: 'a' } });
+    const flipped = unpivot(ids, 'V', { value: 'v', for: 'k', in: ['id', 'n'] });
+    for (const column of [tagged.columns.id, tagged.columns.a, flipped.columns.k]) {
+      expect(column.serverValue).toBeNull();
+      expect(column.constraints).toEqual({});
+      expect(() => column.serverDefault()).toThrow('base table columns');
+    }
+    expect(tagged.columns.a.encodeWrite(3n)).toEqual({ kind: 'parameter', value: '3' });
     const q1 = totals.columns.q1.notNull();
     expect(q1.required).toBe(true);
     expect(() => q1.readSchema.parse(null)).toThrow();
