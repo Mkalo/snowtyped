@@ -9,6 +9,12 @@ const environment = {
   SNOWFLAKE_ROLE: 'TEST_ROLE',
   SNOWFLAKE_PRIVATE_KEY_PATH: '.secrets/test.p8',
 };
+const privateKey = '-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----';
+const base64PrivateKey = Buffer.from(privateKey, 'utf8').toString('base64');
+const directKeyFormats = [
+  { format: 'PEM', value: privateKey },
+  { format: 'Base64', value: base64PrivateKey },
+];
 
 describe('integration configuration', () => {
   it('fails explicitly when live test configuration is missing', () => {
@@ -28,9 +34,60 @@ describe('integration configuration', () => {
     expect(integrationConfig(environment)).not.toHaveProperty('privateKeyPass');
   });
 
-  it('supports an encrypted private key', () => {
+  it.each(directKeyFormats)('accepts a $format private key without a key file', ({ value }) => {
+    const config = integrationConfig({
+      ...environment,
+      SNOWFLAKE_PRIVATE_KEY: value,
+      SNOWFLAKE_PRIVATE_KEY_PATH: '',
+    });
+    expect(config).toHaveProperty('privateKey', privateKey);
+    expect(config).not.toHaveProperty('privateKeyPath');
+  });
+
+  it.each(directKeyFormats)('prefers a direct $format key over a configured path', ({ value }) => {
+    const config = integrationConfig({ ...environment, SNOWFLAKE_PRIVATE_KEY: value });
+    expect(config).toHaveProperty('privateKey', privateKey);
+    expect(config).not.toHaveProperty('privateKeyPath');
+  });
+
+  it('rejects an invalid direct key even when a key path is available', () => {
+    expect(() =>
+      integrationConfig({ ...environment, SNOWFLAKE_PRIVATE_KEY: 'not-a-private-key' }),
+    ).toThrow(
+      'SNOWFLAKE_PRIVATE_KEY must be a PEM private key or the Base64 encoding of the full PEM.',
+    );
+  });
+
+  it('falls back to the key path when the direct key is blank', () => {
+    expect(integrationConfig({ ...environment, SNOWFLAKE_PRIVATE_KEY: ' \n ' })).toHaveProperty(
+      'privateKeyPath',
+      environment.SNOWFLAKE_PRIVATE_KEY_PATH,
+    );
+  });
+
+  it('requires at least one nonblank private key source', () => {
+    for (const privateKeyPath of [undefined, '', ' ']) {
+      expect(() =>
+        integrationConfig({
+          ...environment,
+          SNOWFLAKE_PRIVATE_KEY: ' \n ',
+          SNOWFLAKE_PRIVATE_KEY_PATH: privateKeyPath,
+        }),
+      ).toThrow('SNOWFLAKE_PRIVATE_KEY or SNOWFLAKE_PRIVATE_KEY_PATH');
+    }
+  });
+
+  it.each([
+    { SNOWFLAKE_PRIVATE_KEY_PATH: environment.SNOWFLAKE_PRIVATE_KEY_PATH },
+    { SNOWFLAKE_PRIVATE_KEY: privateKey, SNOWFLAKE_PRIVATE_KEY_PATH: '' },
+    { SNOWFLAKE_PRIVATE_KEY: base64PrivateKey, SNOWFLAKE_PRIVATE_KEY_PATH: '' },
+  ])('supports an encrypted private key with either source: %o', (keySource) => {
     expect(
-      integrationConfig({ ...environment, SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: 'example-passphrase' }),
+      integrationConfig({
+        ...environment,
+        ...keySource,
+        SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: 'example-passphrase',
+      }),
     ).toHaveProperty('privateKeyPass', 'example-passphrase');
   });
 });

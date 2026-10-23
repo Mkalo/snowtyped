@@ -96,11 +96,13 @@ Successful main CI automatically stages versioned releases through the release
 workflow. Your npm 2FA approval publishes them; verification and GitHub release
 creation follow automatically. See [npm publication](versioning.md#npm-publication).
 
-A supported stable release additionally needs a successful protected hosted Snowflake run on that
-same SHA (#23), production-critical hardening evidence (#17/#24), and checked
-documentation and deployment/version agreement (#21/#22). These follow-ups are
-still release requirements even though their jobs are not yet part of
-`CI required`. First npm publication and production documentation deployment need
-your approval. Stable publication also needs the explicit repository
-variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while those stable
-gates are outstanding. Do not infer stable readiness from an experimental npm release.
+A supported stable release additionally needs the
+[release contract gates](release-contract.md#release-gates): a successful
+protected hosted Snowflake run on that same SHA (#23), the required production
+scenarios (#17), and checked documentation and deployment/version agreement
+(#21/#22). These are still release requirements even though their jobs are not
+yet part of `CI required`. First npm publication and production documentation
+deployment need your approval. Stable publication also needs the explicit
+repository variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while
+those stable gates are outstanding. Do not infer stable readiness from an
+experimental npm release.
