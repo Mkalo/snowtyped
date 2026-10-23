@@ -1,0 +1,14 @@
+---
+title: Changelog
+description: Release notes for every Snowtyped version.
+tableOfContents: false
+---
+
+import { Content as Changelog } from '../../../../../CHANGELOG.md';
+
+{/* CHANGELOG.md starts with its own title; the page already renders one. */}
+<style>{`.changelog > h1:first-child { display: none; }`}</style>
+
+<div class="changelog">
+  <Changelog />
+</div>

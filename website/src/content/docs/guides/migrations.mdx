@@ -1,0 +1,67 @@
+---
+title: Migrations
+description: Schema and table DDL, schema diffs, drift checks, and versioned migrations.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../../components/Snippet.astro';
+import migrations from '../../../snippets/migrations.ts?raw';
+import schemaDiff from '../../../snippets/schema-diff.ts?raw';
+
+Schema management lives in the separate `snowtyped/ddl` entry point, so query-only code never loads
+it. It works with any client from `snowtyped/snowflake`.
+
+## Table definitions and DDL
+
+`defineTable(table, options)` derives physical columns from a declared table. Physical types come
+from `sqlType`; each declared codec must be able to read its type, so `integer()` needs a NUMBER with
+scale 0 and `decimal()` needs an explicit `sqlType.number(precision, scale)`. `types` and `comments`
+are keyed by the declaration's column keys. An omitted comment is not managed; `null` requires no
+comment. `defineSchema(target, tables)` places the tables in one schema.
+
+The builders return statements with a `destructive` flag and a `compile()` method:
+
+- `createSchema`, `dropSchema`, and `setSchemaComment`.
+- `createTable(definition)`, `dropTable(table)`.
+- `alterTable(table)`: rename, comments, add, drop, and rename columns, type changes, and NOT NULL.
+
+`compileDdl` compiles the underlying DDL node. Names are quoted; comments compile to escaped
+literals because Snowflake DDL does not accept bind parameters.
+
+## Migrations
+
+<Snippet code={migrations} />
+
+`migrate(db, migrations, target)` applies migrations in array order and records each statement in a
+`SNOWTYPED_MIGRATIONS` history table, creating the schema if needed. `migrationStatus` reports
+applied, pending, and incomplete migrations without changing anything.
+
+- A lease in `SNOWTYPED_MIGRATIONS_LOCK` makes a concurrent run fail with the `LOCKED` code. The
+  lease is renewed before every statement and must outlast the longest one (`leaseSeconds`, 900 by
+  default).
+- Applied migrations must not change or be reordered; otherwise the run fails with `HISTORY_DRIFT`.
+- A migration with destructive DDL needs `destructive: true`. Raw SQL statements are not classified.
+- Failures are `MigrationError` instances whose `code` names the cause.
+
+<Aside type="caution">
+  Snowflake commits each DDL statement on its own. A failed migration keeps its earlier statements,
+  and later runs refuse to continue until you fix the remaining statements and pass
+  `resumeFailed: true`, which skips the committed ones. A statement whose commit was not recorded,
+  for example after a dropped connection, runs again on resume; prefer `IF NOT EXISTS` forms there.
+</Aside>
+
+## Schema diffs and drift
+
+<Snippet code={schemaDiff} />
+
+`inspectSchema` reads base tables through `INFORMATION_SCHEMA`. `diffSchema` compares them with the
+desired schema in declaration order and only emits changes Snowflake makes in place: widening
+VARCHAR, changing NUMBER precision, toggling NOT NULL, adding nullable columns, dropping columns and
+tables, and setting comments. Narrowing NUMBER precision and setting NOT NULL fail when existing data
+does not fit. Other changes, such as a new NUMBER scale or a NOT NULL column on an existing table,
+are listed under `unsupported` for a hand-written migration. Renames are never inferred.
+
+`checkDrift` runs the same comparison while ignoring the history tables. `pushSchema` applies a diff
+without history or locking and refuses unsupported or destructive changes unless `allowDestructive`
+is set; rerunning it continues a partial push. Column order, defaults, identity, clustering, and
+BINARY length are not compared.

@@ -2,7 +2,7 @@
 
 A Snowflake-first TypeScript query library built on `snowflake-sdk`, with an owned AST, declared schemas, inferred results, and compiled Zod 4 runtime validation. Parameterized raw SQL is also supported, with a query-time return type or `unknown` by default.
 
-Version `0.1.0-alpha.0`. Alpha software under the [MIT license](LICENSE); the public API may change before a stable release.
+Alpha software under the [MIT license](LICENSE); the public API may change before a stable release. The [release contract](docs/release-contract.md) defines the stable API, supported versions, and release gates.
 
 ## Development and verification
 
@@ -219,8 +219,8 @@ Snowflake commits each DDL statement on its own, so a failed migration keeps its
 
 ## Scope and distribution
 
-The first-class API covers the operations above. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, advanced frames, default/generated columns, DDL for objects other than schemas and tables, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, advanced frames, default/generated columns, DDL for objects other than schemas and tables, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [PLANNING.md](PLANNING.md). Publishing remains disabled until licensing and API review are settled.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [PLANNING.md](PLANNING.md). Use GitHub issues for bugs and questions, and report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

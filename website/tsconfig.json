@@ -1,0 +1,12 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "paths": {
+      "snowtyped": ["../src/index.ts"],
+      "snowtyped/snowflake": ["../src/snowflake/index.ts"],
+      "snowtyped/ddl": ["../src/ddl/index.ts"]
+    }
+  },
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist", "src/snippets"]
+}
