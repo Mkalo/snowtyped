@@ -36,6 +36,12 @@ export interface BinaryNode {
   readonly left: ExpressionNode;
   readonly right: ExpressionNode;
 }
+export interface ArithmeticNode {
+  readonly kind: 'arithmetic';
+  readonly operator: '+' | '-' | '*' | '/';
+  readonly left: ExpressionNode;
+  readonly right: ExpressionNode;
+}
 export interface LogicalNode {
   readonly kind: 'logical';
   readonly operator: 'AND' | 'OR';
@@ -51,6 +57,26 @@ export interface FunctionNode {
   readonly name: string;
   readonly args: readonly ExpressionNode[];
   readonly distinct?: boolean;
+}
+export interface CaseNode {
+  readonly kind: 'case';
+  readonly branches: readonly { readonly when: ExpressionNode; readonly result: ExpressionNode }[];
+  readonly otherwise?: ExpressionNode;
+}
+export interface DatePartNode {
+  readonly kind: 'date-part';
+  readonly part:
+    | 'YEAR'
+    | 'QUARTER'
+    | 'MONTH'
+    | 'WEEK'
+    | 'DAY'
+    | 'HOUR'
+    | 'MINUTE'
+    | 'SECOND'
+    | 'MILLISECOND'
+    | 'MICROSECOND'
+    | 'NANOSECOND';
 }
 export interface InNode {
   readonly kind: 'in';
@@ -100,7 +126,7 @@ export interface CastNode {
   readonly value: ExpressionNode;
   readonly target:
     | 'VARCHAR'
-    | 'NUMBER(38,0)'
+    | `NUMBER(${number},${number})`
     | 'DOUBLE'
     | 'BOOLEAN'
     | 'DATE'
@@ -117,9 +143,12 @@ export type ExpressionNode =
   | ReferenceNode
   | ParameterNode
   | BinaryNode
+  | ArithmeticNode
   | LogicalNode
   | UnaryNode
   | FunctionNode
+  | CaseNode
+  | DatePartNode
   | InNode
   | WindowNode
   | JsonPathNode
@@ -287,6 +316,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       case 'parameter':
         return parameter(node.value);
       case 'binary':
+      case 'arithmetic':
         return `(${expression(node.left, qualify)} ${node.operator} ${expression(node.right, qualify)})`;
       case 'logical':
         return `(${node.operands.map((item) => expression(item, qualify)).join(` ${node.operator} `)})`;
@@ -296,6 +326,10 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           : `(${expression(node.operand, qualify)} ${node.operator})`;
       case 'function':
         return `${node.name}(${node.distinct ? 'DISTINCT ' : ''}${node.args.length ? node.args.map((arg) => expression(arg, qualify)).join(', ') : node.name === 'COUNT' ? '*' : ''})`;
+      case 'case':
+        return `CASE ${node.branches.map((branch) => `WHEN ${expression(branch.when, qualify)} THEN ${expression(branch.result, qualify)}`).join(' ')}${node.otherwise ? ` ELSE ${expression(node.otherwise, qualify)}` : ''} END`;
+      case 'date-part':
+        return node.part;
       case 'in':
         return node.values.length === 0
           ? node.negate

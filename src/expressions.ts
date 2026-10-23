@@ -109,7 +109,7 @@ export const jsonText = (number: (value: number, source: string) => unknown = ex
 export function isExpression(value: unknown): value is AnyExpression {
   return typeof value === 'object' && value !== null && 'expression' in value;
 }
-function metadata(values: readonly AnyExpression[]) {
+export function metadata(values: readonly AnyExpression[]) {
   return {
     refs: [...new Set(values.flatMap((value) => value.refs))],
     phase: values.some((value) => value.phase === 'window')
