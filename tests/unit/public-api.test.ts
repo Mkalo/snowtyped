@@ -10,14 +10,13 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date
-      dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div
-      dynamicPivot eq flatten float generateSchema geography geometry gt gte ilike inArray
-      insert insertFrom integer introspect isNotNull isNull jsonPath lag lead length like
-      lower lt lte matchRecognize max mergeInto min mul ne not object or over pivot
-      rangeBetween rank recursiveCte rowNumber rowPattern rowsBetween select snowflakeTable
-      sql sub substring sum text time timestamp timeTravel trim unpivot update updateFrom
-      upper variant vector`,
+      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date dateAdd
+      dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div dynamicPivot eq
+      exists flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
+      inSubquery integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte
+      matchRecognize max mergeInto min mul ne not notExists object or over pivot rangeBetween rank
+      recursiveCte rowNumber rowPattern rowsBetween scalar select snowflakeTable sql sub substring
+      sum text time timestamp timeTravel trim unpivot update updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
@@ -34,12 +33,12 @@ const expected = {
       SelectQuery ServerValue ServerValueKind ServerValues SetColumns SetOperand SetOperator
       SetQuery SetScope SqlInterpolation SqlParameter Table TableOptions UnionRow
       UnpivotColumns UnpivotOptions UpdateValues WindowFrame`,
-      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
-      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MatchRecognizeNode
-      MergeBranchNode MergeNode NavigationNode OrderNode PatternNode PivotLiteral PivotNode
-      QueryNode RelationNode SelectNode SelfReferenceNode SemanticsNode SetOperationNode
-      SourceReference StarNode StatementNode TableNode TemporalNode UnpivotNode UpdateNode
-      WindowFrameNode WireType`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExistsNode
+      ExpressionNode FlattenNode FrameBoundaryNode IdentifierNode InsertNode InSubqueryNode
+      JoinNode MatchRecognizeNode MergeBranchNode MergeNode NavigationNode OrderNode PatternNode
+      PivotLiteral PivotNode QueryNode RelationNode SelectNode SelfReferenceNode SemanticsNode
+      SetOperationNode SourceReference StarNode StatementNode SubqueryNode TableNode TemporalNode
+      UnpivotNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
