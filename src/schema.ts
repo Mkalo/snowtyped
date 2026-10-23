@@ -36,7 +36,8 @@ export type DataType =
   | 'binary'
   | 'geography'
   | 'geometry'
-  | 'vector';
+  | 'vector'
+  | 'structured';
 export interface ColumnConstraints {
   readonly precision?: number;
   readonly scale?: number;
@@ -71,7 +72,12 @@ interface Constraint<T> {
   check?(value: T): boolean;
 }
 
-function column<T, R extends boolean>(
+const writeSchemas = new WeakMap<AnyColumn, z.ZodType>();
+/** The constrained schema a required column validates INSERT, UPDATE, and MERGE values with. */
+export function writeSchema<T>(value: Column<T, true>): z.ZodType<T> {
+  return writeSchemas.get(value as AnyColumn) as z.ZodType<T>;
+}
+export function column<T, R extends boolean>(
   name: string,
   dataType: DataType,
   read: z.ZodType<T>,
@@ -117,7 +123,7 @@ function column<T, R extends boolean>(
     : ['array', 'object', 'vector'].includes(dataType)
       ? 'variant'
       : (dataType as WireType);
-  return Object.freeze({
+  const result: Column<T, R> = Object.freeze({
     ...expression(node, readSchema, {
       valueSchema,
       ...(wireType ? { wireType } : {}),
@@ -130,6 +136,8 @@ function column<T, R extends boolean>(
     encodeWrite: (input: ColumnValue<T, R>) => encode(writeSchema.parse(input)),
     notNull: () => column(name, dataType, read, value, true, constraint, write),
   });
+  writeSchemas.set(result as AnyColumn, writeSchema);
+  return result;
 }
 /** A NULL bind still parses to a typed NULL, so mixed rows keep one SQL type. */
 function parseJson(dataType: DataType, value: unknown): ExpressionNode {

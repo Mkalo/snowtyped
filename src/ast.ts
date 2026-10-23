@@ -15,7 +15,8 @@ export type WireType =
   | 'timestamp_tz'
   | 'variant'
   | 'geography'
-  | 'geometry';
+  | 'geometry'
+  | 'structured';
 export interface SourceReference {
   readonly id: symbol;
   readonly name: string;
@@ -84,7 +85,8 @@ export interface CastNode {
     | 'TIMESTAMP_TZ'
     | 'ARRAY'
     | 'OBJECT'
-    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`;
+    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`
+    | `${'ARRAY' | 'OBJECT' | 'MAP'}(${string})`;
 }
 export type ExpressionNode =
   | IdentifierNode
@@ -294,6 +296,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (type === 'variant') return `TO_JSON(${value})`;
     if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
     if (type === 'geometry') return `ST_ASEWKB(${value})`;
+    if (type === 'structured') return `TO_JSON(CAST(${value} AS VARIANT))`;
     const formats: Partial<Record<WireType, string>> = {
       date: 'YYYY-MM-DD',
       time: 'HH24:MI:SS.FF9',

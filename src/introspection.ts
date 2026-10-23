@@ -9,6 +9,13 @@ export interface IntrospectedColumn {
   readonly precision: number | null;
   readonly scale: number | null;
   readonly length: number | null;
+  /** The `SHOW COLUMNS` type of a structured ARRAY, OBJECT, or MAP column. */
+  readonly structure?: StructureMetadata;
+}
+export interface StructureMetadata {
+  readonly type: string;
+  readonly nullable: boolean;
+  readonly [property: string]: unknown;
 }
 export interface IntrospectedTable {
   readonly database: string;
@@ -34,6 +41,11 @@ const metadata = () =>
     ),
   );
 const numeric = (value: string | null) => (value === null ? null : Number(value));
+const shownColumns = () =>
+  z.compile(z.array(z.object({ column_name: z.string(), data_type: z.string() })));
+const structureMetadata = () =>
+  z.compile(z.looseObject({ type: z.string(), nullable: z.boolean() }));
+const structuredAlias = /^(?:ARRAY|OBJECT|MAP)\(/i;
 
 export async function introspect(
   client: Pick<SnowflakeClient, 'queryRaw'>,
@@ -64,7 +76,7 @@ export async function introspect(
     table.columns.push(
       Object.freeze({
         name: row.COLUMN_NAME,
-        dataType: /^(?:ARRAY|OBJECT|VECTOR)\(/i.test(row.DATA_TYPE_ALIAS ?? '')
+        dataType: /^(?:ARRAY|OBJECT|MAP|VECTOR)\(/i.test(row.DATA_TYPE_ALIAS ?? '')
           ? (row.DATA_TYPE_ALIAS as string)
           : row.DATA_TYPE,
         nullable: row.IS_NULLABLE === 'YES',
@@ -74,11 +86,69 @@ export async function introspect(
       }),
     );
   }
+  for (const table of tables.values()) {
+    if (!table.columns.some((column) => structuredAlias.test(column.dataType))) continue;
+    const shown = shownColumns().parse(
+      await client.queryRaw(
+        sql`SHOW COLUMNS IN TABLE ${sql.identifier(table.database, table.schema, table.name)}`,
+      ),
+    );
+    table.columns = table.columns.map((column) => {
+      const match = shown.find((entry) => entry.column_name === column.name);
+      return structuredAlias.test(column.dataType) && match
+        ? Object.freeze({
+            ...column,
+            structure: structureMetadata().parse(JSON.parse(match.data_type)) as StructureMetadata,
+          })
+        : column;
+    });
+  }
   return Object.freeze(
     [...tables.values()].map((table) =>
       Object.freeze({ ...table, columns: Object.freeze(table.columns) }),
     ),
   );
+}
+
+function structureDeclaration(type: StructureMetadata, key = false): string {
+  const nested = (value: unknown) => structureDeclaration(structureMetadata().parse(value));
+  const number = (value: unknown) => z.number().parse(value);
+  let declaration: string;
+  switch (type.type) {
+    case 'FIXED': {
+      const precision = number(type.precision);
+      const scale = number(type.scale);
+      declaration =
+        scale !== 0
+          ? `structuredType.decimal({ precision: ${precision}, scale: ${scale} })`
+          : `structuredType.integer(${precision === 38 ? '' : `{ precision: ${precision} }`})`;
+      break;
+    }
+    case 'TEXT': {
+      const length = number(type.length);
+      declaration = `structuredType.text(${length === 16777216 ? '' : `{ length: ${length} }`})`;
+      break;
+    }
+    case 'BOOLEAN':
+      declaration = 'structuredType.boolean()';
+      break;
+    case 'ARRAY':
+      declaration = `structuredType.array(${nested(type.elementType)})`;
+      break;
+    case 'OBJECT': {
+      const fields = z
+        .array(z.object({ fieldName: z.string(), fieldType: z.unknown() }))
+        .parse(type.fields);
+      declaration = `structuredType.object({ ${fields.map((field) => `${JSON.stringify(field.fieldName)}: ${nested(field.fieldType)}`).join(', ')} })`;
+      break;
+    }
+    case 'MAP':
+      declaration = `structuredType.map(${structureDeclaration(structureMetadata().parse(type.keyType), true)}, ${nested(type.valueType)})`;
+      break;
+    default:
+      throw new TypeError(`Unsupported structured element type for code generation: ${type.type}`);
+  }
+  return type.nullable || key ? declaration : `${declaration}.notNull()`;
 }
 
 export function generateSchema(tables: readonly IntrospectedTable[]): string {
@@ -149,6 +219,12 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
           factoryName = 'geometry';
           break;
         default: {
+          if (column.structure) {
+            factoryName = 'structured';
+            imports.add('structuredType');
+            args.push(structureDeclaration(column.structure, true));
+            break;
+          }
           const vector = /^VECTOR\((INT|FLOAT), (\d+)\)$/i.exec(column.dataType);
           if (!vector)
             throw new TypeError(
