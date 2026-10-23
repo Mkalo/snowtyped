@@ -541,6 +541,13 @@ describe('complete query and execution paths against Snowflake', () => {
         },
       ]),
     );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { location: spatial.columns.location }).where(eq(spatial.columns.id, 2n)),
+        )
+      ).rows,
+    ).toEqual([{ location: { type: 'Point', coordinates: [1, 2, 3, 4] } }]);
     await db.execute(
       update(spatial, { location: polygon, plain: polygon }).where(eq(spatial.columns.id, 2n)),
     );
