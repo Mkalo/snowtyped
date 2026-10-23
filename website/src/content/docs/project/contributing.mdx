@@ -53,8 +53,9 @@ that schema. Full instructions are in
 
 ## Documentation
 
-This site lives in `website/` as a separate pnpm project, so its dependencies never reach the
-published package. Code examples are TypeScript files in `website/src/snippets/` that are type
+This site is the authoritative user documentation. Changes to public APIs, behavior, or feature
+boundaries update the matching guide pages in `website/src/content/docs/`. The site lives in
+`website/` as a separate pnpm project, so its dependencies never reach the published package. Code examples are TypeScript files in `website/src/snippets/` that are type
 checked against the library source.
 
 ```sh
@@ -64,5 +65,9 @@ pnpm install --frozen-lockfile
 pnpm dev                              # local preview
 pnpm check                            # type checks, strict build with link validation, tests
 ```
+
+The tests fail when a runtime export of `snowtyped` or `snowtyped/snowflake` is not named in any
+guide or snippet. Removed limitations cannot be detected automatically, so update
+[feature status](/guides/feature-status/) by hand when a feature lands.
 
 The site needs Node.js 22.23.4 or later because of its Astro toolchain.

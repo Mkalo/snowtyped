@@ -4,6 +4,7 @@ description: Test query construction offline, assert inferred types, and run liv
 ---
 
 import Snippet from '../../../components/Snippet.astro';
+import ast from '../../../snippets/ast.test.ts?raw';
 import compile from '../../../snippets/compile.test.ts?raw';
 import typeAssertions from '../../../snippets/type-assertions.ts?raw';
 
@@ -13,6 +14,12 @@ Every structured query and mutation has a `compile()` method that returns `{ sql
 touching Snowflake, and so do raw `sql` fragments. Use it for fast, credential-free unit tests.
 
 <Snippet code={compile} title="customers.test.ts" />
+
+The AST behind a query is public too. `compileAst(query.ast)` produces the same output as
+`query.compile()`, and `identifier(...parts)` with `quoteIdentifier(node)` produces Snowtyped's exact
+identifier quoting.
+
+<Snippet code={ast} />
 
 ## Inferred types
 
