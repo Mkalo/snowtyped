@@ -2,16 +2,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   asc,
   count,
+  deleteUsing,
   eq,
   insert,
   integer,
   isNotNull,
+  mergeInto,
   ne,
   recursiveCte,
   select,
   snowflakeTable,
   sql,
   text,
+  updateFrom,
 } from '../../src/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
 
@@ -32,6 +35,11 @@ describe('recursive CTEs against Snowflake', () => {
   const teams = snowflakeTable(
     'TEAMS',
     { lead: integer('LEAD').notNull(), team: text('TEAM').notNull() },
+    namespace,
+  );
+  const reach = snowflakeTable(
+    'REACH',
+    { id: integer('ID').notNull(), name: text('NAME') },
     namespace,
   );
   const e = employees.columns;
@@ -65,6 +73,7 @@ describe('recursive CTEs against Snowflake', () => {
         { id: 6n, managerId: null, name: 'Alan', title: 'Advisor' },
       ]),
     );
+    await db.queryRaw(sql`CREATE TABLE ${name(reach)} (ID NUMBER(38,0) NOT NULL, NAME VARCHAR)`);
     await db.execute(
       insert(teams, [
         { lead: 2n, team: 'Platform' },
@@ -177,5 +186,22 @@ describe('recursive CTEs against Snowflake', () => {
     const rows = [];
     for await (const row of db.stream(combined.orderBy(asc(combined.columns.id)))) rows.push(row);
     expect(rows).toEqual([{ id: 1n }, { id: 4n }, { id: 9007199254740993n }]);
+  });
+
+  it('uses a recursive CTE as a MERGE, UPDATE FROM, and DELETE USING source', async () => {
+    const on = eq(reach.columns.id, reports.columns.id);
+    const merged = await db.execute(
+      mergeInto(reach, reports, on).whenNotMatchedInsert({ id: reports.columns.id, name: null }),
+    );
+    expect(merged.affectedRows).toBe(5);
+    const updated = await db.execute(
+      updateFrom(reach, reports, on, { name: reports.columns.name }),
+    );
+    expect(updated.affectedRows).toBe(5);
+    const deleted = await db.execute(
+      deleteUsing(reach, reports, on).where(ne(reports.columns.name, 'Ada')),
+    );
+    expect(deleted.affectedRows).toBe(4);
+    expect((await db.execute(select(reach))).rows).toEqual([{ id: 1n, name: 'Ada' }]);
   });
 });

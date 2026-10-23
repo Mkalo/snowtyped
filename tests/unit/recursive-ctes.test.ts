@@ -5,15 +5,18 @@ import {
   alias,
   asc,
   count,
+  deleteUsing,
   eq,
   flatten,
   gte,
   integer,
+  mergeInto,
   recursiveCte,
   rowNumber,
   select,
   snowflakeTable,
   text,
+  updateFrom,
   variant,
 } from '../../src/index.js';
 import type { SetColumns } from '../../src/query.js';
@@ -263,6 +266,31 @@ describe('recursive CTEs', () => {
         ),
       ),
     ).toThrow('combines different domains');
+  });
+
+  it('keeps WITH RECURSIVE when a mutation inlines the CTE as its source', () => {
+    const target = snowflakeTable('TARGET', {
+      id: integer('ID').notNull(),
+      name: text('NAME'),
+    });
+    const on = eq(target.columns.id, chain.columns.id);
+    const inlined = '(WITH RECURSIVE "CHAIN" ("id", "managerId", "name") AS (';
+    const tail =
+      ') SELECT "id" AS "id", "managerId" AS "managerId", "name" AS "name" FROM "CHAIN") AS "CHAIN"';
+    const merge = mergeInto(target, chain, on).whenMatchedDelete().compile();
+    expect(merge.sql).toMatch(/^MERGE INTO "TARGET" AS "TARGET" USING \(WITH RECURSIVE "CHAIN" /);
+    expect(merge.sql).toContain(
+      `${tail} ON ("TARGET"."ID" = "CHAIN"."id") WHEN MATCHED THEN DELETE`,
+    );
+    expect(merge.binds).toEqual(['7', 'x']);
+    expect(updateFrom(target, chain, on, { name: chain.columns.name }).compile().sql).toMatch(
+      /^UPDATE "TARGET" AS "TARGET" SET "NAME" = "CHAIN"\."name" FROM \(WITH RECURSIVE "CHAIN" .* AS "CHAIN" WHERE/,
+    );
+    expect(deleteUsing(target, chain, on).compile().sql).toContain(`USING ${inlined}`);
+    const wrapped = select(chain, { id: chain.columns.id }).asCte('WRAPPED');
+    expect(
+      deleteUsing(target, wrapped, eq(target.columns.id, wrapped.columns.id)).compile().sql,
+    ).toContain('USING (WITH RECURSIVE "CHAIN" ("id", "managerId", "name") AS (');
   });
 
   it('executes consumers with the contract as validation', async () => {

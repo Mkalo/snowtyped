@@ -549,11 +549,19 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;
   }
-  // DML has no WITH clause of its own, so a CTE source is inlined as a derived query.
+  // DML has no WITH clause of its own, so a CTE source is inlined as a derived query. A
+  // recursive CTE cannot be inlined, so the derived query keeps its WITH RECURSIVE.
   function mutationSource(node: RelationNode): string {
-    return source(
-      node.kind === 'cte' ? { kind: 'derived', query: node.query, alias: node.name } : node,
-    );
+    if (node.kind !== 'cte') return source(node);
+    const query: QueryNode = node.self
+      ? {
+          kind: 'select',
+          from: node,
+          projections: node.self.columns.map((alias) => ({ column: identifier(alias), alias })),
+          with: [node],
+        }
+      : node.query;
+    return source({ kind: 'derived', query, alias: node.name });
   }
   function assignments(values: readonly AssignmentNode[], qualified: boolean): string {
     return values
