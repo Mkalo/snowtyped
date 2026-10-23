@@ -292,6 +292,12 @@ describe('relations and Snowflake source transformations', () => {
     expect(select(timeTravel(a, { offset: -10 }, 'BEFORE')).compile().sql).toContain(
       'BEFORE (OFFSET => ?)',
     );
+    expect(
+      select(timeTravel(a, { timestamp: '2026-10-22T00:00:00-07:00' })).compile().sql,
+    ).toContain('AT (TIMESTAMP => ?::TIMESTAMP_TZ)');
+    expect(select(timeTravel(a, { statement: 'query-id' })).compile().sql).toContain(
+      'AT (STATEMENT => ?)',
+    );
     expect(() => timeTravel(select(a).as('d'), { offset: 0 })).toThrow('base table');
     expect(() => timeTravel(a, { offset: 1 })).toThrow('nonpositive');
     expect(() => timeTravel(a, { offset: 0.5 })).toThrow('nonpositive');

@@ -106,7 +106,7 @@ const prices = select(trades)
 
 `over(aggregate, options)` supports aggregate windows. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
-`timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Database retention and supported selector rules still apply.
+`timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset (`2026-10-22T15:00:00-07:00`) is honored and a string without one is read in the session `TIMEZONE`. Database retention and supported selector rules still apply.
 
 ## Writes
 
