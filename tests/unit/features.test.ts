@@ -340,6 +340,22 @@ describe('all declared scalar domains and DML', () => {
     expect(select(types).compile().sql).toContain('TZH:TZM');
   });
 
+  it('reads floats exactly from a binary significand and exponent', () => {
+    const read = float('F').readSchema;
+    expect(read.parse('1152921504606846848p964')).toBe(Number.MAX_VALUE);
+    expect(read.parse('-1152921504606846976p-1134')).toBe(-Number.MIN_VALUE);
+    expect(read.parse('1152921504606846720p-1082')).toBe(2.225073858507201e-308);
+    expect(read.parse('2120971487017661696p-34')).toBe(123456789.12345679);
+    expect(read.parse('1383505805528216576p-62')).toBe(0.30000000000000004);
+    expect(Object.is(read.parse('-0'), -0)).toBe(true);
+    expect(() => read.parse('inf')).toThrow();
+    const table = snowflakeTable('T', { f: float('F') });
+    const scale = '(60 - FLOOR(LOG(2, ABS("__sflib_result"."f"))))';
+    expect(select(table).compile().sql).toBe(
+      `SELECT CASE WHEN ABS("__sflib_result"."f") > 0 AND ABS("__sflib_result"."f") < 'inf'::DOUBLE THEN TO_VARCHAR(("__sflib_result"."f" * POW(2, FLOOR(${scale} / 2)) * POW(2, ${scale} - FLOOR(${scale} / 2)))::NUMBER(38, 0)) || 'p' || TO_VARCHAR(-${scale}) ELSE TO_VARCHAR("__sflib_result"."f") END AS "f" FROM (SELECT "F" AS "f" FROM "T") AS "__sflib_result"`,
+    );
+  });
+
   it('encodes immutable insert rows and validates missing and unknown keys', () => {
     const table = snowflakeTable('T', { id: integer('ID').notNull(), name: text('NAME') });
     const rows = [
