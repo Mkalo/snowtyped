@@ -2,7 +2,7 @@
 
 Snowtyped uses MIT. Changesets manages versions and changelogs; the separate
 release workflow stages alpha/beta packages for your npm approval with 2FA.
-Stable support guarantees remain tracked in #24.
+The [release contract](release-contract.md) defines stable guarantees and gates.
 
 ## Changesets
 
