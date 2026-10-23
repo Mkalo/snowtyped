@@ -85,6 +85,18 @@ Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.lim
 
 `.as('name')` turns a query into a derived table; `.asCte('name')` makes a CTE source. Its `.columns` retain inferred output types and outer-join nullability. Selecting or joining a CTE includes its definition automatically.
 
+`exists`, `notExists`, `scalar`, and `inSubquery` embed a query as an expression. `.correlate(outer)` lets a subquery reference an enclosing source; correlated queries cannot execute on their own, and Snowflake only resolves correlations against the immediately enclosing query. Scalar subqueries project one column and are nullable because an empty result reads as NULL; correlated scalar subqueries must be ungrouped aggregates.
+
+```ts
+const theirs = select(orders)
+  .correlate(customers)
+  .where(eq(orders.columns.customerId, customers.columns.id));
+select(customers, {
+  name: customers.columns.name,
+  orders: scalar(theirs.select({ n: count() })),
+}).where(exists(theirs));
+```
+
 ## Snowflake syntax
 
 ```ts

@@ -6,9 +6,11 @@ export {
   type DeleteNode,
   type DerivedNode,
   type EqualityNode,
+  type ExistsNode,
   type ExpressionNode,
   type FlattenNode,
   type IdentifierNode,
+  type InSubqueryNode,
   type InsertNode,
   identifier,
   type JoinNode,
@@ -19,6 +21,7 @@ export {
   type SelectNode,
   type SourceReference,
   type StatementNode,
+  type SubqueryNode,
   type TableNode,
   type TemporalNode,
   type UpdateNode,
@@ -73,7 +76,14 @@ export {
   type UpdateValues,
   update,
 } from './mutations.js';
-export { type SelectQuery, select } from './query.js';
+export {
+  exists,
+  inSubquery,
+  notExists,
+  type SelectQuery,
+  scalar,
+  select,
+} from './query.js';
 export {
   type AnyColumn,
   alias,

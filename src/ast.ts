@@ -81,6 +81,25 @@ export interface CastNode {
     | 'TIMESTAMP_LTZ'
     | 'TIMESTAMP_TZ';
 }
+/** `correlated` lists the enclosing sources the inner query may reference. */
+export interface SubqueryNode {
+  readonly kind: 'subquery';
+  readonly query: SelectNode;
+  readonly correlated: readonly SourceReference[];
+}
+export interface ExistsNode {
+  readonly kind: 'exists';
+  readonly query: SelectNode;
+  readonly correlated: readonly SourceReference[];
+  readonly negate: boolean;
+}
+export interface InSubqueryNode {
+  readonly kind: 'in-subquery';
+  readonly operand: ExpressionNode;
+  readonly query: SelectNode;
+  readonly correlated: readonly SourceReference[];
+  readonly negate: boolean;
+}
 export type ExpressionNode =
   | IdentifierNode
   | ReferenceNode
@@ -92,7 +111,10 @@ export type ExpressionNode =
   | InNode
   | WindowNode
   | JsonPathNode
-  | CastNode;
+  | CastNode
+  | SubqueryNode
+  | ExistsNode
+  | InSubqueryNode;
 export interface EqualityNode {
   readonly kind: 'equality';
   readonly column: IdentifierNode;
@@ -261,6 +283,12 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         );
       case 'cast':
         return `CAST(${expression(node.value, qualify)} AS ${node.target})`;
+      case 'subquery':
+        return `(${selectStatement(node.query, false, true)})`;
+      case 'exists':
+        return `(${node.negate ? 'NOT ' : ''}EXISTS (${selectStatement(node.query, false, true)}))`;
+      case 'in-subquery':
+        return `(${expression(node.operand, qualify)} ${node.negate ? 'NOT IN' : 'IN'} (${selectStatement(node.query, false, true)}))`;
       default:
         throw new TypeError('Unsupported expression AST node.');
     }
@@ -297,7 +325,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     const format = formats[type];
     return `TO_VARCHAR(${value}${format ? `, '${format}'` : ''})`;
   }
-  function selectStatement(node: SelectNode, wireOutput = false): string {
+  function selectStatement(node: SelectNode, wireOutput = false, nested = false): string {
     if (wireOutput && node.projections.some((item) => item.wireType)) {
       // Serialize only after relational operations, preserving native numeric/temporal sort,
       // DISTINCT, grouping, and the SQL types of nested CTEs and subqueries.
@@ -330,8 +358,12 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         .join(', ');
       return `SELECT ${projected} FROM (${native}) AS "__sflib_result"${ordering.length ? ` ORDER BY ${ordering.join(', ')}` : ''}`;
     }
+    // Nested queries qualify every reference so correlated outer columns cannot be captured.
     const qualified =
-      Boolean(node.joins?.length) || node.from.kind === 'derived' || node.from.kind === 'cte';
+      nested ||
+      Boolean(node.joins?.length) ||
+      node.from.kind === 'derived' ||
+      node.from.kind === 'cte';
     let text = '';
     if (node.with?.length)
       text += `WITH ${node.with.map((cte) => `${quoteIdentifier(cte.name)} AS (${selectStatement(cte.query)})`).join(', ')} `;
