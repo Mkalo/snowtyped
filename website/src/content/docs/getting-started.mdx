@@ -1,0 +1,51 @@
+---
+title: Getting started
+description: Install Snowtyped, declare a table, and run a typed query.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../components/Snippet.astro';
+import firstQuery from '../../snippets/first-query.ts?raw';
+import schema from '../../snippets/schema.ts?raw';
+
+<Aside type="caution" title="Alpha software">
+  Snowtyped is an alpha release. The public API may change before a stable release. See
+  [feature status](/guides/feature-status/) for what is covered today.
+</Aside>
+
+## Requirements
+
+- Node.js 22.18+ or 24.11+.
+- [`snowflake-sdk`](https://www.npmjs.com/package/snowflake-sdk) 3.4 or later. It is an optional
+  peer dependency: you need it to connect to Snowflake, but pure query compilation does not load it.
+- Zod is a runtime dependency and is installed with Snowtyped.
+
+## Install
+
+```sh
+pnpm add snowtyped@alpha snowflake-sdk
+```
+
+Prereleases are published under the `alpha` or `beta` npm dist-tag. `latest` is reserved for stable
+releases.
+
+Snowtyped ships ESM and CommonJS builds with matching declarations. The main entry point,
+`snowtyped`, contains schema declarations, the query builder, and the `sql` tag. Execution helpers
+live in `snowtyped/snowflake`.
+
+## Declare a table
+
+<Snippet code={schema} title="schema.ts" />
+
+Columns default to nullable. `.notNull()` removes SQL nullability from the inferred type and the
+runtime validator. Identifiers are used exactly as written, including case.
+
+## Run a query
+
+Wrap an already-connected `snowflake-sdk` connection with `createClient`. The client never connects
+or destroys the connection; that stays your responsibility.
+
+<Snippet code={firstQuery} title="query.ts" />
+
+Every returned row is validated against the schema before `execute` resolves. Next, read about
+[schema declarations](/guides/schemas/) and [building queries](/guides/queries/).
