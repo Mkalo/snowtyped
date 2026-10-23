@@ -18,8 +18,9 @@ this section.
   builders (`text`, `integer`, `decimal`, `float`, `boolean`, `date`, `time`,
   `timestamp`, `binary`, `variant`), and `.notNull()`.
 - Query construction: `select` and the `SelectQuery` methods documented in the
-  README, `flatten`, the expression, aggregate, window, and ordering helpers,
-  `insert`, `update`, `deleteFrom`, and `mergeInto`.
+  README, `flatten`, `pivot`, `unpivot`, `dynamicPivot`, the expression,
+  aggregate, window, and ordering helpers, `insert`, `update`, `deleteFrom`, and
+  `mergeInto`.
 - `.compile()` results (`CompiledQuery`, `BindValue`); the bound values and SQL
   semantics are stable, the exact SQL text is not.
 - Raw SQL: `sql`, `sql.identifier`, `sql.join`, `sql.json`, `sql.unsafe`,
@@ -156,7 +157,6 @@ Not required for `1.0.0`; each can ship later as a minor release unless it
 changes stable behavior:
 - MERGE source and condition extensions (#8)
 - Scalar, EXISTS, and correlated subqueries (#9)
-- PIVOT and UNPIVOT (#10)
 - Stronger SQL semantic validation (#11)
 - Recursive CTEs (#12)
 - A public AST extension protocol (#13)

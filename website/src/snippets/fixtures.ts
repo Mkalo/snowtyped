@@ -32,3 +32,13 @@ export const staged = snowflakeTable('STAGED_CUSTOMERS', {
   id: integer('ID').notNull(),
   name: text('NAME').notNull(),
 });
+export const sales = snowflakeTable('SALES', {
+  region: text('REGION'),
+  quarter: text('QUARTER').notNull(),
+  amount: decimal('AMOUNT'),
+});
+export const budgets = snowflakeTable('BUDGETS', {
+  id: integer('ID').notNull(),
+  jan: decimal('JAN').notNull(),
+  feb: decimal('FEB'),
+});
