@@ -21,9 +21,12 @@ export {
   type MergeBranchNode,
   type MergeNode,
   type OrderNode,
+  type QueryNode,
   quoteIdentifier,
   type RelationNode,
   type SelectNode,
+  type SetOperationNode,
+  type SetOperator,
   type SourceReference,
   type StatementNode,
   type SubqueryNode,
@@ -121,12 +124,20 @@ export {
   updateFrom,
 } from './mutations.js';
 export {
+  type CompatibleOperand,
   exists,
+  type IntersectRow,
   inSubquery,
   notExists,
+  type OperandRow,
   type SelectQuery,
+  type SetColumns,
+  type SetOperand,
+  type SetQuery,
+  type SetScope,
   scalar,
   select,
+  type UnionRow,
 } from './query.js';
 export {
   type AnyColumn,

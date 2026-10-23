@@ -204,6 +204,9 @@ describe('subqueries', () => {
     expect(() => standalone.compile()).toThrow('only be used as a subquery');
     expect(() => standalone.as('x')).toThrow('only be used as a subquery');
     expect(() => standalone.asCte('x')).toThrow('only be used as a subquery');
+    const ids = select(orders, { id: orders.columns.id });
+    expect(() => standalone.union(ids)).toThrow('only be used as a subquery');
+    expect(() => ids.union(standalone)).toThrow('only be used as a subquery');
     expect(() => exists({ ...userOrders })).toThrow('built by select()');
   });
 

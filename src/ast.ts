@@ -198,7 +198,7 @@ export interface TableNode {
 }
 export interface DerivedNode {
   readonly kind: 'derived';
-  readonly query: SelectNode;
+  readonly query: QueryNode;
   readonly alias: IdentifierNode;
 }
 export interface FlattenNode {
@@ -213,7 +213,7 @@ export interface FlattenNode {
 export interface CteNode {
   readonly kind: 'cte';
   readonly name: IdentifierNode;
-  readonly query: SelectNode;
+  readonly query: QueryNode;
 }
 export type RelationNode = IdentifierNode | TableNode | DerivedNode | FlattenNode | CteNode;
 export interface JoinNode {
@@ -241,6 +241,20 @@ export interface SelectNode {
   readonly offset?: number;
   readonly with?: readonly CteNode[];
 }
+export type SetOperator = 'UNION' | 'UNION ALL' | 'INTERSECT' | 'EXCEPT';
+/** Operands are always parenthesized, so the tree, not keyword precedence, defines grouping. */
+export interface SetOperationNode {
+  readonly kind: 'set-operation';
+  readonly operator: SetOperator;
+  readonly left: QueryNode;
+  readonly right: QueryNode;
+  readonly columns: readonly { readonly alias: string; readonly wireType?: WireType }[];
+  readonly orderBy?: readonly OrderNode[];
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly with?: readonly CteNode[];
+}
+export type QueryNode = SelectNode | SetOperationNode;
 export interface DefaultNode {
   readonly kind: 'default';
   /** A typed NULL for the shared source row, needed where a bare NULL cannot join a UNION. */
@@ -301,7 +315,7 @@ export interface MergeNode {
   /** @deprecated Use `branches`. */
   readonly deleteMatched?: boolean;
 }
-export type StatementNode = SelectNode | InsertNode | UpdateNode | DeleteNode | MergeNode;
+export type StatementNode = QueryNode | InsertNode | UpdateNode | DeleteNode | MergeNode;
 export interface CompiledQuery {
   readonly sql: string;
   readonly binds: readonly BindValue[];
@@ -407,7 +421,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       case 'table':
         return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)}${node.temporal.selector === 'TIMESTAMP' ? '::TIMESTAMP_TZ' : ''})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
       case 'derived':
-        return `(${selectStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
+        return `(${queryStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
       case 'cte':
         return quoteIdentifier(node.name);
       case 'flatten':
@@ -436,6 +450,34 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     };
     const format = formats[type];
     return `TO_VARCHAR(${value}${format ? `, '${format}'` : ''})`;
+  }
+  function withClause(ctes: readonly CteNode[] | undefined): string {
+    return ctes?.length
+      ? `WITH ${ctes.map((cte) => `${quoteIdentifier(cte.name)} AS (${queryStatement(cte.query)})`).join(', ')} `
+      : '';
+  }
+  function queryStatement(node: QueryNode, wireOutput = false): string {
+    return node.kind === 'select'
+      ? selectStatement(node, wireOutput)
+      : setStatement(node, wireOutput);
+  }
+  function setStatement(node: SetOperationNode, wireOutput: boolean): string {
+    let text = withClause(node.with);
+    const wrapped =
+      Boolean(node.orderBy?.length) ||
+      node.limit !== undefined ||
+      node.offset !== undefined ||
+      (wireOutput && node.columns.some((column) => column.wireType));
+    if (wrapped)
+      text += `SELECT ${node.columns.map(({ alias, wireType }) => `${wire(quoteIdentifier(identifier('__sflib_result', alias)), wireOutput ? wireType : undefined)} AS ${quoteIdentifier(identifier(alias))}`).join(', ')} FROM (`;
+    text += `(${queryStatement(node.left)}) ${node.operator} (${queryStatement(node.right)})`;
+    if (!wrapped) return text;
+    text += ') AS "__sflib_result"';
+    if (node.orderBy?.length)
+      text += ` ORDER BY ${node.orderBy.map((value) => order(value, true)).join(', ')}`;
+    if (node.limit !== undefined) text += ` LIMIT ${node.limit}`;
+    if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
+    return text;
   }
   function selectStatement(node: SelectNode, wireOutput = false, nested = false): string {
     if (wireOutput && node.projections.some((item) => item.wireType)) {
@@ -474,9 +516,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       Boolean(node.joins?.length) ||
       node.from.kind === 'derived' ||
       node.from.kind === 'cte';
-    let text = '';
-    if (node.with?.length)
-      text += `WITH ${node.with.map((cte) => `${quoteIdentifier(cte.name)} AS (${selectStatement(cte.query)})`).join(', ')} `;
+    let text = withClause(node.with);
     text += `SELECT ${node.distinct ? 'DISTINCT ' : ''}${node.projections.map(({ column, alias, wireType }) => `${wire(expression(column, qualified), wireOutput ? wireType : undefined)} AS ${quoteIdentifier(identifier(alias))}`).join(', ')} FROM ${source(node.from)}`;
     for (const join of node.joins ?? []) {
       text +=
@@ -538,7 +578,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   let sql: string;
   switch (statement.kind) {
     case 'select':
-      sql = selectStatement(statement, true);
+    case 'set-operation':
+      sql = queryStatement(statement, true);
       break;
     case 'insert':
       sql = insertStatement(statement);

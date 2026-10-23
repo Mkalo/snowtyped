@@ -21,17 +21,19 @@ const expected = {
     ),
     types: names(
       `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
-      ColumnMap ColumnValue CompiledQuery DataType DatePart Expression FilteredMutation
-      FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry GeoPosition
-      IdentityOptions InferColumn InferExpression InferSelection InsertSource InsertValues
-      IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
-      OffsetWindowOptions OrderedWindowOptions Ordering Predicate RangeBoundary RawQuery
-      SelectQuery Selection ServerValue ServerValueKind ServerValues SqlInterpolation
-      SqlParameter Table TableOptions UpdateValues WindowFrame`,
+      ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType DatePart Expression
+      FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
+      GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
+      InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
+      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering Predicate
+      RangeBoundary RawQuery SelectQuery Selection ServerValue ServerValueKind ServerValues
+      SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation SqlParameter Table
+      TableOptions UnionRow UpdateValues WindowFrame`,
       `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExistsNode
       ExpressionNode FlattenNode FrameBoundaryNode IdentifierNode InsertNode InSubqueryNode
-      JoinNode MergeBranchNode MergeNode OrderNode RelationNode SelectNode SourceReference
-      StatementNode SubqueryNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
+      JoinNode MergeBranchNode MergeNode OrderNode QueryNode RelationNode SelectNode
+      SetOperationNode SourceReference StatementNode SubqueryNode TableNode TemporalNode UpdateNode
+      WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
