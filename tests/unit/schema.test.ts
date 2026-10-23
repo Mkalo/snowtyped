@@ -290,6 +290,9 @@ describe('semi-structured ARRAY and OBJECT columns', () => {
       jsonPath(table.columns.meta, 'ok').readSchema.safeParse('9007199254740993').success,
     ).toBe(false);
     expect(variant('V').readSchema.safeParse('{').error?.issues[0]?.code).toBe('custom');
+    expect(
+      items.readSchema.parse('[1,undefined,"undefined",{"a":[undefined]},"\\"undefined\\\\"]'),
+    ).toEqual([1, null, 'undefined', { a: [null] }, '"undefined\\']);
   });
 
   it('casts JSON writes, including NULL, to the column type', () => {

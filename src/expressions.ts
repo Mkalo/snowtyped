@@ -71,7 +71,11 @@ function decimalKey(text: string): string {
 export const jsonText = () =>
   z.string().transform((input, context) => {
     try {
-      return JSON.parse(input, (_key, value: unknown, parsed?: { readonly source: string }) => {
+      // TO_JSON prints SQL NULL array elements as a bare `undefined`, which JSON.parse rejects.
+      const text = input.replace(/"(?:[^"\\]|\\.)*"|undefined/g, (token) =>
+        token === 'undefined' ? 'null' : token,
+      );
+      return JSON.parse(text, (_key, value: unknown, parsed?: { readonly source: string }) => {
         if (typeof value !== 'number') return value;
         const { source } = parsed as { readonly source: string };
         if (!Number.isFinite(value) || decimalKey(source) !== decimalKey(String(value)))
