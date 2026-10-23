@@ -137,7 +137,7 @@ test('Changesets versions, prereleases, and contribution policy', async () => {
     assert.equal((await json(pre, 'package.json')).version, '0.1.0-alpha.1');
     assert.equal(git(pre, 'status', '--porcelain'), '');
     assert.equal((await getReleasePlan(pre)).releases.length, 0);
-    await changeset(pre, 'feature', 'minor', 'Add alpha capability.');
+    await changeset(pre, 'feature', 'minor', 'Add alpha capability.\n\nDescribe it further.');
     commit(pre);
     await version(pre, '0.1.0-alpha.2', 'Add alpha capability.');
     commit(pre);
