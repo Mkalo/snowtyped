@@ -72,7 +72,7 @@ export interface CastNode {
   readonly value: ExpressionNode;
   readonly target:
     | 'VARCHAR'
-    | 'NUMBER(38,0)'
+    | `NUMBER(${number},${number})`
     | 'DOUBLE'
     | 'BOOLEAN'
     | 'DATE'

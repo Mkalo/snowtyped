@@ -70,7 +70,7 @@ Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z
 
 `select(table)` selects all declared columns. `select(table, projection)` or `.select(projection)` selects specific columns and expressions. Builders are immutable; a later call to a clause such as `.where()` replaces that clause on the new query.
 
-Supported helpers include `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `and`, `or`, `not`, `isNull`, `isNotNull`, `inArray`, `like`, `ilike`, `lower`, `upper`, `count`, `sum`, `min`, and `max`. `asc`/`desc` accept optional `FIRST`/`LAST` null ordering. Empty membership lists compile to a constant false (or true for negated membership).
+Supported helpers include `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `and`, `or`, `not`, `isNull`, `isNotNull`, `inArray`, `like`, `ilike`, `lower`, `upper`, `count`, `sum`, `min`, and `max`. `asc`/`desc` accept optional `FIRST`/`LAST` null ordering. Empty membership lists compile to a constant false (or true for negated membership). `cast(value, type)` converts to any declared scalar domain except VARIANT and BINARY (`'decimal'` takes precision and scale) and keeps the input's nullability.
 
 ```ts
 const query = select(customers)
