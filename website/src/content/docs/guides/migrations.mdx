@@ -25,7 +25,8 @@ comment. `defineSchema(target, tables)` places the tables in one schema.
 
 The builders return statements with a `destructive` flag and a `compile()` method:
 
-- `createSchema`, `dropSchema`, and `setSchemaComment`.
+- `createSchema`, `dropSchema`, and `setSchemaComment`. `dropSchema` defaults to RESTRICT, which Snowflake
+  only enforces for foreign keys from other schemas, so it still drops a schema that has tables.
 - `createTable(definition)`, `dropTable(table)`.
 - `alterTable(table)`: rename, comments, add, drop, and rename columns, type changes, and NOT NULL.
 

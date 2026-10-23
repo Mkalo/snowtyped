@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 const sdk = vi.hoisted(() => ({ createPool: vi.fn() }));
 vi.mock('snowflake-sdk', () => ({ default: sdk }));
 
+import * as ddl from '../../src/ddl/index.js';
 import * as api from '../../src/index.js';
 import * as driver from '../../src/snowflake/index.js';
 
@@ -30,6 +31,10 @@ describe('live coverage document', () => {
         typeof value === 'object' && value !== null ? methods(value, `${name}.`) : [name],
       ),
       ...Object.keys(driver),
+      ...Object.entries(ddl).flatMap(([name, value]) =>
+        typeof value === 'object' && value !== null ? methods(value, `${name}.`) : [name],
+      ),
+      ...methods(ddl.alterTable(table)),
       ...methods(api.select(table)),
       ...methods(api.update(table, { id: 1n })),
       ...methods(api.mergeInto(table, source, api.eq(table.columns.id, source.columns.id))),

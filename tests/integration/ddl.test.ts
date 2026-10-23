@@ -2,9 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   alterTable,
   checkDrift,
+  createSchema,
   createTable,
+  type DdlStatement,
   defineSchema,
   defineTable,
+  dropSchema,
   dropTable,
   inspectSchema,
   type Migration,
@@ -12,6 +15,7 @@ import {
   migrate,
   migrationStatus,
   pushSchema,
+  setSchemaComment,
   sqlType,
 } from '../../src/ddl/index.js';
 import {
@@ -24,6 +28,7 @@ import {
   float,
   geography,
   geometry,
+  identifier,
   insert,
   integer,
   object,
@@ -50,6 +55,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   const pushed = { database, schema: `${fixture.schemaName}_PUSHED` };
   const typed = { database, schema: `${fixture.schemaName}_TYPED` };
   const shaped = { database, schema: `${fixture.schemaName}_SHAPED` };
+  const altered = { database, schema: `${fixture.schemaName}_ALTERED` };
   const accounts = snowflakeTable(
     'ACCOUNTS',
     {
@@ -72,7 +78,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   });
   afterAll(async () => {
     try {
-      for (const target of [migrated, pushed, typed, shaped])
+      for (const target of [migrated, pushed, typed, shaped, altered])
         await db.queryRaw(
           sql`DROP SCHEMA IF EXISTS ${sql.identifier(target.database, target.schema)} CASCADE`,
         );
@@ -524,5 +530,79 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
           'Cannot change OBJECT("Name" VARCHAR(20), "score" NUMBER(10,2), "active" BOOLEAN) to OBJECT("Name" VARCHAR(20), "score" NUMBER(10,2)) in place.',
       },
     ]);
+  });
+
+  it('runs each schema and ALTER TABLE builder in place', async () => {
+    const run = (statement: DdlStatement) => db.queryRaw(sql.unsafe(statement.compile().sql));
+    const schema = identifier(database, altered.schema);
+    await run(createSchema(schema, { ifNotExists: true, comment: 'first' }));
+    await run(createSchema(schema, { ifNotExists: true }));
+    await run(setSchemaComment(schema, "it's \\ second"));
+    expect((await inspectSchema(db, altered)).comment).toBe("it's \\ second");
+    const items = snowflakeTable(
+      'ITEMS',
+      {
+        id: integer('ID'),
+        name: text('NAME', { length: 10 }).notNull(),
+        price: decimal('PRICE', { precision: 8, scale: 2 }),
+      },
+      altered,
+    );
+    await run(createTable(defineTable(items, { comment: 'items', comments: { name: 'n' } })));
+    await db.queryRaw(
+      sql`INSERT INTO ${sql.identifier(database, altered.schema, 'ITEMS')} VALUES (1, 'a', 1.25)`,
+    );
+    const alter = alterTable(items);
+    for (const statement of [
+      alter.setColumnType('NAME', sqlType.varchar(40)),
+      alter.setColumnType('PRICE', sqlType.number(12, 2)),
+      alter.setNotNull('ID'),
+      alter.dropNotNull('NAME'),
+      alter.setColumnComment('ID', 'key'),
+      alter.setColumnComment('NAME', null),
+      alter.setComment(null),
+      alter.addColumn('NOTE', sqlType.varchar()),
+      alter.renameColumn('NOTE', 'REMARK'),
+      alter.dropColumn('REMARK'),
+      alter.renameTo('PRODUCTS'),
+    ])
+      await run(statement);
+    const [table] = (await inspectSchema(db, altered)).tables;
+    expect(table).toEqual({
+      name: 'PRODUCTS',
+      comment: null,
+      columns: [
+        { name: 'ID', type: sqlType.number(), notNull: true, comment: 'key', serverValue: null },
+        {
+          name: 'NAME',
+          type: sqlType.varchar(40),
+          notNull: false,
+          comment: null,
+          serverValue: null,
+        },
+        {
+          name: 'PRICE',
+          type: sqlType.number(12, 2),
+          notNull: false,
+          comment: null,
+          serverValue: null,
+        },
+      ],
+    });
+    const products = sql.identifier(database, altered.schema, 'PRODUCTS');
+    expect(await db.queryRaw(sql`SELECT ID, NAME, PRICE FROM ${products}`)).toEqual([
+      { ID: '1', NAME: 'a', PRICE: '1.25' },
+    ]);
+    await run(dropTable(identifier(database, altered.schema, 'PRODUCTS'), { ifExists: true }));
+    await run(dropTable(identifier(database, altered.schema, 'PRODUCTS'), { ifExists: true }));
+    await run(createTable(defineTable(items)));
+    // RESTRICT only refuses when other schemas reference this one's keys, so a non-empty schema drops.
+    await run(dropSchema(schema));
+    expect((await inspectSchema(db, altered)).exists).toBe(false);
+    await run(createSchema(schema));
+    await run(createTable(defineTable(items)));
+    await run(dropSchema(schema, { cascade: true }));
+    await run(dropSchema(schema, { ifExists: true }));
+    expect((await inspectSchema(db, altered)).exists).toBe(false);
   });
 });
