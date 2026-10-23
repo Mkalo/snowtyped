@@ -122,6 +122,9 @@ export function serverClause(
     );
   if (value.kind === 'identity' && type.kind !== 'NUMBER' && type.kind !== 'FLOAT')
     throw new TypeError(`Identity column ${name} cannot be stored as ${renderType(type)}.`);
+  // Snowflake stores `+5` as UNARY PLUS(5), and inserts into the table then fail internally.
+  if (value.kind === 'default' && /^\s*\+/.test(value.expression as string))
+    throw new TypeError(`Write the DEFAULT of column ${name} without a leading +.`);
   if (value.kind === 'default' && type.kind === 'STRUCTURED')
     throw new TypeError(`Structured column ${name} cannot have a DEFAULT.`);
   if (value.kind === 'virtual' && notNull)

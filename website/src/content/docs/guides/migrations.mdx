@@ -33,7 +33,8 @@ The builders return statements with a `destructive` flag and a `compile()` metho
 Server values render into column definitions: `.serverDefault(sql)` as `DEFAULT sql`, `.identity()` as
 `AUTOINCREMENT` with its start, increment, and order, and `.virtual(sql)` as `AS (sql)`. Expressions
 are trusted SQL text. Default and virtual columns need an expression, identity columns must be NUMBER
-or FLOAT, and virtual columns cannot be NOT NULL. `alterTable(table).dropDefault(column)` removes a
+or FLOAT, and virtual columns cannot be NOT NULL. A default with a leading `+` is rejected, because
+Snowflake stores it as `UNARY PLUS(...)` and every later insert fails. `alterTable(table).dropDefault(column)` removes a
 default.
 
 `compileDdl` compiles the underlying DDL node. Names are quoted; comments compile to escaped
@@ -74,8 +75,9 @@ does not fit. Other changes, such as a new NUMBER scale or a NOT NULL column on 
 are listed under `unsupported` for a hand-written migration. So are identity columns on an existing
 table, which Snowflake adds only to empty tables, non-constant defaults, which it accepts only at
 table creation, and any change between no server value, a default, identity, and a virtual
-expression. Identity start, increment, and order are compared when declared. Constant defaults are
-stored verbatim, so a changed constant is listed under `unsupported`. Other default and virtual
+expression. Identity start, increment, and order are compared when declared. Constant defaults
+compare by value, since Snowflake normalizes numbers and string escapes and records `DEFAULT NULL` as
+no default; a changed constant is listed under `unsupported`. Other default and virtual
 expressions are not compared, because Snowflake stores them rewritten. Renames are never inferred.
 
 `checkDrift` runs the same comparison while ignoring the history tables. `pushSchema` applies a diff

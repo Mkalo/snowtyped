@@ -947,6 +947,9 @@ describe('server values', () => {
   });
 
   it('rejects server values Snowflake DDL cannot express', () => {
+    expect(() =>
+      defineTable(snowflakeTable('T', { a: integer('A').serverDefault(' +5') })),
+    ).toThrow('Write the DEFAULT of column A without a leading +.');
     expect(() => defineTable(snowflakeTable('T', { a: text('A').serverDefault() }))).toThrow(
       'Column A needs a serverDefault expression for DDL.',
     );
@@ -990,7 +993,7 @@ describe('server values', () => {
       'SEQ: Adding an identity column to an existing table needs a rebuild.',
       'AT: Snowflake only accepts constant defaults when adding a column.',
     ]);
-    const constants = ['0', '-1.5e3', '+2', "'it''s'", 'TRUE', 'false', 'NULL', " 'x' "];
+    const constants = ['0', '-1.5e3', "'it''s'", 'TRUE', 'false', 'NULL', " 'x' "];
     for (const expression of constants) {
       const entry = defineTable(
         snowflakeTable('EVENTS', { c: text('C').serverDefault(expression) }, target),
@@ -1064,38 +1067,51 @@ describe('server values', () => {
     ]);
   });
 
-  it('compares constant defaults, which Snowflake stores verbatim', () => {
-    const defaults = defineTable(
-      snowflakeTable(
-        'EVENTS',
-        {
-          s: text('S').serverDefault("'abc'"),
-          n: integer('N').serverDefault('5'),
-          b: boolean('B').serverDefault('true'),
-          e: float('E').serverDefault(' 1e3 '),
-          d: date('D').serverDefault('CURRENT_DATE()'),
-          x: text('X').serverDefault("'x'"),
-        },
-        target,
-      ),
-    );
-    const current = table([
-      { ...column('S', sqlType.varchar()), serverValue: { kind: 'default', expression: "'zzz'" } },
-      { ...column('N', sqlType.number()), serverValue: { kind: 'default', expression: '6' } },
-      { ...column('B', sqlType.boolean()), serverValue: { kind: 'default', expression: 'TRUE' } },
-      { ...column('E', sqlType.float()), serverValue: { kind: 'default', expression: '1E3' } },
-      {
-        ...column('D', sqlType.date()),
-        serverValue: { kind: 'default', expression: 'CURRENT_DATE' },
-      },
-      {
-        ...column('X', sqlType.varchar()),
-        serverValue: { kind: 'default', expression: 'UPPER(Y)' },
-      },
+  it('compares string and boolean defaults as written and numbers by value', () => {
+    const pairs: [string, string | null][] = [
+      ["'abc'", "'abc'"],
+      ['true', 'TRUE'],
+      ['5.0', '5'],
+      ['05', '5'],
+      ['1.50', '1.5'],
+      ['-0', '0'],
+      ['0.000', '0'],
+      [' 1e3 ', '1000'],
+      ['1.0E+3', '1000'],
+      ['-2.5e-1', '-0.25'],
+      ['NULL', null],
+      ['null', 'NULL'],
+      ["'back\\slash'", "'backslash'"],
+      ["'\\101\\x42\\u0043'", "'ABC'"],
+      ["'\\n'", "'\\012'"],
+      ["'it''s'", "'it\\'s'"],
+      ['CURRENT_DATE()', 'CURRENT_DATE'],
+      ["'zzz'", "'abc'"],
+      ['5', '6'],
+      ['12345678901234567890123', '12345678901234567890124'],
+      ['0.1', '0.10000000000000001'],
+      ['FALSE', 'TRUE'],
+      ['NULL', "'x'"],
+      ["'x'", 'UPPER(Y)'],
+    ];
+    const entries = pairs.map(([expression], index) => [
+      `c${index}`,
+      text(`C${index}`).serverDefault(expression),
     ]);
-    expect(unsupportedOf(current, defaults)).toEqual([
-      "S: Cannot change the DEFAULT from 'zzz' to 'abc' in place.",
-      'N: Cannot change the DEFAULT from 6 to 5 in place.',
+    const desired = defineTable(snowflakeTable('EVENTS', Object.fromEntries(entries), target));
+    const current = table(
+      pairs.map(([, expression], index) => ({
+        ...column(`C${index}`, sqlType.varchar()),
+        serverValue: expression === null ? null : { kind: 'default', expression },
+      })),
+    );
+    expect(unsupportedOf(current, desired)).toEqual([
+      "C17: Cannot change the DEFAULT from 'abc' to 'zzz' in place.",
+      'C18: Cannot change the DEFAULT from 6 to 5 in place.',
+      'C19: Cannot change the DEFAULT from 12345678901234567890124 to 12345678901234567890123 in place.',
+      'C20: Cannot change the DEFAULT from 0.10000000000000001 to 0.1 in place.',
+      'C21: Cannot change the DEFAULT from TRUE to FALSE in place.',
+      "C22: Cannot change the DEFAULT from 'x' to NULL in place.",
     ]);
   });
 

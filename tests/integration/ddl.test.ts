@@ -56,6 +56,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   const typed = { database, schema: `${fixture.schemaName}_TYPED` };
   const shaped = { database, schema: `${fixture.schemaName}_SHAPED` };
   const altered = { database, schema: `${fixture.schemaName}_ALTERED` };
+  const defaulted = { database, schema: `${fixture.schemaName}_DEFAULTED` };
   const accounts = snowflakeTable(
     'ACCOUNTS',
     {
@@ -78,7 +79,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   });
   afterAll(async () => {
     try {
-      for (const target of [migrated, pushed, typed, shaped, altered])
+      for (const target of [migrated, pushed, typed, shaped, altered, defaulted])
         await db.queryRaw(
           sql`DROP SCHEMA IF EXISTS ${sql.identifier(target.database, target.schema)} CASCADE`,
         );
@@ -604,5 +605,48 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
     await run(dropSchema(schema, { cascade: true }));
     await run(dropSchema(schema, { ifExists: true }));
     expect((await inspectSchema(db, altered)).exists).toBe(false);
+  });
+
+  it('reports no drift for defaults Snowflake normalizes, and catches changed constants', async () => {
+    const columns = (amount: string) => ({
+      amount: decimal('AMOUNT', { precision: 10, scale: 2 }).serverDefault(amount),
+      padded: integer('PADDED').serverDefault('05'),
+      whole: integer('WHOLE').serverDefault('5.0'),
+      zero: integer('ZERO').serverDefault('-0'),
+      big: float('BIG').serverDefault('1e3'),
+      bigger: float('BIGGER').serverDefault('1.0E+3'),
+      flag: boolean('FLAG').serverDefault('true'),
+      quote: text('QUOTE').serverDefault("'a''b'"),
+      spaced: text('SPACED').serverDefault(" 'x' "),
+      slash: text('SLASH').serverDefault("'back\\\\slash'"),
+      escaped: text('ESCAPED').serverDefault("'back\\slash\\t'"),
+      nothing: text('NOTHING').serverDefault('null'),
+    });
+    const v1 = defineSchema(defaulted, [snowflakeTable('DEFAULTS', columns('1.50'), defaulted)]);
+    await pushSchema(db, v1);
+    expect(await checkDrift(db, v1)).toEqual({ changes: [], unsupported: [] });
+    expect((await pushSchema(db, v1)).changes).toEqual([]);
+    const table = sql.identifier(database, defaulted.schema, 'DEFAULTS');
+    await db.queryRaw(sql`INSERT INTO ${table} (PADDED) VALUES (DEFAULT)`);
+    expect(
+      await db.queryRaw(sql`SELECT AMOUNT, BIG, QUOTE, SLASH, ESCAPED, NOTHING FROM ${table}`),
+    ).toEqual([
+      {
+        AMOUNT: '1.50',
+        BIG: '1000',
+        QUOTE: "a'b",
+        SLASH: 'back\\slash',
+        ESCAPED: 'backslash\t',
+        NOTHING: null,
+      },
+    ]);
+    const v2 = defineSchema(defaulted, [snowflakeTable('DEFAULTS', columns('2.5'), defaulted)]);
+    expect((await checkDrift(db, v2)).unsupported).toEqual([
+      {
+        table: 'DEFAULTS',
+        column: 'AMOUNT',
+        reason: 'Cannot change the DEFAULT from 1.5 to 2.5 in place.',
+      },
+    ]);
   });
 });

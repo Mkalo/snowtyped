@@ -27,13 +27,39 @@ export interface SchemaDiff {
   readonly changes: readonly SchemaChange[];
   readonly unsupported: readonly UnsupportedChange[];
 }
-const constant = /^\s*(?:[+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?|'(?:[^']|'')*'|TRUE|FALSE|NULL)\s*$/i;
+const constant = /^\s*(?:-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|'(?:[^']|'')*'|TRUE|FALSE|NULL)\s*$/i;
 const nullDefault = /^\s*NULL\s*$/i;
-/** Snowflake stores constant defaults verbatim, so they can be compared; other expressions cannot. */
-function constantText(expression: string | undefined): string | undefined {
-  if (expression === undefined || !constant.test(expression)) return undefined;
+const escapes: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', 0: '\0' };
+/** Decodes a Snowflake string literal, which Snowflake re-renders after resolving escapes. */
+function stringValue(literal: string): string {
+  return literal
+    .slice(1, -1)
+    .replaceAll("''", "'")
+    .replace(
+      /\\(?:([0-7]{3})|x([0-9a-f]{2})|u([0-9a-f]{4})|([\s\S]))/gi,
+      (_, octal, hex, unicode, char) =>
+        octal
+          ? String.fromCharCode(Number.parseInt(octal, 8))
+          : hex || unicode
+            ? String.fromCharCode(Number.parseInt(hex ?? unicode, 16))
+            : (escapes[char] ?? char),
+    );
+}
+/**
+ * Snowflake re-renders string literals and normalizes numbers (`1.50` becomes `1.5`), so both
+ * compare by value; booleans compare by name. Other expressions come back rewritten and are not compared.
+ */
+function constantValue(expression: string): string | undefined {
+  if (!constant.test(expression)) return undefined;
   const text = expression.trim();
-  return text.startsWith("'") ? text : text.toUpperCase();
+  const number = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text);
+  if (!number) return text.startsWith("'") ? JSON.stringify(stringValue(text)) : text.toUpperCase();
+  const [, sign, whole, fraction = '', exponent = '0'] = number;
+  const digits = `${whole}${fraction}`.replace(/^0+/, '');
+  if (!digits) return '0';
+  const significant = digits.replace(/0+$/, '');
+  const scale = Number(exponent) - fraction.length + digits.length - significant.length;
+  return `${sign === '-' ? '-' : ''}${significant}e${scale}`;
 }
 
 /** Snowflake adds identity and non-constant default columns only to empty tables. */
@@ -57,18 +83,26 @@ const serverLabel = (value: ServerValue | null) =>
         virtual: 'a virtual expression',
       }[value.kind];
 
-/** Only constant defaults are compared; Snowflake stores other expressions rewritten. */
+/** Only constant defaults are compared, by value for numbers. */
 function serverValueBlocker(
   desired: ServerValue | undefined,
   observed: ServerValue | null,
 ): string | undefined {
   if (!desired) return undefined;
+  // Snowflake records DEFAULT NULL as no default.
+  if (
+    observed === null &&
+    desired.kind === 'default' &&
+    nullDefault.test(desired.expression as string)
+  )
+    return undefined;
   if (desired.kind !== observed?.kind)
     return `Cannot change ${serverLabel(observed)} to ${serverLabel(desired)} in place.`;
   if (desired.kind === 'default' && observed.kind === 'default') {
-    const from = constantText(observed.expression);
-    const to = constantText(desired.expression);
-    return from !== undefined && to !== undefined && from !== to
+    const from = (observed.expression as string).trim();
+    const to = (desired.expression as string).trim();
+    const [left, right] = [constantValue(from), constantValue(to)];
+    return left !== undefined && right !== undefined && left !== right
       ? `Cannot change the DEFAULT from ${from} to ${to} in place.`
       : undefined;
   }
