@@ -7,6 +7,7 @@ import Snippet from '../../../components/Snippet.astro';
 import constraints from '../../../snippets/constraints.ts?raw';
 import schema from '../../../snippets/schema.ts?raw';
 import semiStructured from '../../../snippets/semi-structured.ts?raw';
+import spatialVector from '../../../snippets/spatial-vector.ts?raw';
 import variantShape from '../../../snippets/variant-shape.ts?raw';
 
 A table declaration is the single source of truth for a structured query. It determines the
@@ -39,6 +40,9 @@ interfaces or decoders.
 | `variant('PAYLOAD')`                    | `unknown`                 | JSON without an assumed shape               |
 | `array('TAGS')`                         | `unknown[]`               | Semi-structured ARRAY                       |
 | `object('META')`                        | `Record<string, unknown>` | Semi-structured OBJECT                      |
+| `geography('LOCATION')`                 | `GeoJsonGeometry`         | GeoJSON geometry, exact coordinates         |
+| `geometry('SHAPE', { srid: 4326 })`     | `GeoJsonGeometry`         | Exact coordinates; SRID checked (default 0) |
+| `vector('EMBEDDING', 'float', 768)`     | `number[]`                | FLOAT32 or INT32 elements, fixed dimension  |
 
 See [validation and representations](/guides/validation/) for why numbers and temporal values use
 these representations.
@@ -67,6 +71,15 @@ that a JavaScript number cannot hold exactly reject the result instead of being 
 them.
 
 <Snippet code={semiStructured} />
+
+## Spatial and vector columns
+
+<Snippet code={spatialVector} />
+
+Spatial values are GeoJSON geometry objects. Features, `bbox`, and `crs` members are rejected.
+GEOMETRY results must carry the declared SRID, and Snowflake does not support `=` on spatial values.
+VECTOR writes must match the declared dimension. FLOAT elements are stored as FLOAT32, so results
+return the nearest FLOAT32 value.
 
 ## Aliases
 

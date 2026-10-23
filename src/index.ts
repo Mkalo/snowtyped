@@ -89,6 +89,8 @@ export {
   date,
   decimal,
   float,
+  geography,
+  geometry,
   type IdentityOptions,
   type InferColumn,
   type InferSelection,
@@ -106,6 +108,8 @@ export {
   timestamp,
   timeTravel,
   variant,
+  vector,
 } from './schema.js';
 export { type FlattenOptions, flatten } from './snowflake-syntax.js';
+export type { GeoJsonGeometry, GeoPosition } from './spatial.js';
 export { type RawQuery, type SqlInterpolation, type SqlParameter, sql } from './sql.js';

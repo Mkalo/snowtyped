@@ -1,6 +1,7 @@
 import {
   type CompiledQuery,
   compileAst,
+  type DefaultNode,
   type DeleteNode,
   type MergeNode,
   type StatementNode,
@@ -82,6 +83,17 @@ function entries(table: Table, values: Readonly<Record<string, unknown>>, refs =
   );
 }
 
+/** The same wrapper with NULL binds, so a defaulted cell keeps the column's SQL type. */
+function nullParameters<T>(node: T): T {
+  if (Array.isArray(node)) return Object.freeze(node.map(nullParameters)) as T;
+  if (typeof node !== 'object' || node === null) return node;
+  if ((node as { kind?: unknown }).kind === 'parameter')
+    return Object.freeze({ kind: 'parameter', value: null }) as T;
+  return Object.freeze(
+    Object.fromEntries(Object.entries(node).map(([key, value]) => [key, nullParameters(value)])),
+  ) as T;
+}
+
 export function insert<C extends ColumnMap>(
   table: Table<C>,
   input: NoInfer<InsertValues<C>> | readonly NoInfer<InsertValues<C>>[],
@@ -98,14 +110,22 @@ export function insert<C extends ColumnMap>(
     if (fallback === undefined) throw new TypeError('INSERT needs a writable column.');
     keys = [fallback];
   }
-  const encoded = rows.map((row, index) =>
-    Object.freeze(
-      keys.map((key) =>
-        (present[index] as Set<string>).has(key)
-          ? (table.columns[key] as AnyColumn).encodeWrite(row[key])
-          : Object.freeze({ kind: 'default' as const }),
-      ),
+  const written = rows.map((row, index) =>
+    keys.map((key) =>
+      (present[index] as Set<string>).has(key)
+        ? (table.columns[key] as AnyColumn).encodeWrite(row[key])
+        : undefined,
     ),
+  );
+  const defaults = keys.map((_, position): DefaultNode => {
+    const sample = written.map((row) => row[position]).find((value) => value !== undefined);
+    return Object.freeze({
+      kind: 'default',
+      ...(sample && sample.kind !== 'parameter' ? { placeholder: nullParameters(sample) } : {}),
+    });
+  });
+  const encoded = written.map((row) =>
+    Object.freeze(row.map((value, position) => value ?? (defaults[position] as DefaultNode))),
   );
   return mutation(
     Object.freeze({

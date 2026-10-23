@@ -92,7 +92,7 @@ export async function introspect(
     table.columns.push(
       Object.freeze({
         name: row.COLUMN_NAME,
-        dataType: /^(?:ARRAY|OBJECT)\(/i.test(row.DATA_TYPE_ALIAS ?? '')
+        dataType: /^(?:ARRAY|OBJECT|VECTOR)\(/i.test(row.DATA_TYPE_ALIAS ?? '')
           ? (row.DATA_TYPE_ALIAS as string)
           : row.DATA_TYPE,
         nullable: row.IS_NULLABLE === 'YES',
@@ -182,8 +182,21 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
           if (column.length !== null && column.length !== 8388608)
             args.push(`{ length: ${column.length} }`);
           break;
-        default:
-          throw new TypeError(`Unsupported Snowflake type for code generation: ${column.dataType}`);
+        case 'GEOGRAPHY':
+          factoryName = 'geography';
+          break;
+        case 'GEOMETRY':
+          factoryName = 'geometry';
+          break;
+        default: {
+          const vector = /^VECTOR\((INT|FLOAT), (\d+)\)$/i.exec(column.dataType);
+          if (!vector)
+            throw new TypeError(
+              `Unsupported Snowflake type for code generation: ${column.dataType}`,
+            );
+          factoryName = 'vector';
+          args.push(JSON.stringify(vector[1]?.toLowerCase()), vector[2] as string);
+        }
       }
       imports.add(factoryName);
       return `  ${JSON.stringify(column.name)}: ${factoryName}(${args.join(', ')})${column.nullable ? '' : '.notNull()'}${serverModifier(column.serverValue)},`;

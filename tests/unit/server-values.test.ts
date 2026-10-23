@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compileAst,
   eq,
+  geometry,
   identifier,
   insert,
   integer,
@@ -95,10 +96,22 @@ describe('server-populated columns', () => {
         'INSERT ALL WHEN "__sflib_shape" = 0 THEN INTO "EVENTS" ("NAME", "STATUS", "PAYLOAD") VALUES ("__sflib_0", DEFAULT, "__sflib_2")' +
         ' WHEN "__sflib_shape" = 1 THEN INTO "EVENTS" ("NAME", "STATUS", "PAYLOAD") VALUES ("__sflib_0", "__sflib_1", DEFAULT)' +
         ' SELECT 0 AS "__sflib_shape", ? AS "__sflib_0", NULL AS "__sflib_1", PARSE_JSON(?) AS "__sflib_2"' +
-        ' UNION ALL SELECT 1 AS "__sflib_shape", ? AS "__sflib_0", ? AS "__sflib_1", NULL AS "__sflib_2"' +
+        ' UNION ALL SELECT 1 AS "__sflib_shape", ? AS "__sflib_0", ? AS "__sflib_1", PARSE_JSON(?) AS "__sflib_2"' +
         ' UNION ALL SELECT 0 AS "__sflib_shape", ? AS "__sflib_0", NULL AS "__sflib_1", PARSE_JSON(?) AS "__sflib_2"',
-      binds: ['a', '{"x":1}', 'b', 'done', 'c', null],
+      binds: ['a', '{"x":1}', 'b', 'done', null, 'c', null],
     });
+  });
+
+  it('keeps the wrapper of a defaulted cell so every UNION branch has the column type', () => {
+    const shapes = snowflakeTable('SHAPES', {
+      id: integer('ID').notNull(),
+      shape: geometry('SHAPE', { srid: 4326 }),
+    });
+    expect(
+      insert(shapes, [{ id: 1n, shape: { type: 'Point', coordinates: [1, 2] } }, { id: 2n }])
+        .compile()
+        .sql.split(' UNION ALL ')[1],
+    ).toBe('SELECT 1 AS "__sflib_shape", ? AS "__sflib_0", TO_GEOMETRY(?, ?) AS "__sflib_1"');
   });
 
   it('inserts rows made only of server-populated values', () => {

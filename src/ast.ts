@@ -13,7 +13,9 @@ export type WireType =
   | 'timestamp_ntz'
   | 'timestamp_ltz'
   | 'timestamp_tz'
-  | 'variant';
+  | 'variant'
+  | 'geography'
+  | 'geometry';
 export interface SourceReference {
   readonly id: symbol;
   readonly name: string;
@@ -81,7 +83,8 @@ export interface CastNode {
     | 'TIMESTAMP_LTZ'
     | 'TIMESTAMP_TZ'
     | 'ARRAY'
-    | 'OBJECT';
+    | 'OBJECT'
+    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`;
 }
 export type ExpressionNode =
   | IdentifierNode
@@ -163,6 +166,8 @@ export interface SelectNode {
 }
 export interface DefaultNode {
   readonly kind: 'default';
+  /** A typed NULL for the shared source row, needed where a bare NULL cannot join a UNION. */
+  readonly placeholder?: ExpressionNode;
 }
 export interface InsertNode {
   readonly kind: 'insert';
@@ -296,6 +301,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   function wire(value: string, type?: WireType): string {
     if (!type) return value;
     if (type === 'variant') return `TO_JSON(${value})`;
+    if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
+    if (type === 'geometry') return `ST_ASEWKB(${value})`;
     if (type === 'float') {
       // Text conversion keeps at most 16 digits, so send an exact integer significand and a
       // binary exponent instead. The scale is split to stay finite for subnormals.
@@ -398,7 +405,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         )
         .join(', ');
       if (!shapes.includes(shape)) shapes.push(shape);
-      return `SELECT ${shapes.indexOf(shape)} AS "__sflib_shape", ${row.map((value, index) => `${value.kind === 'default' ? 'NULL' : expression(value)} AS ${quoteIdentifier(identifier(`__sflib_${index}`))}`).join(', ')}`;
+      return `SELECT ${shapes.indexOf(shape)} AS "__sflib_shape", ${row.map((value, index) => `${value.kind !== 'default' ? expression(value) : value.placeholder ? expression(value.placeholder) : 'NULL'} AS ${quoteIdentifier(identifier(`__sflib_${index}`))}`).join(', ')}`;
     });
     return `INSERT ALL ${shapes.map((shape, index) => `WHEN "__sflib_shape" = ${index} THEN INTO ${target} VALUES (${shape})`).join(' ')} ${sources.join(' UNION ALL ')}`;
   }

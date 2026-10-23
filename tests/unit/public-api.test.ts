@@ -11,18 +11,19 @@ const expected = {
   snowtyped: {
     values: names(
       `alias and array asc binary boolean count date decimal deleteFrom desc eq flatten float
-      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath
-      like lower lt lte max mergeInto min ne not object or over rowNumber select snowflakeTable
-      sql sum text time timeTravel timestamp update upper variant`,
+      generateSchema geography geometry gt gte ilike inArray insert integer introspect
+      isNotNull isNull jsonPath like lower lt lte max mergeInto min ne not object or over
+      rowNumber select snowflakeTable sql sum text time timeTravel timestamp update upper
+      variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
       `AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue CompiledQuery
-      DataType Expression FilteredMutation FlattenOptions IdentityOptions InferColumn
-      InferExpression InferSelection InsertValues IntrospectedColumn IntrospectedTable
-      MergeQuery MutationQuery Ordering Predicate RawQuery SelectQuery Selection ServerValue
-      ServerValueKind ServerValues SqlInterpolation SqlParameter Table TableOptions
-      UpdateValues`,
+      DataType Expression FilteredMutation FlattenOptions GeoJsonGeometry GeoPosition
+      IdentityOptions InferColumn InferExpression InferSelection InsertValues
+      IntrospectedColumn IntrospectedTable MergeQuery MutationQuery Ordering Predicate RawQuery
+      SelectQuery Selection ServerValue ServerValueKind ServerValues SqlInterpolation
+      SqlParameter Table TableOptions UpdateValues`,
       `CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode
       IdentifierNode InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode
       SourceReference StatementNode TableNode TemporalNode UpdateNode WireType`,

@@ -8,6 +8,9 @@ import {
   decimal,
   eq,
   flatten,
+  type GeoJsonGeometry,
+  geography,
+  geometry,
   insert,
   integer,
   jsonPath,
@@ -20,6 +23,7 @@ import {
   timestamp,
   update,
   variant,
+  vector,
 } from '../../src/index.js';
 import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
@@ -155,3 +159,37 @@ update(docs, { meta: { ok: 'yes' } });
 update(docs, { extra: [1] });
 // @ts-expect-error An OBJECT schema must produce objects.
 object('META', z.string());
+const spatial = snowflakeTable('SPATIAL', {
+  location: geography('LOCATION').notNull(),
+  shape: geometry('SHAPE', { srid: 4326 }),
+  embedding: vector('EMBEDDING', 'float', 3).notNull(),
+  counts: vector('COUNTS', 'int', 2),
+});
+expectTypeOf(db.execute(select(spatial)))
+  .resolves.toHaveProperty('rows')
+  .toEqualTypeOf<
+    readonly {
+      readonly location: GeoJsonGeometry;
+      readonly shape: GeoJsonGeometry | null;
+      readonly embedding: number[];
+      readonly counts: number[] | null;
+    }[]
+  >();
+expectTypeOf(spatial.columns.shape.constraints.srid).toEqualTypeOf<number | undefined>();
+insert(spatial, {
+  location: { type: 'Point', coordinates: [1, 2] },
+  shape: { type: 'GeometryCollection', geometries: [{ type: 'LineString', coordinates: [] }] },
+  embedding: [1, 2, 3],
+});
+// @ts-expect-error Points have two to four coordinates.
+insert(spatial, { location: { type: 'Point', coordinates: [1] }, embedding: [] });
+// @ts-expect-error Spatial values are GeoJSON geometries, not WKT.
+update(spatial, { shape: 'POINT(1 2)' });
+// @ts-expect-error Polygon coordinates are rings of positions.
+update(spatial, { location: { type: 'Polygon', coordinates: [[1, 2]] } });
+// @ts-expect-error VECTOR values are number arrays.
+update(spatial, { embedding: ['1'] });
+// @ts-expect-error VECTOR elements are 'int' or 'float'.
+vector('V', 'double', 3);
+// @ts-expect-error SRID is a GEOMETRY option.
+geography('G', { srid: 4326 });
