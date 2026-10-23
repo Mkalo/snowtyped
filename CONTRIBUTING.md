@@ -16,4 +16,7 @@ New Snowflake semantics need opt-in integration coverage using `tests/support/sn
 
 Package checks install the actual tarball in a temporary consumer and verify ESM/CJS loading, declaration resolution, and tree shaking. Keep these checks working when exports or dependencies change. Never commit environment files, private keys, generated bootstrap SQL, build artifacts, or coverage output.
 
+See [CI and release checks](docs/ci.md) for required-check configuration, diagnostics,
+action updates, and the manual gate when hosted enforcement is unavailable.
+
 Publishing remains disabled until the package name, license, repository metadata, and public API have been settled.
