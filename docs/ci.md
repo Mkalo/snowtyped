@@ -10,12 +10,15 @@ are unnecessary for these checks.
 
 Matrix checks have explicit names such as `Check (ubuntu-latest, Node 22)`.
 `CI required` is the fixed check to require on `main`. It runs even after a
-dependency fails and accepts only successful matrix and Changesets results; failure,
-cancellation, and skipped jobs cannot satisfy the gate. Keep this name unique
+dependency fails and accepts only successful matrix, Changesets, and Docs results;
+failure, cancellation, and skipped jobs cannot satisfy the gate. Keep this name unique
 across workflows. `Changesets` checks PR changeset policy and exercises disposable
-versioning/prerelease flows. Add future docs jobs to its `needs` list and require
-each result to succeed when #21 lands. See [versioning policy](versioning.md) for
-exemptions and the version bot's GitHub App setup.
+versioning/prerelease flows. `Docs` type checks the documentation snippets against
+the library source, builds the `website/` Starlight site with internal link
+validation, and tests the built output on Node 24. It uploads the site as the
+`docs-site` artifact, which [documentation deployment](docs-deployment.md) uses for
+previews. See [versioning policy](versioning.md) for exemptions and the version
+bot's GitHub App setup.
 
 Pushes, pull requests, and merge queues run the workflow without path filters.
 A new commit cancels superseded runs for the same pull request. Push runs are
@@ -96,11 +99,13 @@ Offline CI does not publish. Follow [npm publication](versioning.md#npm-publicat
 to stage MIT-licensed alpha/beta releases, verify the exact commit and tarball,
 and approve publication with npm 2FA.
 
-A supported stable release additionally needs a successful protected hosted Snowflake run on that
-same SHA (#23), production-critical hardening evidence (#17/#24), and checked
-documentation and deployment/version agreement (#21/#22). These follow-ups are
-still release requirements even though their jobs are not yet part of
-`CI required`. First npm publication and production documentation deployment need
-your approval. Stable publication also needs the explicit repository
-variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while those stable
-gates are outstanding. Do not infer stable readiness from an experimental npm release.
+A supported stable release additionally needs the
+[release contract gates](release-contract.md#release-gates): a successful
+protected hosted Snowflake run on that same SHA (#23), the required production
+scenarios (#17), and checked documentation and deployment/version agreement
+(#21/#22). These are still release requirements even though their jobs are not
+yet part of `CI required`. First npm publication and production documentation
+deployment need your approval. Stable publication also needs the explicit
+repository variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while
+those stable gates are outstanding. Do not infer stable readiness from an
+experimental npm release.

@@ -1,0 +1,32 @@
+---
+title: Snowtyped
+description: Schema-driven Snowflake queries, runtime validation, and parameterized raw SQL for TypeScript.
+template: splash
+hero:
+  tagline: A Snowflake-first TypeScript query library with an owned AST, declared schemas, inferred results, and compiled Zod 4 runtime validation.
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+    - text: API reference
+      link: /api/readme/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Declared schemas" icon="document">
+    Table declarations determine both result types and runtime validation. You never write result
+    interfaces or decoders for structured queries.
+  </Card>
+  <Card title="Snowflake syntax" icon="seti:db">
+    Windows, QUALIFY, FLATTEN, ASOF JOIN, time travel, and MERGE are modeled directly.
+  </Card>
+  <Card title="Exact values" icon="approve-check">
+    Integers decode as `bigint`, decimals as exact text, and timestamps keep nanoseconds.
+  </Card>
+  <Card title="Raw SQL when needed" icon="pencil">
+    Parameterized tagged templates cover syntax beyond the builder, with explicit result assertions.
+  </Card>
+</CardGrid>
