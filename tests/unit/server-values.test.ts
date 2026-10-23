@@ -87,7 +87,7 @@ describe('server-populated columns', () => {
       rows: [
         [{ kind: 'parameter' }, { kind: 'default' }, { kind: 'function' }],
         [{ kind: 'parameter' }, { kind: 'parameter' }, { kind: 'default' }],
-        [{ kind: 'parameter' }, { kind: 'default' }, { kind: 'parameter' }],
+        [{ kind: 'parameter' }, { kind: 'default' }, { kind: 'function' }],
       ],
     });
     expect(query.compile()).toEqual({
@@ -96,7 +96,7 @@ describe('server-populated columns', () => {
         ' WHEN "__sflib_shape" = 1 THEN INTO "EVENTS" ("NAME", "STATUS", "PAYLOAD") VALUES ("__sflib_0", "__sflib_1", DEFAULT)' +
         ' SELECT 0 AS "__sflib_shape", ? AS "__sflib_0", NULL AS "__sflib_1", PARSE_JSON(?) AS "__sflib_2"' +
         ' UNION ALL SELECT 1 AS "__sflib_shape", ? AS "__sflib_0", ? AS "__sflib_1", NULL AS "__sflib_2"' +
-        ' UNION ALL SELECT 0 AS "__sflib_shape", ? AS "__sflib_0", NULL AS "__sflib_1", ? AS "__sflib_2"',
+        ' UNION ALL SELECT 0 AS "__sflib_shape", ? AS "__sflib_0", NULL AS "__sflib_1", PARSE_JSON(?) AS "__sflib_2"',
       binds: ['a', '{"x":1}', 'b', 'done', 'c', null],
     });
   });

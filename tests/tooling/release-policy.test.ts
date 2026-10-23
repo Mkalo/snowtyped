@@ -5,10 +5,12 @@ import type { ProvenanceStatement } from '../../scripts/release-policy.js';
 import {
   changelogNotes,
   publishedState,
+  registryState,
   releaseInfo,
   requireCi,
   requireProvenance,
   requireProvenanceIdentity,
+  requireRegistryPackage,
 } from '../../scripts/release-policy.js';
 
 const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
@@ -41,6 +43,33 @@ const metadata = {
     attestations: { url: 'https://registry.npmjs.org/attestations', provenance: {} },
   },
 };
+
+test('npm tombstones block the entire 24-hour cooldown, including the final millisecond', () => {
+  const removed = Date.parse('2026-10-23T01:44:09.691Z');
+  const tombstone = { time: { unpublished: { time: new Date(removed).toISOString() } } };
+  const deadline = removed + 86_400_000;
+  for (const now of [removed, removed + 1, deadline - 1]) {
+    assert.throws(() => registryState(tombstone, now), /2026-10-24T01:44:09.691Z/);
+  }
+  assert.equal(registryState(tombstone, deadline), 'missing');
+  assert.equal(registryState(tombstone, deadline + 1), 'missing');
+  assert.throws(() => registryState({ time: { unpublished: { time: 'invalid' } } }), /timestamp/);
+});
+
+test('an HTTP-200 empty or unpublished record does not establish a usable npm package', () => {
+  for (const value of [
+    undefined,
+    {},
+    { versions: {} },
+    { time: { unpublished: { time: '2000-01-01T00:00:00.000Z' } } },
+  ]) {
+    assert.equal(registryState(value), 'missing');
+    assert.throws(() => requireRegistryPackage(value), /holding stage pending/);
+  }
+  const placeholder = { versions: { '0.0.0-stage': {} } };
+  assert.equal(registryState(placeholder), 'ready');
+  requireRegistryPackage(placeholder);
+});
 
 test('alpha/beta versions select their own tags; stable needs an explicit switch', () => {
   assert.deepEqual(alpha, { version: '0.1.0-alpha.1', tag: 'alpha', prerelease: true });

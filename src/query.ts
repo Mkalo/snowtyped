@@ -195,6 +195,8 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
           node: identifier(key),
           dataType: 'text',
           required: true,
+          constraints: Object.freeze({}),
+          encodeWrite: value.encode,
           readSchema: read,
           valueSchema: value.nullRefs.some((ref) => state.nullable.has(ref.id))
             ? value.valueSchema.nullable()

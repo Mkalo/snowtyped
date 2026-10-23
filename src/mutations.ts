@@ -76,7 +76,7 @@ function entries(table: Table, values: Readonly<Record<string, unknown>>, refs =
       if (isExpression(value)) assertScope([value], refs);
       return Object.freeze({
         column: column.node,
-        value: isExpression(value) ? value.expression : column.encode(value),
+        value: isExpression(value) ? value.expression : column.encodeWrite(value),
       });
     }),
   );
@@ -102,7 +102,7 @@ export function insert<C extends ColumnMap>(
     Object.freeze(
       keys.map((key) =>
         (present[index] as Set<string>).has(key)
-          ? (table.columns[key] as AnyColumn).encode(row[key])
+          ? (table.columns[key] as AnyColumn).encodeWrite(row[key])
           : Object.freeze({ kind: 'default' as const }),
       ),
     ),

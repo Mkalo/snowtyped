@@ -10,10 +10,10 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc eq flatten float
+      `alias and array asc binary boolean count date decimal deleteFrom desc eq flatten float
       generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath
-      like lower lt lte max mergeInto min ne not or over rowNumber select snowflakeTable sql
-      sum text time timeTravel timestamp update upper variant`,
+      like lower lt lte max mergeInto min ne not object or over rowNumber select snowflakeTable
+      sql sum text time timeTravel timestamp update upper variant`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(

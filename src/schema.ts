@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import {
+  type ExpressionNode,
   type IdentifierNode,
   identifier,
   type RelationNode,
@@ -12,6 +13,7 @@ import {
   type ExpressionNullScope,
   expression,
   type InferExpression,
+  jsonText,
   scalarParameter,
 } from './expressions.js';
 
@@ -28,6 +30,8 @@ export type DataType =
   | 'timestamp_ltz'
   | 'timestamp_tz'
   | 'variant'
+  | 'array'
+  | 'object'
   | 'binary';
 export interface ServerValues {
   readonly none: null;
@@ -43,6 +47,11 @@ export interface ServerValues {
 export type ServerValueKind = keyof ServerValues;
 export type ServerValue = NonNullable<ServerValues[ServerValueKind]>;
 export type IdentityOptions = Omit<ServerValues['identity'], 'kind'>;
+export interface ColumnConstraints {
+  readonly precision?: number;
+  readonly scale?: number;
+  readonly length?: number;
+}
 export interface Column<
   T,
   Required extends boolean = false,
@@ -52,7 +61,9 @@ export interface Column<
   readonly node: IdentifierNode;
   readonly dataType: DataType;
   readonly required: Required;
+  readonly constraints: ColumnConstraints;
   readonly serverValue: ServerValues[Server];
+  encodeWrite(value: ColumnValue<T, Required>): ExpressionNode;
   notNull(): Column<T, true, Scope, Server>;
   serverDefault(expression?: string): Column<T, Required, Scope, 'default'>;
   identity(options?: IdentityOptions): Column<T, Required, Scope, 'identity'>;
@@ -73,6 +84,11 @@ export type BoundColumns<C extends ColumnMap, Name extends string> = {
     ? Column<T, R, Name, S>
     : never;
 };
+interface Constraint<T> {
+  readonly constraints: ColumnConstraints;
+  readonly type: string;
+  check(value: T): boolean;
+}
 
 function serverExpression(kind: 'default' | 'virtual', expression: string | undefined) {
   if (expression !== undefined && !expression.trim())
@@ -95,47 +111,58 @@ function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
   read: z.ZodType<T>,
   value: z.ZodType<T>,
   required: R,
+  constraint?: Constraint<T>,
   serverValue: ServerValue | null = null,
 ): Column<T, R, string, S> {
-  const readSchema = (required ? read : read.nullable()) as z.ZodType<ColumnValue<T, R>>;
-  const valueSchema = (required ? value : value.nullable()) as z.ZodType<ColumnValue<T, R>>;
+  const constrained = (schema: z.ZodType<T>) =>
+    constraint ? schema.refine(constraint.check, `Value does not fit ${constraint.type}.`) : schema;
+  const nullable = (schema: z.ZodType<T>) =>
+    (required ? schema : schema.nullable()) as z.ZodType<ColumnValue<T, R>>;
+  const readSchema = nullable(constrained(read));
+  const valueSchema = nullable(value);
+  const writeSchema = nullable(constrained(value));
   const node = identifier(name);
+  function encode(parsed: ColumnValue<T, R>): ExpressionNode {
+    // NULL goes through the same wrapper so it carries the column type; a bare NULL
+    // bind is VARCHAR, which Snowflake rejects for VARIANT and BINARY in INSERT ... SELECT.
+    if (dataType === 'variant') return parseJson(dataType, parsed);
+    if (dataType === 'array' || dataType === 'object')
+      return Object.freeze({
+        kind: 'cast',
+        value: parseJson(dataType, parsed),
+        target: dataType === 'array' ? 'ARRAY' : 'OBJECT',
+      });
+    if (dataType === 'binary')
+      return Object.freeze({
+        kind: 'function',
+        name: 'TO_BINARY',
+        args: Object.freeze([
+          scalarParameter(
+            parsed === null ? null : Buffer.from(parsed as Uint8Array).toString('hex'),
+          ),
+          scalarParameter('HEX'),
+        ]),
+      });
+    return scalarParameter(parsed);
+  }
+  const wireType: WireType | undefined = ['text', 'boolean', 'binary'].includes(dataType)
+    ? undefined
+    : dataType === 'array' || dataType === 'object'
+      ? 'variant'
+      : (dataType as WireType);
   return Object.freeze({
     ...expression(node, readSchema, {
       valueSchema,
-      ...(!['text', 'boolean', 'binary'].includes(dataType)
-        ? { wireType: dataType as WireType }
-        : {}),
-      encode(parsed) {
-        if (dataType === 'variant' && parsed !== null) {
-          const encoded = JSON.stringify(parsed);
-          if (encoded === undefined)
-            throw new TypeError('VARIANT values must be JSON serializable.');
-          return Object.freeze({
-            kind: 'function',
-            name: 'PARSE_JSON',
-            args: Object.freeze([scalarParameter(encoded)]),
-          });
-        }
-        if (dataType === 'binary' && parsed !== null) {
-          const bytes = parsed as Uint8Array;
-          return Object.freeze({
-            kind: 'function',
-            name: 'TO_BINARY',
-            args: Object.freeze([
-              scalarParameter(Buffer.from(bytes).toString('hex')),
-              scalarParameter('HEX'),
-            ]),
-          });
-        }
-        return scalarParameter(parsed);
-      },
+      ...(wireType ? { wireType } : {}),
+      encode,
     }),
     node,
     dataType,
     required,
+    constraints: Object.freeze({ ...constraint?.constraints }),
     serverValue: serverValue as ServerValues[S],
-    notNull: () => column<T, true, S>(name, dataType, read, value, true, serverValue),
+    encodeWrite: (input: ColumnValue<T, R>) => encode(writeSchema.parse(input)),
+    notNull: () => column<T, true, S>(name, dataType, read, value, true, constraint, serverValue),
     serverDefault: (expression?: string) =>
       column<T, R, 'default'>(
         name,
@@ -143,10 +170,19 @@ function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
         read,
         value,
         required,
+        constraint,
         serverExpression('default', expression),
       ),
     identity: (options: IdentityOptions = {}) =>
-      column<T, R, 'identity'>(name, dataType, read, value, required, identityValue(options)),
+      column<T, R, 'identity'>(
+        name,
+        dataType,
+        read,
+        value,
+        required,
+        constraint,
+        identityValue(options),
+      ),
     virtual: (expression?: string) =>
       column<T, R, 'virtual'>(
         name,
@@ -154,14 +190,74 @@ function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
         read,
         value,
         required,
+        constraint,
         serverExpression('virtual', expression),
       ),
   }) as Column<T, R, string, S>;
 }
-export function text(name: string): Column<string> {
-  return column(name, 'text', z.string(), z.string(), false);
+/** A NULL bind still parses to a typed NULL, so mixed rows keep one SQL type. */
+function parseJson(dataType: DataType, value: unknown): ExpressionNode {
+  const encoded = value === null ? null : JSON.stringify(value);
+  if (encoded === undefined)
+    throw new TypeError(`${dataType.toUpperCase()} values must be JSON serializable.`);
+  return Object.freeze({
+    kind: 'function',
+    name: 'PARSE_JSON',
+    args: Object.freeze([scalarParameter(encoded)]),
+  });
 }
-export function integer(name: string): Column<bigint> {
+const json = <T>(schema: z.ZodType<T>) => jsonText().pipe(schema);
+function bounded(label: string, value: number, min: number, max: number): number {
+  if (!Number.isSafeInteger(value) || value < min || value > max)
+    throw new TypeError(`${label} must be an integer from ${min} to ${max}.`);
+  return value;
+}
+function epochFraction(value: string): string {
+  if (!/^[+-]?\d+$/.test(value)) return '';
+  const epoch = BigInt(value);
+  const scale =
+    epoch < 31536000000n ? 0 : epoch < 31536000000000n ? 3 : epoch < 31536000000000000n ? 6 : 9;
+  return value.slice(value.length - scale);
+}
+function fraction(value: string, precision: number): boolean {
+  const match = /\d:\d{2}:\d{2}\.(\d+)|^[+-]?\d+\.(\d+)$/.exec(value);
+  const digits = match?.[1] ?? match?.[2] ?? epochFraction(value);
+  return digits.replace(/0+$/, '').length <= precision;
+}
+function fractional(type: string, options: { readonly precision?: number }) {
+  if (options.precision === undefined) return undefined;
+  const precision = bounded('Fractional seconds precision', options.precision, 0, 9);
+  return {
+    constraints: { precision },
+    type: `${type}(${precision})`,
+    check: (value: string) => fraction(value, precision),
+  };
+}
+export function text(name: string, options: { readonly length?: number } = {}): Column<string> {
+  const length =
+    options.length === undefined ? undefined : bounded('Length', options.length, 1, 134217728);
+  return column(
+    name,
+    'text',
+    z.string(),
+    z.string(),
+    false,
+    length === undefined
+      ? undefined
+      : {
+          constraints: { length },
+          type: `VARCHAR(${length})`,
+          check: (value) => value.length <= length || [...value].length <= length,
+        },
+  );
+}
+export function integer(
+  name: string,
+  options: { readonly precision?: number } = {},
+): Column<bigint> {
+  const precision =
+    options.precision === undefined ? undefined : bounded('Precision', options.precision, 1, 38);
+  const limit = 10n ** BigInt(precision ?? 0);
   return column(
     name,
     'integer',
@@ -171,20 +267,54 @@ export function integer(name: string): Column<bigint> {
       .transform(BigInt),
     z.bigint(),
     false,
+    precision === undefined
+      ? undefined
+      : {
+          constraints: { precision, scale: 0 },
+          type: `NUMBER(${precision},0)`,
+          check: (value) => (value < 0n ? -value : value) < limit,
+        },
   );
 }
-export function decimal(name: string): Column<string> {
+export function decimal(
+  name: string,
+  options: { readonly precision?: number; readonly scale?: number } = {},
+): Column<string> {
   const schema = z.string().regex(/^-?\d+(?:\.\d+)?$/);
-  return column(name, 'decimal', schema, schema, false);
+  if (options.precision === undefined && options.scale === undefined)
+    return column(name, 'decimal', schema, schema, false);
+  const precision = bounded('Precision', options.precision ?? 38, 1, 38);
+  const scale = bounded('Scale', options.scale ?? 0, 0, Math.min(precision, 37));
+  return column(name, 'decimal', schema, schema, false, {
+    constraints: { precision, scale },
+    type: `NUMBER(${precision},${scale})`,
+    check(value) {
+      const match = /^-?(\d+)(?:\.(\d+))?$/.exec(value);
+      if (!match) return true;
+      const [, whole, digits = ''] = match;
+      return (
+        (whole as string).replace(/^0+/, '').length <= precision - scale &&
+        digits.replace(/0+$/, '').length <= scale
+      );
+    },
+  });
 }
 export function boolean(name: string): Column<boolean> {
   return column(name, 'boolean', z.boolean(), z.boolean(), false);
+}
+/** Decodes `<significand>p<exponent>` wire text; plain numeric text is also accepted. */
+function decodeFloat(value: string): number {
+  const match = /^(-?\d+)p(-?\d+)$/.exec(value);
+  if (!match) return Number(value);
+  const exponent = Number(match[2]);
+  const half = Math.trunc(exponent / 2);
+  return Number(match[1]) * 2 ** half * 2 ** (exponent - half);
 }
 export function float(name: string): Column<number> {
   return column(
     name,
     'float',
-    z.string().transform(Number).pipe(z.number().finite()),
+    z.string().transform(decodeFloat).pipe(z.number().finite()),
     z.number().finite(),
     false,
   );
@@ -192,35 +322,73 @@ export function float(name: string): Column<number> {
 export function date(name: string): Column<string> {
   return column(name, 'date', z.string(), z.iso.date(), false);
 }
-export function time(name: string): Column<string> {
+export function time(name: string, options: { readonly precision?: number } = {}): Column<string> {
   return column(
     name,
     'time',
     z.string(),
     z.string().regex(/^\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$/),
     false,
+    fractional('TIME', options),
   );
 }
-export function timestamp(name: string, mode: 'ntz' | 'ltz' | 'tz' = 'ntz'): Column<string> {
-  return column(name, `timestamp_${mode}`, z.string(), z.string().min(1), false);
+export function timestamp(
+  name: string,
+  mode: 'ntz' | 'ltz' | 'tz' = 'ntz',
+  options: { readonly precision?: number } = {},
+): Column<string> {
+  return column(
+    name,
+    `timestamp_${mode}`,
+    z.string(),
+    z.string().min(1),
+    false,
+    fractional(`TIMESTAMP_${mode.toUpperCase()}`, options),
+  );
 }
 export function variant(name: string): Column<unknown>;
 export function variant<T>(name: string, schema: z.ZodType<T>): Column<T>;
 export function variant(name: string, schema: z.ZodType<unknown> = z.unknown()): Column<unknown> {
+  return column(name, 'variant', json(schema), schema, false);
+}
+export function array(name: string): Column<unknown[]>;
+export function array<T>(name: string, element: z.ZodType<T>): Column<T[]>;
+export function array(name: string, element: z.ZodType<unknown> = z.unknown()): Column<unknown[]> {
+  const schema = z.array(element);
+  return column(name, 'array', json(schema), schema, false);
+}
+export function object(name: string): Column<Record<string, unknown>>;
+export function object<T extends Record<string, unknown>>(
+  name: string,
+  schema: z.ZodType<T>,
+): Column<T>;
+export function object(
+  name: string,
+  schema: z.ZodType<Record<string, unknown>> = z.record(z.string(), z.unknown()),
+): Column<Record<string, unknown>> {
+  return column(name, 'object', json(schema), schema, false);
+}
+export function binary(
+  name: string,
+  options: { readonly length?: number } = {},
+): Column<Uint8Array> {
+  const schema = z.instanceof(Uint8Array);
+  const length =
+    options.length === undefined ? undefined : bounded('Length', options.length, 1, 67108864);
   return column(
     name,
-    'variant',
-    z
-      .string()
-      .transform((value) => JSON.parse(value) as unknown)
-      .pipe(schema),
+    'binary',
+    schema,
     schema,
     false,
+    length === undefined
+      ? undefined
+      : {
+          constraints: { length },
+          type: `BINARY(${length})`,
+          check: (value) => value.length <= length,
+        },
   );
-}
-export function binary(name: string): Column<Uint8Array> {
-  const schema = z.instanceof(Uint8Array);
-  return column(name, 'binary', schema, schema, false);
 }
 
 export interface Table<C extends ColumnMap = ColumnMap, Name extends string = string> {
