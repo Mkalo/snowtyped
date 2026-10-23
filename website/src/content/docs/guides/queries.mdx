@@ -123,11 +123,12 @@ own filter. Nested relations repeat this per level. `db.execute()` returns every
 gets `[]` or `null`. A `one` relation that matches several rows for one key throws.
 
 Keys must be INTEGER, DECIMAL, TEXT, or DATE columns or scalar expressions of one shared SQL type;
-DECIMAL keys match by value regardless of scale. A key the parent query does not project is added
+DECIMAL keys match by value regardless of scale, and TEXT keys match exactly. A key the parent query does not project is added
 as a hidden column and removed from the rows, except in DISTINCT queries, which must project it;
 grouped queries must group by it. Related queries cannot use `.limit()` or `.offset()`, which would
 cut across parents; for a per-parent limit, use `.qualify()` with `rowNumber()` partitioned by the
-`to` key.
+`to` key. Any window in a related query should be partitioned by that key, because each batch only
+sees its own parents' rows.
 
 `db.stream()` reads parents in batches of `batchSize` and loads each batch's children before
 yielding it. Statements run on the same connection, inside a transaction when called on its

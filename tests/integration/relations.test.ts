@@ -203,6 +203,56 @@ describe('relation loading against Snowflake', () => {
     expect(result.queryIds).toHaveLength(4);
   });
 
+  it('matches TEXT keys exactly and reads keys under collapsed objects', async () => {
+    const codes = snowflakeTable(
+      'CODES',
+      { id: integer('ID').notNull(), code: text('CODE').notNull() },
+      namespace,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${tableIdentifier(codes)} (ID NUMBER(38,0) NOT NULL, CODE VARCHAR NOT NULL)`,
+    );
+    await db.execute(
+      insert(codes, [
+        { id: 1n, code: '01' },
+        { id: 2n, code: '1' },
+      ]),
+    );
+    const byCode = await db.execute(
+      withRelations(select(codes, { code: codes.columns.code }).orderBy(asc(codes.columns.id)), {
+        same: many(codes, { from: codes.columns.code, to: codes.columns.code }, (rows) =>
+          rows.select({ id: codes.columns.id }),
+        ),
+      }),
+    );
+    expect(byCode.rows).toEqual([
+      { code: '01', same: [{ id: 1n }] },
+      { code: '1', same: [{ id: 2n }] },
+    ]);
+    // Joining on unrelated ids leaves every joined row missing, so the nested objects collapse.
+    const collapsed = await db.execute(
+      withRelations(
+        select(posts)
+          .leftJoin(users, eq(p.id, u.id))
+          .select({ id: p.id, who: { name: u.name, authorId: p.authorId } })
+          .where(eq(p.id, 12n)),
+        {
+          author: one(users, { from: p.authorId, to: u.id }, (rows) =>
+            rows.select({ name: u.name }),
+          ),
+          posts: many(posts, { from: p.authorId, to: p.authorId }, (rows) =>
+            rows
+              .leftJoin(comments, eq(p.id, c.id))
+              .select({ id: p.id, by: { comment: c.id, authorId: p.authorId } }),
+          ),
+        },
+      ),
+    );
+    expect(collapsed.rows).toEqual([
+      { id: 12n, who: null, author: { name: 'Grace' }, posts: [{ id: 12n, by: null }] },
+    ]);
+  });
+
   it('streams in batches and runs inside transactions', async () => {
     const query = withRelations(
       select(users, { id: u.id }).orderBy(asc(u.id)),

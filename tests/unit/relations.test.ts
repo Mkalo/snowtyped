@@ -140,25 +140,64 @@ describe('relation loading', () => {
     expect(statements[3]?.binds).toEqual(['Ada']);
   });
 
-  it('reads keys from nested projections, including collapsed objects', async () => {
+  it('projects hidden keys for nested leaves, which read NULL when their object collapses', async () => {
+    const editors = snowflakeTable('EDITORS', { id: integer('ID').notNull() });
     const loaded = withRelations(
       select(posts)
         .leftJoin(users, eq(p.authorId, u.id))
-        .select({ id: p.id, author: { id: u.id } }),
-      { others: many(posts, { from: u.id, to: p.authorId }, (rows) => rows.select({ id: p.id })) },
+        .select({ id: p.id, who: { name: u.name, authorId: p.authorId } }),
+      { editor: one(editors, { from: p.authorId, to: editors.columns.id }) },
     );
     const { db, statements } = client(
       [
-        ['10', '1'],
-        ['11', null],
+        ['10', 'Ada', '1', '1'],
+        ['11', null, '5', '5'],
       ],
-      [['10', '1']],
+      [['1'], ['5']],
     );
     expect((await db.execute(loaded)).rows).toEqual([
-      { id: 10n, author: { id: 1n }, others: [{ id: 10n }] },
-      { id: 11n, author: null, others: [] },
+      { id: 10n, who: { name: 'Ada', authorId: 1n }, editor: { id: 1n } },
+      { id: 11n, who: null, editor: { id: 5n } },
     ]);
-    expect(statements[1]?.binds).toEqual(['1']);
+    expect(statements[0]?.sql).toContain('"POSTS"."AUTHOR_ID" AS "__sflib_key"');
+    expect(statements[1]?.binds).toEqual(['1', '5']);
+  });
+
+  it('matches TEXT keys exactly and never strips a relation named like a hidden key', async () => {
+    const orders = snowflakeTable('ORDERS', {
+      id: integer('ID').notNull(),
+      code: text('CODE').notNull(),
+    });
+    const loaded = withRelations(select(users, { name: u.name }), {
+      __sflib_key: many(orders, { from: u.name, to: orders.columns.code }, (rows) =>
+        rows.select({ id: orders.columns.id }),
+      ),
+    });
+    const { db, statements } = client(
+      [['01'], ['1'], ['1.50']],
+      [
+        ['10', '01'],
+        ['11', '1'],
+      ],
+    );
+    expect((await db.execute(loaded)).rows).toEqual([
+      { name: '01', __sflib_key: [{ id: 10n }] },
+      { name: '1', __sflib_key: [{ id: 11n }] },
+      { name: '1.50', __sflib_key: [] },
+    ]);
+    expect(statements[1]?.binds).toEqual(['01', '1', '1.50']);
+    const inner = withRelations(select(users, { id: u.id }), {
+      posts: many(posts, { from: u.id, to: p.authorId }, (rows) =>
+        withRelations(rows.select({ id: p.id }), {
+          __sflib_key: many(orders, { from: p.title, to: orders.columns.code }),
+        }),
+      ),
+    });
+    const nested = client([['1']], [['10', 'x', '1']], [['20', 'x']]);
+    expect((await nested.db.execute(inner)).rows).toEqual([
+      { id: 1n, posts: [{ id: 10n, __sflib_key: [{ id: 20n, code: 'x' }] }] },
+    ]);
+    expect(nested.statements[1]?.sql).toContain('"AUTHOR_ID" AS "__sflib_key__"');
   });
 
   it('rejects a one relation that matches several rows', async () => {

@@ -3,8 +3,8 @@ import { narrow, type SelectQuery, sameNode, select } from './query.js';
 import {
   type ColumnMap,
   type InferSelection,
+  isLeaf,
   type Projection,
-  projectionLeaves,
   type Table,
 } from './schema.js';
 
@@ -147,9 +147,6 @@ export function withRelations<
   return loaded as LoadedQuery<LoadedRow<InferSelection<S, Nullable>, R>>;
 }
 
-interface Key {
-  readonly path: readonly string[];
-}
 interface Plan {
   readonly query: AnySelect;
   /** Aliases added only to match rows, removed from decoded rows. */
@@ -158,31 +155,36 @@ interface Plan {
   readonly relations: readonly {
     readonly name: string;
     readonly value: Relation;
-    readonly from: Key;
-    readonly to: Key;
+    /** Top-level aliases holding the keys. */
+    readonly from: string;
+    readonly to: string;
     readonly query: AnySelect;
     /** Hidden keys of the related rows, removed once they are matched. */
     readonly hidden: readonly string[];
     readonly child?: Plan;
   }[];
 }
-/** Projects every key rows are matched by, reusing projected leaves and hiding the rest. */
-function keyed(query: AnySelect, keys: readonly AnyExpression[]) {
-  const leaves = projectionLeaves(query.selection);
+/**
+ * Projects every key rows are matched by, reusing top-level leaves and hiding the rest. A leaf
+ * inside a nested object can read NULL when its object collapses, so it is never reused.
+ */
+function keyed(query: AnySelect, keys: readonly AnyExpression[], names: readonly string[]) {
   const extra: Record<string, AnyExpression> = {};
-  const used = new Set(Object.keys(query.selection));
-  const paths = keys.map((key): Key => {
-    const leaf = leaves.find(([, value]) => sameNode(value.expression, key.expression));
-    if (leaf) return { path: leaf[0] };
+  const used = new Set([...Object.keys(query.selection), ...names]);
+  const paths = keys.map((key) => {
+    const leaf = Object.entries(query.selection).find(
+      ([, value]) => isLeaf(value) && sameNode(value.expression, key.expression),
+    );
+    if (leaf) return leaf[0];
     const existing = Object.entries(extra).find(([, value]) =>
       sameNode(value.expression, key.expression),
     );
-    if (existing) return { path: [existing[0]] };
+    if (existing) return existing[0];
     let alias = '__sflib_key';
     while (used.has(alias)) alias += '_';
     used.add(alias);
     extra[alias] = key;
-    return { path: [alias] };
+    return alias;
   });
   const hidden = Object.keys(extra);
   if (!hidden.length) return { query, paths, hidden };
@@ -200,6 +202,7 @@ function plan(loaded: LoadedQuery<unknown>): Plan {
   const parent = keyed(
     loaded.query,
     entries.map(([, value]) => value.from),
+    entries.map(([name]) => name),
   );
   const result: Plan = {
     query: parent.query,
@@ -208,12 +211,14 @@ function plan(loaded: LoadedQuery<unknown>): Plan {
     relations: entries.map(([name, value], index) => {
       const related = value.query as Runtime;
       const inner = related.kind === 'loaded' ? plan(related) : undefined;
-      const target = keyed(inner ? inner.query : (related as AnySelect), [value.to]);
+      const target = inner
+        ? keyed(inner.query, [value.to], Object.keys((related as LoadedQuery<unknown>).relations))
+        : keyed(related as AnySelect, [value.to], []);
       return {
         name,
         value,
-        from: parent.paths[index] as Key,
-        to: target.paths[0] as Key,
+        from: parent.paths[index] as string,
+        to: target.paths[0] as string,
         query: target.query,
         hidden: [...(inner?.hidden ?? []), ...target.hidden],
         ...(inner ? { child: inner } : {}),
@@ -224,18 +229,11 @@ function plan(loaded: LoadedQuery<unknown>): Plan {
   return result;
 }
 
-function read(row: unknown, path: readonly string[]): unknown {
-  let value = row;
-  for (const part of path) value = (value as Record<string, unknown> | null)?.[part] ?? null;
-  return value;
-}
 /** Decoded keys compare by value; DECIMAL text can differ in scale only. */
-function canonical(value: unknown): string {
-  if (typeof value === 'bigint') return value.toString();
+function canonical(value: unknown, type: string): string {
   const text = String(value);
-  const match = /^(-?)0*(\d+?)(?:\.(\d*?)0*)?$/.exec(text);
-  if (!match) return `t${text}`;
-  const [, sign, whole, fraction] = match;
+  if (type !== 'decimal') return text;
+  const [, sign, whole, fraction] = /^(-?)0*(\d+?)(?:\.(\d*?)0*)?$/.exec(text) as RegExpExecArray;
   const number = `${whole}${fraction ? `.${fraction}` : ''}`;
   return number === '0' ? '0' : `${sign}${number}`;
 }
@@ -265,9 +263,10 @@ async function attach(
   queryIds: string[],
 ): Promise<void> {
   for (const item of current.relations) {
-    const parentKeys = rows.map((row) => read(row, item.from.path));
+    const parentKeys = rows.map((row) => row[item.from] ?? null);
     const distinct = new Map<string, unknown>();
-    for (const key of parentKeys) if (key !== null) distinct.set(canonical(key), key);
+    const type = item.value.to.dataType;
+    for (const key of parentKeys) if (key !== null) distinct.set(canonical(key, type), key);
     const values = [...distinct.values()];
     const matched = new Map<string, Record<string, unknown>[]>();
     for (let start = 0; start < values.length; start += current.batchSize) {
@@ -285,7 +284,7 @@ async function attach(
             return result.rows as Record<string, unknown>[];
           });
       for (const row of found) {
-        const id = canonical(read(row, item.to.path));
+        const id = canonical(row[item.to], type);
         const list = matched.get(id);
         if (list) list.push(row);
         else matched.set(id, [row]);
@@ -294,7 +293,7 @@ async function attach(
     }
     rows.forEach((row, index) => {
       const key = parentKeys[index];
-      const list = key === null ? [] : (matched.get(canonical(key)) ?? []);
+      const list = key === null ? [] : (matched.get(canonical(key, type)) ?? []);
       if (item.value.cardinality === 'many') row[item.name] = [...list];
       else if (list.length > 1)
         throw new TypeError(
