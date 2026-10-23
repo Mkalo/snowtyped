@@ -322,6 +322,21 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
     await expect(pushSchema(db, v3, { allowDestructive: true })).rejects.toEqual(
       failed('UNSUPPORTED'),
     );
+    const required = snowflakeTable(
+      'EVERYTHING',
+      {
+        id: integer('ID').notNull(),
+        name: text('NAME').notNull(),
+        region: text('REGION').notNull(),
+      },
+      pushed,
+    );
+    await expect(
+      pushSchema(db, defineSchema(pushed, [required]), { allowDestructive: true }),
+    ).rejects.toMatchObject({
+      code: 'UNSUPPORTED',
+      message: expect.stringContaining('EVERYTHING.REGION'),
+    });
     await db.queryRaw(
       sql.unsafe(dropTable(snowflakeTable('STRAY', { id: integer('ID') }, pushed)).compile().sql),
     );

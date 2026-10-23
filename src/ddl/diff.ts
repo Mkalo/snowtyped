@@ -71,10 +71,19 @@ export function diffSchema(
     const columns = new Map(current.columns.map((column) => [column.name, column]));
     for (const column of table.columns) {
       const existing = columns.get(column.name);
+      if (!existing && column.notNull) {
+        unsupported.push(
+          Object.freeze({
+            table: name,
+            column: column.name,
+            reason: 'Adding a NOT NULL column to an existing table needs a default or backfill.',
+          }),
+        );
+        continue;
+      }
       if (!existing) {
         change(
           alter.addColumn(column.name, column.type, {
-            notNull: column.notNull,
             ...(typeof column.comment === 'string' ? { comment: column.comment } : {}),
           }),
           `Add column ${name}.${column.name}`,

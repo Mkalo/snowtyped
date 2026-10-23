@@ -446,6 +446,33 @@ describe('schema diffs', () => {
     ]);
   });
 
+  it('reports a NOT NULL column missing from an existing table as unsupported', () => {
+    const plain = defineTable(users, { types: { score: sqlType.number(10, 2) } });
+    const current = observed([
+      {
+        name: 'USERS',
+        comment: null,
+        columns: [
+          column('ID', sqlType.number(), true),
+          column('EMAIL', sqlType.varchar()),
+          column('SCORE', sqlType.number(10, 2)),
+          column('NOTE', sqlType.varchar()),
+          column('TAG', sqlType.varchar()),
+        ],
+      },
+    ]);
+    expect(diffSchema(defineSchema(target, [plain]), current)).toEqual({
+      changes: [],
+      unsupported: [
+        {
+          table: 'USERS',
+          column: 'NAME',
+          reason: 'Adding a NOT NULL column to an existing table needs a default or backfill.',
+        },
+      ],
+    });
+  });
+
   it('adds missing columns and leaves matching or unmanaged state alone', () => {
     const plain = defineTable(users, { types: { score: sqlType.number(10, 2) } });
     const current = observed(
