@@ -131,6 +131,13 @@ describe('MATCH_RECOGNIZE', () => {
     expect(relation.columns.company.dataType).toBe('text');
     expect(relation.columns.kind.notNull().readSchema.parse('START')).toBe('start');
     expect(relation.columns.company.notNull().node).toEqual(identifier('company'));
+    expect(relation.columns.match.encodeWrite(3n)).toEqual({ kind: 'parameter', value: '3' });
+    expect(relation.columns.match.serverValue).toBeNull();
+    expect(relation.columns.company.serverValue).toBeNull();
+    expect(relation.columns.match.constraints).toEqual({});
+    for (const column of [relation.columns.match, relation.columns.company])
+      for (const modifier of [column.serverDefault, column.identity, column.virtual])
+        expect(() => modifier()).toThrow(/base table columns/);
   });
 
   it('compiles every pattern operator and quantifier', () => {

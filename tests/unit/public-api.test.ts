@@ -10,31 +10,37 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `alias and asc binary boolean count date decimal deleteFrom desc eq flatten float
-      generateSchema gt gte ilike inArray insert integer introspect isNotNull isNull jsonPath like
-      lower lt lte matchRecognize max mergeInto min ne not or over rowNumber rowPattern select
-      snowflakeTable sql sum text
-      time timestamp timeTravel update upper variant`,
+      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date dateAdd
+      dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div eq flatten
+      float generateSchema geography geometry gt gte ilike inArray insert insertFrom integer
+      introspect isNotNull isNull jsonPath lag lead length like lower lt lte matchRecognize max
+      mergeInto min mul ne not object or over rangeBetween rank rowNumber rowPattern rowsBetween
+      select snowflakeTable sql sub substring sum text time timeTravel timestamp trim update
+      updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
-      `AfterMatch AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue
-      CompiledQuery DataType DefineContext Expression FilteredMutation FlattenOptions InferColumn
-      InferExpression InferSelection InsertValues IntrospectedColumn IntrospectedTable
-      MatchRecognizeColumns MatchRecognizeOptions MatchRowScope MatchVariableScope MeasureContext
-      MergeQuery MutationQuery Navigation Ordering Predicate QuantifiablePattern QuantifierOptions
-      RawQuery RowPattern RowsPerMatch SelectQuery Selection SqlInterpolation SqlParameter Table
-      TableOptions UpdateValues`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode IdentifierNode
-      InsertNode JoinNode MatchRecognizeNode MergeNode NavigationNode OrderNode PatternNode
-      RelationNode SelectNode SemanticsNode SourceReference StarNode StatementNode TableNode
-      TemporalNode UpdateNode WireType`,
+      `AfterMatch AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue
+      Column ColumnMap ColumnValue CompiledQuery DataType DatePart DefineContext Expression
+      FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
+      GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
+      InsertValues IntervalUnit IntrospectedColumn IntrospectedTable MatchRecognizeColumns
+      MatchRecognizeOptions MatchRowScope MatchVariableScope MeasureContext MergeQuery
+      MutationQuery Navigation OffsetWindowOptions OrderedWindowOptions Ordering Predicate
+      QuantifiablePattern QuantifierOptions RangeBoundary RawQuery RowPattern RowsPerMatch
+      SelectQuery Selection ServerValue ServerValueKind ServerValues SqlInterpolation SqlParameter
+      Table TableOptions UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
+      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MatchRecognizeNode
+      MergeBranchNode MergeNode NavigationNode OrderNode PatternNode RelationNode SelectNode
+      SemanticsNode SourceReference StarNode StatementNode TableNode TemporalNode UpdateNode
+      WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
     values: names('createClient createPool'),
     types: names(
-      'ExecuteOptions MutationResult PooledClient PoolOptions QueryResult SnowflakeClient',
+      'ExecuteOptions MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
     ),
   },
 };

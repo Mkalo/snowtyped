@@ -17,7 +17,7 @@ import {
   type Predicate,
   scalarParameter,
 } from './expressions.js';
-import { select } from './query.js';
+import { derivedServerValue, select } from './query.js';
 import {
   type AnyColumn,
   type BoundColumns,
@@ -331,7 +331,11 @@ function renamed(key: string, value: AnyColumn): AnyColumn {
   return Object.freeze({
     ...value,
     node: identifier(key),
+    serverValue: null,
     notNull: () => renamed(key, value.notNull()) as Column<unknown, true>,
+    serverDefault: derivedServerValue,
+    identity: derivedServerValue,
+    virtual: derivedServerValue,
   });
 }
 function measured(key: string, value: AnyExpression, nullable: boolean): AnyColumn {
@@ -345,7 +349,13 @@ function measured(key: string, value: AnyExpression, nullable: boolean): AnyColu
     node,
     dataType: (('dataType' in value ? value.dataType : value.wireType) ?? 'text') as DataType,
     required: true,
+    constraints: Object.freeze({}),
+    serverValue: null,
+    encodeWrite: (parsed: unknown) => value.encode(parsed),
     notNull: () => column as Column<unknown, true>,
+    serverDefault: derivedServerValue,
+    identity: derivedServerValue,
+    virtual: derivedServerValue,
   });
   return column;
 }
