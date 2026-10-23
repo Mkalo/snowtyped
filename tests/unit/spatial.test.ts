@@ -182,10 +182,11 @@ describe('GEOGRAPHY and GEOMETRY columns', () => {
 
   it('writes GeoJSON through typed constructors, including NULL', () => {
     const rows = insert(places, [
-      { id: 1n, location: point, shape: point },
+      { id: 1n, location: point, area: null, shape: point, plain: null },
       {
         id: 2n,
         location: { type: 'Point', coordinates: [1, 2, 3] },
+        shape: null,
         area: {
           type: 'GeometryCollection',
           geometries: [
@@ -286,7 +287,7 @@ describe('VECTOR columns', () => {
 
   it('casts JSON writes to the exact VECTOR type and validates elements', () => {
     const rows = insert(embeddings, [
-      { id: 1n, values: [0.1, 2, 3] },
+      { id: 1n, values: [0.1, 2, 3], counts: null },
       { id: 2n, values: [1, 2, 3], counts: [1, -2] },
     ]).compile();
     expect(rows.sql).toBe(

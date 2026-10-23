@@ -164,8 +164,7 @@ changes stable behavior:
 - DDL builders and migrations (#16)
 
 In progress and not yet part of this contract: raw-query cancellation (#2),
-expression and function helpers (#3), default, identity, and generated columns
-(#4), constraints and additional type codecs (#5), window frames (#6), and set
+expression and function helpers (#3), constraints and additional type codecs (#5), window frames (#6), and set
 operations (#7). Each joins the stable API when it merges and this document and
 the export snapshot are updated.
 

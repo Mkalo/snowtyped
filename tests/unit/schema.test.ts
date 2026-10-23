@@ -319,7 +319,7 @@ describe('semi-structured ARRAY and OBJECT columns', () => {
       target: 'OBJECT',
     });
     const rows = insert(table, [
-      { id: 1n, tags: [], items: null, meta: null },
+      { id: 1n, tags: [], items: null, meta: null, extra: null },
       { id: 2n, tags: ['x'], items: [1, 'two'], meta: { ok: false }, extra: { k: [1] } },
     ]).compile();
     expect(rows.sql).toBe(
