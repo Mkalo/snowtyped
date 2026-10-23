@@ -135,14 +135,14 @@ describe('schema introspection and code generation', () => {
     expect(code).toContain('"ID": decimal("ID", { precision: 38, scale: 2 }).notNull()');
   });
 
-  it('distinguishes semi-structured ARRAY and OBJECT from structured types', async () => {
+  it('reads structured ARRAY, OBJECT, and MAP types from SHOW COLUMNS', async () => {
     const row = (name: string, type: string, alias: string | null) => ({
       TABLE_SCHEMA: 'S',
       TABLE_NAME: 'T',
       COLUMN_NAME: name,
       DATA_TYPE: type,
       DATA_TYPE_ALIAS: alias,
-      IS_NULLABLE: 'YES',
+      IS_NULLABLE: name === 'SM' ? 'NO' : 'YES',
       NUMERIC_PRECISION: null,
       NUMERIC_SCALE: null,
       CHARACTER_MAXIMUM_LENGTH: null,
@@ -155,30 +155,123 @@ describe('schema introspection and code generation', () => {
       KIND: 'COLUMN',
       EXPRESSION: null,
     });
+    const fixed = (precision: number, scale: number, nullable = true) => ({
+      type: 'FIXED',
+      precision,
+      scale,
+      nullable,
+    });
+    const shown = (name: string, type: unknown) => ({
+      column_name: name,
+      data_type: JSON.stringify(type),
+    });
+    const queries: string[] = [];
     const client = {
-      queryRaw: async () => [
-        row('A', 'ARRAY', 'ARRAY'),
-        row('O', 'OBJECT', 'OBJECT'),
-        row('SA', 'ARRAY', 'ARRAY(NUMBER)'),
-        row('SO', 'OBJECT', 'OBJECT(CITY VARCHAR)'),
-      ],
+      queryRaw: async (query: { compile(): { sql: string } }) => {
+        queries.push(query.compile().sql);
+        if (queries.length === 1)
+          return [
+            row('A', 'ARRAY', 'ARRAY'),
+            row('O', 'OBJECT', 'OBJECT'),
+            row('SA', 'ARRAY', 'ARRAY(NUMBER)'),
+            row('SO', 'OBJECT', 'OBJECT(ZIP CODE NUMBER(5,0), CITY VARCHAR)'),
+            row('SM', 'MAP', 'MAP(VARCHAR, ARRAY(NUMBER(10,2)))'),
+            row('SK', 'MAP', 'MAP(NUMBER, BOOLEAN)'),
+            row('SF', 'ARRAY', 'ARRAY(FLOAT)'),
+            row('VQ', 'OBJECT', null),
+            row('VP', 'OBJECT', null),
+          ];
+        return [
+          shown('A', { type: 'ARRAY', nullable: true }),
+          shown('SA', { type: 'ARRAY', nullable: true, elementType: fixed(38, 0) }),
+          shown('SO', {
+            type: 'OBJECT',
+            nullable: true,
+            fields: [
+              { fieldName: 'Zip Code', fieldType: fixed(5, 0) },
+              { fieldName: 'city', fieldType: { type: 'TEXT', length: 16777216, nullable: true } },
+              { fieldName: 'tag', fieldType: { type: 'TEXT', length: 3, nullable: false } },
+            ],
+          }),
+          shown('SM', {
+            type: 'MAP',
+            nullable: false,
+            keyType: { type: 'TEXT', length: 16777216, nullable: false },
+            valueType: { type: 'ARRAY', nullable: true, elementType: fixed(10, 2, false) },
+          }),
+          shown('SK', {
+            type: 'MAP',
+            nullable: true,
+            keyType: fixed(9, 0, false),
+            valueType: { type: 'BOOLEAN', nullable: true },
+          }),
+          shown('SF', {
+            type: 'ARRAY',
+            nullable: true,
+            elementType: { type: 'REAL', nullable: true },
+          }),
+          shown('VQ', { type: 'OBJECT', nullable: true, fields: [] }),
+          shown('VP', { type: 'OBJECT', nullable: true }),
+        ];
+      },
     } as unknown as SnowflakeClient;
     const [table] = await introspect(client, { database: 'DB' });
     if (!table) throw new Error('Expected a table.');
+    expect(queries[1]).toBe('SHOW COLUMNS IN TABLE "DB"."S"."T"');
     expect(table.columns.map((column) => column.dataType)).toEqual([
       'ARRAY',
       'OBJECT',
       'ARRAY(NUMBER)',
-      'OBJECT(CITY VARCHAR)',
+      'OBJECT(ZIP CODE NUMBER(5,0), CITY VARCHAR)',
+      'MAP(VARCHAR, ARRAY(NUMBER(10,2)))',
+      'MAP(NUMBER, BOOLEAN)',
+      'ARRAY(FLOAT)',
+      'OBJECT',
+      'OBJECT',
     ]);
-    const code = generateSchema([{ ...table, columns: table.columns.slice(0, 2) }]);
-    expect(code).toContain("import { array, object, snowflakeTable } from 'snowtyped';");
-    expect(code).toContain('"A": array("A"),');
-    expect(code).toContain('"O": object("O"),');
-    for (const column of table.columns.slice(2))
-      expect(() => generateSchema([{ ...table, columns: [column] }])).toThrow(
-        `Unsupported Snowflake type for code generation: ${column.dataType}`,
-      );
+    expect(table.columns[0]?.structure).toBeUndefined();
+    expect(table.columns[2]?.structure).toEqual({
+      type: 'ARRAY',
+      nullable: true,
+      elementType: fixed(38, 0),
+    });
+    expect(table.columns[8]?.structure).toBeUndefined();
+    const code = generateSchema([
+      { ...table, columns: [...table.columns.slice(0, 6), ...table.columns.slice(7)] },
+    ]);
+    expect(code).toContain(
+      "import { array, object, snowflakeTable, structured, structuredType } from 'snowtyped';",
+    );
+    for (const declaration of [
+      '"A": array("A"),',
+      '"O": object("O"),',
+      '"SA": structured("SA", structuredType.array(structuredType.integer())),',
+      '"SO": structured("SO", structuredType.object({ "Zip Code": structuredType.integer({ precision: 5 }), "city": structuredType.text(), "tag": structuredType.text({ length: 3 }).notNull() })),',
+      '"SM": structured("SM", structuredType.map(structuredType.text(), structuredType.array(structuredType.decimal({ precision: 10, scale: 2 }).notNull()))).notNull(),',
+      '"SK": structured("SK", structuredType.map(structuredType.integer({ precision: 9 }), structuredType.boolean())),',
+      '"VQ": structured("VQ", structuredType.object({})),',
+      '"VP": object("VP"),',
+    ])
+      expect(code).toContain(declaration);
+    expect(() => generateSchema([{ ...table, columns: [table.columns[6] as never] }])).toThrow(
+      'Unsupported structured element type for code generation: REAL',
+    );
+    const { structure: _, ...unshown } = table.columns[2] as IntrospectedColumn;
+    expect(() => generateSchema([{ ...table, columns: [unshown] }])).toThrow(
+      'Unsupported Snowflake type for code generation: ARRAY(NUMBER)',
+    );
+  });
+
+  it('skips SHOW COLUMNS for tables without structured columns', async () => {
+    let calls = 0;
+    const client = {
+      queryRaw: async () => {
+        calls += 1;
+        return [];
+      },
+    } as unknown as SnowflakeClient;
+    expect(await introspect(client, { database: 'DB' })).toEqual([]);
+    expect(calls).toBe(1);
   });
 
   it('reads default, identity, and virtual column metadata into declarations', async () => {

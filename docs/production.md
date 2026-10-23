@@ -51,7 +51,7 @@ again after an edit.
 | 100 × 40, 12            |          2.13M |     11.8 s | 1.21 GB |      1.8 s |      2.8 s |       20 ms |
 
 Checking cost grows linearly with tables × columns; join depth mainly affects editor latency
-on the joined query. `pnpm test:bench` fails if the 10 × 20 case exceeds 300k instantiations.
+on the joined query. `pnpm test:bench` fails if the 10 × 20 case exceeds 320k instantiations.
 
 ### Live throughput
 

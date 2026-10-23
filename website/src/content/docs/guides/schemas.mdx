@@ -8,6 +8,7 @@ import constraints from '../../../snippets/constraints.ts?raw';
 import schema from '../../../snippets/schema.ts?raw';
 import semiStructured from '../../../snippets/semi-structured.ts?raw';
 import spatialVector from '../../../snippets/spatial-vector.ts?raw';
+import structuredTypes from '../../../snippets/structured-types.ts?raw';
 import variantShape from '../../../snippets/variant-shape.ts?raw';
 
 A table declaration is the single source of truth for a structured query. It determines the
@@ -66,11 +67,23 @@ write types are inferred from it. A type parameter alone cannot establish a VARI
 <Snippet code={variantShape} />
 
 `array` takes an element schema and `object` takes an OBJECT schema in the same way. JSON numbers
-that a JavaScript number cannot hold exactly reject the result instead of being rounded. Structured
-`ARRAY(type)`, `OBJECT(...)`, and `MAP` columns are not supported yet, and code generation rejects
-them.
+that a JavaScript number cannot hold exactly reject the result instead of being rounded.
 
 <Snippet code={semiStructured} />
+
+## Structured ARRAY, OBJECT, and MAP columns
+
+Declare Snowflake structured types with `structured(name, type)` and `structuredType` descriptors:
+`integer`, `decimal`, `text`, and `boolean` take the same constraint options as the column
+factories, and `array`, `object`, and `map` nest them.
+
+<Snippet code={structuredTypes} />
+
+Elements, fields, and MAP values are nullable unless declared `.notNull()`. OBJECT values must have
+exactly the declared keys. MAP values are JavaScript `Map`s keyed by `string` or `bigint`, and MAP
+keys must be VARCHAR or NUMBER with scale 0. NUMBER elements stay exact, and decimals are padded to
+their declared scale. Writes cast to the declared type. FLOAT, temporal, binary, and semi-structured
+elements are not supported yet.
 
 ## Spatial and vector columns
 
