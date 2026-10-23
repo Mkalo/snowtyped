@@ -66,6 +66,8 @@ pnpm test:integration
 
 Each test file creates a schema named `SFLIB_TEST_<random UUID>`, seeds three deterministic customers including a 38-digit-capable integer and an exact decimal plus the tables it needs, executes the library's queries, and drops that schema in teardown. [Live coverage](live-coverage.md) maps the files to features. Setup failures after schema creation also attempt cleanup. No existing schema is selected for deletion.
 
+Files run in parallel, six at a time by default. Set `SNOWTYPED_INTEGRATION_WORKERS` to change that; `1` runs them one after another. Each running file holds one session, and the pool tests open up to four more, so keep the count within the warehouse's `MAX_CONCURRENCY_LEVEL` (8 by default) to avoid queued statements.
+
 If the process is killed or the network fails during cleanup, a schema can remain. Inspect only schemas with the `SFLIB_TEST_` prefix in the dedicated database and remove known abandoned test schemas manually. There is no automatic sweep of old schemas.
 
 Common failures:
