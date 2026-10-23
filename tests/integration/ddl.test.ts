@@ -30,6 +30,8 @@ import {
   select,
   snowflakeTable,
   sql,
+  structuredType as st,
+  structured,
   text,
   time,
   timestamp,
@@ -459,5 +461,56 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
       await expect(db.queryRaw(sql.unsafe(statement.compile().sql))).rejects.toThrow();
     await db.queryRaw(sql.unsafe(alter.dropDefault('KIND').compile().sql));
     expect((await inspectSchema(db, typed)).tables[0]?.columns[2]?.serverValue).toBeNull();
+  });
+
+  it('maps structured columns and reads them back after a hand-written ALTER', async () => {
+    const profile = (extra: boolean) =>
+      st.object({
+        Name: st.text({ length: 20 }),
+        score: st.decimal({ precision: 10, scale: 2 }),
+        ...(extra ? { active: st.boolean() } : {}),
+      });
+    const shapes = (extra: boolean) =>
+      snowflakeTable(
+        'SHAPES',
+        {
+          id: integer('ID').notNull(),
+          counts: structured('COUNTS', st.array(st.integer())),
+          profile: structured('PROFILE', profile(extra)),
+          flags: structured('FLAGS', st.map(st.text(), st.array(st.boolean()))),
+          ids: structured('IDS', st.map(st.integer({ precision: 9 }), st.text())),
+          first: structured('FIRST', st.array(st.integer())).virtual('[1]::ARRAY(NUMBER(38,0))'),
+        },
+        typed,
+      );
+    const current = shapes(false);
+    const v1 = defineSchema(typed, [current]);
+    await pushSchema(db, v1);
+    expect(await checkDrift(db, v1)).toEqual({ changes: [], unsupported: [] });
+    const table = sql.identifier(database, typed.schema, 'SHAPES');
+    await db.queryRaw(
+      sql`INSERT INTO ${table} (ID, COUNTS) SELECT 1, ARRAY_CONSTRUCT(1, 2)::ARRAY(NUMBER(38,0))`,
+    );
+    expect(
+      (
+        await db.execute(
+          select(current, { counts: current.columns.counts, first: current.columns.first }),
+        )
+      ).rows,
+    ).toEqual([{ counts: [1n, 2n], first: [1n] }]);
+
+    await db.queryRaw(
+      sql`ALTER TABLE ${table} ALTER COLUMN "PROFILE" SET DATA TYPE ${sql.unsafe(profile(true).sql)}`,
+    );
+    const v2 = defineSchema(typed, [shapes(true)]);
+    expect(await checkDrift(db, v2)).toEqual({ changes: [], unsupported: [] });
+    expect((await checkDrift(db, v1)).unsupported).toEqual([
+      {
+        table: 'SHAPES',
+        column: 'PROFILE',
+        reason:
+          'Cannot change OBJECT("Name" VARCHAR(20), "score" NUMBER(10,2), "active" BOOLEAN) to OBJECT("Name" VARCHAR(20), "score" NUMBER(10,2)) in place.',
+      },
+    ]);
   });
 });

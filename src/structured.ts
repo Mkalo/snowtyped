@@ -28,7 +28,7 @@ export function structured<T>(name: string, type: StructuredType<T, boolean>): C
     jsonText((_value, source) => new JsonNumber(source)).pipe(required.decode),
     required.value,
     false,
-    undefined,
+    { constraints: { structure: required.sql }, type: required.sql },
     (value) =>
       Object.freeze({
         kind: 'cast',

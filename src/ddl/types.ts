@@ -16,6 +16,7 @@ export type PhysicalType =
       readonly element: 'INT' | 'FLOAT';
       readonly dimension: number;
     }
+  | { readonly kind: 'STRUCTURED'; readonly sql: string }
   | { readonly kind: PlainKind };
 type PlainKind =
   | 'FLOAT'
@@ -102,6 +103,8 @@ export function renderType(type: PhysicalType): string {
       return `${type.kind}(${type.precision})`;
     case 'VECTOR':
       return `VECTOR(${type.element}, ${type.dimension})`;
+    case 'STRUCTURED':
+      return type.sql;
     default:
       return type.kind;
   }
@@ -125,6 +128,7 @@ const compatible: Record<DataType, readonly PhysicalType['kind'][]> = {
   geography: ['GEOGRAPHY'],
   geometry: ['GEOMETRY'],
   vector: ['VECTOR'],
+  structured: ['STRUCTURED'],
 };
 
 /** The type a column's declared size constraints imply. GEOMETRY SRIDs are checked per value. */
@@ -132,7 +136,7 @@ function declaredType(
   dataType: DataType,
   constraints: ColumnConstraints,
 ): PhysicalType | undefined {
-  const { length, precision, scale, dimension, element } = constraints;
+  const { length, precision, scale, dimension, element, structure } = constraints;
   switch (dataType) {
     case 'text':
       return length === undefined ? undefined : sqlType.varchar(length);
@@ -151,6 +155,10 @@ function declaredType(
         : sqlType.timestamp(dataType.slice(10) as 'ntz' | 'ltz' | 'tz', precision);
     case 'vector':
       return sqlType.vector(element as 'int' | 'float', dimension as number);
+    case 'structured':
+      if (structure === undefined)
+        throw new TypeError('structured() columns need their structured type.');
+      return Object.freeze({ kind: 'STRUCTURED', sql: structure });
     default:
       return undefined;
   }
@@ -193,7 +201,10 @@ export function physicalType(
 }
 
 /** Lengths INFORMATION_SCHEMA reports for a VARCHAR declared without one. */
-const defaultVarcharLengths = [16_777_216, 134_217_728];
+export const defaultVarcharLengths = [16_777_216, 134_217_728];
+
+const canonical = (structure: string) =>
+  structure.replace(/VARCHAR\((?:16777216|134217728)\)/g, 'VARCHAR');
 
 export function sameType(desired: PhysicalType, observed: ObservedType): boolean {
   if (observed.kind !== desired.kind) return false;
@@ -222,6 +233,8 @@ export function sameType(desired: PhysicalType, observed: ObservedType): boolean
       return desired.precision === (observed as { precision: number }).precision;
     case 'VECTOR':
       return renderType(desired) === renderType(observed as PhysicalType);
+    case 'STRUCTURED':
+      return canonical(desired.sql) === canonical((observed as { sql: string }).sql);
     default:
       return true;
   }

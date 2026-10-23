@@ -2,7 +2,7 @@ import * as z from 'zod';
 import type { ServerValue } from '../schema.js';
 import type { SnowflakeClient } from '../snowflake/client.js';
 import { sql } from '../sql.js';
-import type { ObservedType } from './types.js';
+import { defaultVarcharLengths, type ObservedType } from './types.js';
 
 export interface ObservedColumn {
   readonly name: string;
@@ -59,7 +59,67 @@ const metadata = () => ({
 });
 type ColumnRow = z.infer<ReturnType<typeof metadata>['columns']>[number];
 
-function observedType(row: ColumnRow): ObservedType {
+/** A structured type as `SHOW COLUMNS` reports it. */
+interface ShownType {
+  readonly type: string;
+  readonly precision?: number | undefined;
+  readonly scale?: number | undefined;
+  readonly length?: number | undefined;
+  readonly elementType?: ShownType | undefined;
+  readonly keyType?: ShownType | undefined;
+  readonly valueType?: ShownType | undefined;
+  readonly fields?:
+    | readonly { readonly fieldName: string; readonly fieldType: ShownType }[]
+    | undefined;
+}
+const shownType: z.ZodType<ShownType> = z.lazy(() =>
+  z.object({
+    type: z.string(),
+    precision: z.number().optional(),
+    scale: z.number().optional(),
+    length: z.number().optional(),
+    elementType: shownType.optional(),
+    keyType: shownType.optional(),
+    valueType: shownType.optional(),
+    fields: z.array(z.object({ fieldName: z.string(), fieldType: shownType })).optional(),
+  }),
+);
+const shownColumns = z.array(z.object({ column_name: z.string(), data_type: z.string() }));
+const structuredAlias = /^(?:ARRAY|OBJECT|MAP)\(/;
+
+/** Renders the spelling `structuredType` builders produce; other element types are unmodeled. */
+function structureSql(type: ShownType): string | undefined {
+  switch (type.type) {
+    case 'FIXED':
+      return `NUMBER(${type.precision},${type.scale})`;
+    case 'TEXT':
+      return defaultVarcharLengths.includes(type.length as number)
+        ? 'VARCHAR'
+        : `VARCHAR(${type.length})`;
+    case 'BOOLEAN':
+      return 'BOOLEAN';
+    case 'ARRAY': {
+      const element = type.elementType && structureSql(type.elementType);
+      return element && `ARRAY(${element})`;
+    }
+    case 'OBJECT': {
+      const fields = type.fields?.map((field) => {
+        const value = structureSql(field.fieldType);
+        return value && `"${field.fieldName.replaceAll('"', '""')}" ${value}`;
+      });
+      return fields?.every(Boolean) ? `OBJECT(${fields.join(', ')})` : undefined;
+    }
+    case 'MAP': {
+      const key = type.keyType && structureSql(type.keyType);
+      const value = type.valueType && structureSql(type.valueType);
+      return key && value && `MAP(${key}, ${value})`;
+    }
+    default:
+      return undefined;
+  }
+}
+
+function observedType(row: ColumnRow, shown: string | undefined): ObservedType {
   const precision = row.DATETIME_PRECISION ?? 9;
   switch (row.DATA_TYPE) {
     case 'NUMBER':
@@ -89,10 +149,18 @@ function observedType(row: ColumnRow): ObservedType {
     }
     case 'ARRAY':
     case 'OBJECT':
-      // Structured ARRAY(...) and OBJECT(...) types are not modeled here.
-      return /^(?:ARRAY|OBJECT)\(/.test(row.DATA_TYPE_ALIAS ?? '')
+    case 'MAP': {
+      if (!structuredAlias.test(row.DATA_TYPE_ALIAS ?? ''))
+        return row.DATA_TYPE === 'MAP'
+          ? { kind: 'OTHER', name: row.DATA_TYPE }
+          : { kind: row.DATA_TYPE };
+      // INFORMATION_SCHEMA aliases upper-case field names and can lag behind ALTER, so SHOW COLUMNS is used.
+      const structure =
+        shown === undefined ? undefined : structureSql(shownType.parse(JSON.parse(shown)));
+      return structure === undefined
         ? { kind: 'OTHER', name: row.DATA_TYPE_ALIAS as string }
-        : { kind: row.DATA_TYPE };
+        : { kind: 'STRUCTURED', sql: structure };
+    }
     case 'BINARY':
     case 'FLOAT':
     case 'BOOLEAN':
@@ -146,6 +214,16 @@ export async function inspectSchema(
       FROM ${view('COLUMNS')} WHERE TABLE_SCHEMA = ${target.schema} ORDER BY TABLE_NAME, ORDINAL_POSITION`,
     ),
   );
+  const shown = new Map<string, string>();
+  for (const table of tables) {
+    const rows = columns.filter((row) => row.TABLE_NAME === table.TABLE_NAME);
+    if (!rows.some((row) => structuredAlias.test(row.DATA_TYPE_ALIAS ?? ''))) continue;
+    const name = sql.identifier(target.database, target.schema, table.TABLE_NAME);
+    for (const entry of shownColumns.parse(
+      await client.queryRaw(sql`SHOW COLUMNS IN TABLE ${name}`),
+    ))
+      shown.set(JSON.stringify([table.TABLE_NAME, entry.column_name]), entry.data_type);
+  }
   return Object.freeze({
     database: target.database,
     schema: target.schema,
@@ -162,7 +240,9 @@ export async function inspectSchema(
               .map((row) =>
                 Object.freeze({
                   name: row.COLUMN_NAME,
-                  type: Object.freeze(observedType(row)),
+                  type: Object.freeze(
+                    observedType(row, shown.get(JSON.stringify([row.TABLE_NAME, row.COLUMN_NAME]))),
+                  ),
                   notNull: row.IS_NULLABLE === 'NO',
                   comment: row.COMMENT,
                   serverValue: freeze(serverValue(row)),

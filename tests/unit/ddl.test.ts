@@ -33,6 +33,8 @@ import {
   object,
   type RawQuery,
   snowflakeTable,
+  structured,
+  structuredType,
   text,
   time,
   timestamp,
@@ -132,6 +134,18 @@ describe('physical types', () => {
     expect(physicalType('geography', {}, undefined)).toEqual(sqlType.geography());
     expect(physicalType('geometry', { srid: 4326 }, undefined)).toEqual(sqlType.geometry());
     expect(() => physicalType('array', {}, sqlType.variant())).toThrow('cannot be stored');
+    const tags = structured(
+      'TAGS',
+      structuredType.map(structuredType.text(), structuredType.integer()),
+    );
+    expect(physicalType(tags.dataType, tags.constraints, undefined)).toEqual({
+      kind: 'STRUCTURED',
+      sql: 'MAP(VARCHAR, NUMBER(38,0))',
+    });
+    expect(() => physicalType('structured', {}, undefined)).toThrow('need their structured type');
+    expect(() => physicalType(tags.dataType, tags.constraints, sqlType.object())).toThrow(
+      'A structured column cannot be stored as OBJECT.',
+    );
   });
 
   it('derives physical types from declared column constraints', () => {
@@ -205,6 +219,14 @@ describe('physical types', () => {
     expect(sameType(sqlType.vector('int', 3), sqlType.vector('float', 3))).toBe(false);
     expect(sameType(sqlType.vector('int', 3), sqlType.vector('int', 4))).toBe(false);
     expect(alterableType(sqlType.vector('int', 3), sqlType.vector('int', 4))).toBe(false);
+    const shape = (sql: string) => ({ kind: 'STRUCTURED', sql }) as const;
+    expect(sameType(shape('ARRAY(VARCHAR(16777216))'), shape('ARRAY(VARCHAR)'))).toBe(true);
+    expect(sameType(shape('OBJECT("a" VARCHAR(134217728))'), shape('OBJECT("a" VARCHAR)'))).toBe(
+      true,
+    );
+    expect(sameType(shape('ARRAY(VARCHAR(10))'), shape('ARRAY(VARCHAR)'))).toBe(false);
+    expect(sameType(shape('ARRAY(VARCHAR)'), sqlType.array())).toBe(false);
+    expect(alterableType(shape('ARRAY(VARCHAR(10))'), shape('ARRAY(VARCHAR(20))'))).toBe(false);
     expect(alterableType(sqlType.varchar(10), sqlType.varchar(20))).toBe(true);
     expect(alterableType(sqlType.varchar(10), sqlType.varchar())).toBe(true);
     expect(alterableType(sqlType.varchar(20), sqlType.varchar(10))).toBe(false);
@@ -691,7 +713,6 @@ describe('schema inspection', () => {
         row('VE', 'VECTOR', { DATA_TYPE_ALIAS: 'VECTOR(INT, 3)' }),
         row('VF', 'VECTOR', { DATA_TYPE_ALIAS: 'VECTOR(FLOAT, 256)' }),
         row('VX', 'VECTOR'),
-        row('SA', 'ARRAY', { DATA_TYPE_ALIAS: 'ARRAY(NUMBER(38, 0))' }),
         row('PA', 'ARRAY', { DATA_TYPE_ALIAS: 'ARRAY' }),
         row('DF', 'DECFLOAT', { DATA_TYPE_ALIAS: 'DECFLOAT' }),
         row('UK', 'UNKNOWN'),
@@ -727,7 +748,7 @@ describe('schema inspection', () => {
     });
     expect(schema.tables.map((table) => [table.name, table.comment, table.columns.length])).toEqual(
       [
-        ['T', 'table', 28],
+        ['T', 'table', 27],
         ['EMPTY', null, 0],
       ],
     );
@@ -752,7 +773,6 @@ describe('schema inspection', () => {
       sqlType.vector('int', 3),
       sqlType.vector('float', 256),
       { kind: 'OTHER', name: 'VECTOR' },
-      { kind: 'OTHER', name: 'ARRAY(NUMBER(38, 0))' },
       sqlType.array(),
       { kind: 'OTHER', name: 'DECFLOAT' },
       { kind: 'OTHER', name: 'UNKNOWN' },
@@ -772,7 +792,7 @@ describe('schema inspection', () => {
     expect(schema.tables[0]?.columns.map((entry) => entry.serverValue)).toEqual([
       ...Array(15).fill(null),
       { kind: 'default', expression: "'x'" },
-      ...Array(8).fill(null),
+      ...Array(7).fill(null),
       { kind: 'identity', start: 5, increment: -2, order: false },
       { kind: 'identity' },
       { kind: 'virtual', expression: 'N * 2' },
@@ -782,6 +802,72 @@ describe('schema inspection', () => {
     expect(queryRaw.mock.calls[2]?.[0].compile().sql).toContain(
       'IDENTITY_ORDERED, KIND, EXPRESSION',
     );
+  });
+
+  it('reads structured types through SHOW COLUMNS', async () => {
+    const fixed = (precision: number, scale: number) => ({ type: 'FIXED', precision, scale });
+    const textType = (length: number) => ({ type: 'TEXT', length });
+    const shown = {
+      A: { type: 'ARRAY', elementType: fixed(38, 0) },
+      O: {
+        type: 'OBJECT',
+        fields: [
+          { fieldName: 'a "b"', fieldType: textType(16_777_216) },
+          {
+            fieldName: 'n',
+            fieldType: { type: 'MAP', keyType: textType(10), valueType: { type: 'BOOLEAN' } },
+          },
+        ],
+      },
+      E: { type: 'OBJECT', fields: [] },
+      M: {
+        type: 'MAP',
+        keyType: fixed(10, 0),
+        valueType: { type: 'ARRAY', elementType: textType(134_217_728) },
+      },
+      TS: { type: 'ARRAY', elementType: { type: 'TIMESTAMP_NTZ' } },
+      NF: { type: 'OBJECT' },
+      NE: { type: 'ARRAY' },
+      BF: { type: 'OBJECT', fields: [{ fieldName: 'x', fieldType: { type: 'DATE' } }] },
+      MK: { type: 'MAP', valueType: { type: 'BOOLEAN' } },
+      MV: { type: 'MAP', keyType: textType(5) },
+    };
+    const results = [
+      [{ COMMENT: null }],
+      [
+        { TABLE_NAME: 'T', COMMENT: null },
+        { TABLE_NAME: 'PLAIN', COMMENT: null },
+      ],
+      [
+        ...Object.keys(shown).map((name) =>
+          row(name, 'ARRAY', { DATA_TYPE_ALIAS: `ARRAY(${name})` }),
+        ),
+        row('LOST', 'OBJECT', { DATA_TYPE_ALIAS: 'OBJECT("LOST" BOOLEAN)' }),
+        row('BARE', 'MAP'),
+        { ...row('P', 'ARRAY'), TABLE_NAME: 'PLAIN' },
+      ],
+      Object.entries(shown).map(([name, type]) => ({
+        column_name: name,
+        data_type: JSON.stringify(type),
+      })),
+    ];
+    const queryRaw = vi.fn(async (_query: RawQuery) => results.shift());
+    const schema = await inspectSchema({ queryRaw } as unknown as SnowflakeClient, target);
+    expect(queryRaw).toHaveBeenCalledTimes(4);
+    expect(queryRaw.mock.calls[3]?.[0].compile().sql).toBe('SHOW COLUMNS IN TABLE "DB"."APP"."T"');
+    expect(schema.tables[0]?.columns.map((column) => column.type)).toEqual([
+      { kind: 'STRUCTURED', sql: 'ARRAY(NUMBER(38,0))' },
+      { kind: 'STRUCTURED', sql: 'OBJECT("a ""b""" VARCHAR, "n" MAP(VARCHAR(10), BOOLEAN))' },
+      { kind: 'STRUCTURED', sql: 'OBJECT()' },
+      { kind: 'STRUCTURED', sql: 'MAP(NUMBER(10,0), ARRAY(VARCHAR))' },
+      ...['TS', 'NF', 'NE', 'BF', 'MK', 'MV'].map((name) => ({
+        kind: 'OTHER',
+        name: `ARRAY(${name})`,
+      })),
+      { kind: 'OTHER', name: 'OBJECT("LOST" BOOLEAN)' },
+      { kind: 'OTHER', name: 'MAP' },
+    ]);
+    expect(schema.tables[1]?.columns[0]?.type).toEqual(sqlType.array());
   });
 
   it('reports a missing schema and rejects malformed metadata', async () => {
@@ -873,6 +959,19 @@ describe('server values', () => {
     expect(() => defineTable(snowflakeTable('T', { a: text('A').notNull().virtual('1') }))).toThrow(
       'Virtual column A cannot be NOT NULL.',
     );
+    const list = structuredType.array(structuredType.integer());
+    expect(() =>
+      defineTable(snowflakeTable('T', { a: structured('A', list).serverDefault('NULL') })),
+    ).toThrow('Structured column A cannot have a DEFAULT.');
+    expect(
+      sqlOf(
+        createTable(
+          defineTable(
+            snowflakeTable('T', { a: structured('A', list).virtual('[1]::ARRAY(NUMBER(38,0))') }),
+          ),
+        ),
+      ),
+    ).toBe('CREATE TABLE "T" ("A" ARRAY(NUMBER(38,0)) AS ([1]::ARRAY(NUMBER(38,0))))');
     expect(() =>
       alterTable(identifier('T')).addColumn('A', sqlType.date(), {
         serverValue: { kind: 'identity' },
@@ -984,11 +1083,15 @@ describe('DDL declarations keep column codecs usable', () => {
       m: geography('M'),
       n: geometry('N', { srid: 4326 }),
       o: vector('O', 'float', 8),
+      p: structured(
+        'P',
+        structuredType.object({ a: structuredType.decimal({ precision: 5, scale: 2 }) }),
+      ),
     });
     expect(
       createTable(defineTable(table, { types: { c: sqlType.number(5, 1) } })).compile().sql,
     ).toBe(
-      'CREATE TABLE "ALL" ("A" VARCHAR, "B" NUMBER(38, 0), "C" NUMBER(5, 1), "D" BOOLEAN, "E" FLOAT, "F" DATE, "G" TIME(9), "H" TIMESTAMP_TZ(9), "I" VARIANT, "J" BINARY, "K" ARRAY, "L" OBJECT, "M" GEOGRAPHY, "N" GEOMETRY, "O" VECTOR(FLOAT, 8))',
+      'CREATE TABLE "ALL" ("A" VARCHAR, "B" NUMBER(38, 0), "C" NUMBER(5, 1), "D" BOOLEAN, "E" FLOAT, "F" DATE, "G" TIME(9), "H" TIMESTAMP_TZ(9), "I" VARIANT, "J" BINARY, "K" ARRAY, "L" OBJECT, "M" GEOGRAPHY, "N" GEOMETRY, "O" VECTOR(FLOAT, 8), "P" OBJECT("a" NUMBER(5,2)))',
     );
   });
 });

@@ -122,6 +122,8 @@ export function serverClause(
     );
   if (value.kind === 'identity' && type.kind !== 'NUMBER' && type.kind !== 'FLOAT')
     throw new TypeError(`Identity column ${name} cannot be stored as ${renderType(type)}.`);
+  if (value.kind === 'default' && type.kind === 'STRUCTURED')
+    throw new TypeError(`Structured column ${name} cannot have a DEFAULT.`);
   if (value.kind === 'virtual' && notNull)
     throw new TypeError(`Virtual column ${name} cannot be NOT NULL.`);
   return { serverValue: value };

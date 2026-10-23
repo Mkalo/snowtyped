@@ -59,6 +59,8 @@ export interface ColumnConstraints {
   readonly dimension?: number;
   readonly element?: 'int' | 'float';
   readonly srid?: number;
+  /** The SQL spelling of a structured ARRAY, OBJECT, or MAP type. */
+  readonly structure?: string;
 }
 export interface Column<
   T,
