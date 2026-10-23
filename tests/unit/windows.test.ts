@@ -226,9 +226,10 @@ describe('explicit window frames', () => {
     expect(() => rowsBetween(boundary({ preceding: 1, unit: 'DAY' }), 'CURRENT ROW')).toThrow(
       'Interval offsets need a supported unit and a RANGE frame.',
     );
-    expect(() =>
-      rangeBetween(boundary({ preceding: 1, unit: 'FORTNIGHT' }), 'CURRENT ROW'),
-    ).toThrow('supported unit');
+    for (const unit of ['FORTNIGHT', 'MICROSECOND', 'NANOSECOND'])
+      expect(() => rangeBetween(boundary({ preceding: 1, unit }), 'CURRENT ROW')).toThrow(
+        'supported unit',
+      );
     for (const offset of [-1, 1.5])
       expect(() => rangeBetween({ preceding: offset, unit: 'DAY' }, 'CURRENT ROW')).toThrow(
         'Interval offsets must be nonnegative safe integers.',

@@ -65,9 +65,7 @@ export type IntervalUnit =
   | 'HOUR'
   | 'MINUTE'
   | 'SECOND'
-  | 'MILLISECOND'
-  | 'MICROSECOND'
-  | 'NANOSECOND';
+  | 'MILLISECOND';
 export interface FrameBoundaryNode {
   readonly bound:
     | 'UNBOUNDED PRECEDING'

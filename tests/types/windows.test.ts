@@ -84,6 +84,10 @@ rangeBetween({ following: 1 }, 'CURRENT ROW');
 rowsBetween({ preceding: 1, unit: 'DAY' }, 'CURRENT ROW');
 // @ts-expect-error Interval units are fixed.
 rangeBetween({ preceding: 1, unit: 'FORTNIGHT' }, 'CURRENT ROW');
+// @ts-expect-error Snowflake rejects sub-millisecond interval frames.
+rangeBetween({ preceding: 1, unit: 'MICROSECOND' }, 'CURRENT ROW');
+// @ts-expect-error Snowflake rejects sub-millisecond interval frames.
+rangeBetween({ preceding: 1, unit: 'NANOSECOND' }, 'CURRENT ROW');
 const joined = over(sum(orders.columns.amount), {
   partitionBy: [other.columns.id],
   orderBy: [asc(orders.columns.id)],

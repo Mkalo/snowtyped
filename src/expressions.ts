@@ -394,8 +394,6 @@ const intervalUnits: readonly string[] = [
   'MINUTE',
   'SECOND',
   'MILLISECOND',
-  'MICROSECOND',
-  'NANOSECOND',
 ];
 function frameBoundary(units: WindowFrameNode['units'], value: RangeBoundary): FrameBoundaryNode {
   if (typeof value === 'string') {
