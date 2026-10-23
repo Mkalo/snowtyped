@@ -2,11 +2,13 @@ import { Readable } from 'node:stream';
 import type { Column, RowStatement, SnowflakeError, StatementOption } from 'snowflake-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { insert, integer, select, snowflakeTable, sql, text } from '../../src/index.js';
+import { isUnusable } from '../../src/snowflake/client.js';
 import { createClient, type SnowflakeClient } from '../../src/snowflake/index.js';
 import { normalizeWireRow } from '../../src/snowflake/wire.js';
 
 const table = snowflakeTable('T', { id: integer('ID').notNull(), name: text('NAME') });
 const query = select(table);
+const canceled = () => Object.assign(new Error('SQL execution canceled'), { code: '000604' });
 function driver(rows: unknown[] | undefined = [['1', 'Ada']], deferred = false) {
   const readable = Readable.from(rows ?? [], { objectMode: true });
   const statement = {
@@ -102,32 +104,114 @@ describe('execution, streaming, and cancellation', () => {
     });
     const promise = createClient(fake.connection).execute(query, { signal: controller.signal });
     controller.abort(error);
+    cancelled?.();
+    cancelled?.();
     fake.finish();
-    cancelled?.();
-    cancelled?.();
     fake.finish(new Error('late'));
     await expect(promise).rejects.toBe(error);
     expect(fake.statement.cancel).toHaveBeenCalledOnce();
   });
 
-  it('surfaces SDK cancellation errors and thrown cancellations', async () => {
-    const failed = driver(undefined, true);
+  it('settles with the real result when the statement completes before the cancel', async () => {
+    const fake = driver([['1', 'Ada']], true);
+    fake.statement.cancel.mockImplementation(() => {});
     const controller = new AbortController();
+    const promise = createClient(fake.connection).execute(query, { signal: controller.signal });
+    controller.abort(new Error('stop'));
+    fake.finish();
+    expect((await promise).rows).toEqual([{ id: 1n, name: 'Ada' }]);
+  });
+
+  it('retries a cancel that reaches Snowflake before the statement is executing', async () => {
+    vi.useFakeTimers();
+    try {
+      const notExecuting = Object.assign(new Error('not currently executing'), { code: '000605' });
+      const fake = driver(undefined, true);
+      let attempts = 0;
+      fake.statement.cancel.mockImplementation((callback) => {
+        attempts += 1;
+        callback?.(attempts < 8 ? (notExecuting as unknown as SnowflakeError) : undefined);
+      });
+      const controller = new AbortController();
+      const error = new Error('stop');
+      const promise = createClient(fake.connection).execute(query, { signal: controller.signal });
+      controller.abort(error);
+      const rejected = expect(promise).rejects.toBe(error);
+      const delays = [50, 100, 200, 400, 800, 1000, 1000];
+      for (const [index, delay] of delays.entries()) {
+        expect(attempts).toBe(index + 1);
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(attempts).toBe(index + 1);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      await rejected;
+      expect(attempts).toBe(8);
+      fake.finish(canceled());
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(attempts).toBe(8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['succeeds', undefined],
+    ['fails', canceled()],
+  ])('stops retrying the cancel once the statement %s', async (_outcome, failure) => {
+    vi.useFakeTimers();
+    try {
+      const notExecuting = Object.assign(new Error('not currently executing'), { code: '000605' });
+      const fake = driver([['1', 'Ada']], true);
+      fake.statement.cancel.mockImplementation((callback) =>
+        callback?.(notExecuting as unknown as SnowflakeError),
+      );
+      const controller = new AbortController();
+      const error = new Error('stop');
+      const promise = createClient(fake.connection).execute(query, { signal: controller.signal });
+      controller.abort(error);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(fake.statement.cancel).toHaveBeenCalledTimes(3);
+      fake.finish(failure);
+      if (failure) await expect(promise).rejects.toBe(error);
+      else expect((await promise).rows).toEqual([{ id: 1n, name: 'Ada' }]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(fake.statement.cancel).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for the real outcome when the cancel fails or throws', async () => {
+    const failed = driver([['1', 'Ada']], true);
     failed.statement.cancel.mockImplementation((callback) =>
       callback?.(new Error('cancel failed') as SnowflakeError),
     );
-    const promise = createClient(failed.connection).execute(query, { signal: controller.signal });
-    controller.abort(new Error('stop'));
-    await expect(promise).rejects.toBeInstanceOf(AggregateError);
-    const thrown = driver(undefined, true);
-    const other = new AbortController();
-    const error = new Error('cancel throws');
-    thrown.statement.cancel.mockImplementation(() => {
-      throw error;
-    });
-    const rejected = createClient(thrown.connection).execute(query, { signal: other.signal });
-    other.abort();
+    const controller = new AbortController();
+    const error = new Error('stop');
+    const rejected = createClient(failed.connection).execute(query, { signal: controller.signal });
+    controller.abort(error);
+    failed.finish(canceled());
     await expect(rejected).rejects.toBe(error);
+    expect(failed.statement.cancel).toHaveBeenCalledOnce();
+
+    const compile = driver(undefined, true);
+    compile.statement.cancel.mockImplementation(() => {});
+    const own = new Error('SQL compilation error');
+    const aborted = new AbortController();
+    const failing = createClient(compile.connection).execute(query, { signal: aborted.signal });
+    aborted.abort(error);
+    compile.finish(own);
+    await expect(failing).rejects.toBe(own);
+
+    const thrown = driver([['1', 'Ada']], true);
+    thrown.statement.cancel.mockImplementation(() => {
+      throw new Error('cancel throws');
+    });
+    const other = new AbortController();
+    const completed = createClient(thrown.connection).execute(query, { signal: other.signal });
+    other.abort();
+    thrown.finish();
+    expect((await completed).rows).toEqual([{ id: 1n, name: 'Ada' }]);
   });
 
   it('supports deferred completion and native request deadlines', async () => {
@@ -313,13 +397,28 @@ describe('transaction sessions', () => {
     expect(commits.execute.mock.calls.at(-1)?.[0].sqlText).toBe('ROLLBACK');
   });
   it('retains both failures if rollback fails and unlocks after BEGIN failure', async () => {
-    const connection = transactionDriver({ ROLLBACK: new Error('rollback') });
+    const callback = new Error('callback');
+    const rollback = new Error('rollback');
+    const connection = transactionDriver({ ROLLBACK: rollback });
     const db = createClient(connection);
+    expect(isUnusable(connection)).toBe(false);
+    const failure = await db
+      .transaction(async () => {
+        throw callback;
+      })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([callback, rollback]);
+    expect(isUnusable(connection)).toBe(true);
+    const calls = connection.execute.mock.calls.length;
+    await expect(db.execute(query)).rejects.toThrow('ROLLBACK failed');
+    await expect(db.queryRaw`SELECT 1`).rejects.toThrow('ROLLBACK failed');
+    await expect(db.transaction(async () => 1)).rejects.toThrow('ROLLBACK failed');
+    await expect(createClient(connection).execute(query)).rejects.toThrow('ROLLBACK failed');
     await expect(
-      db.transaction(async () => {
-        throw new Error('callback');
-      }),
-    ).rejects.toBeInstanceOf(AggregateError);
+      createClient(connection).stream(query)[Symbol.asyncIterator]().next(),
+    ).rejects.toThrow('ROLLBACK failed');
+    expect(connection.execute).toHaveBeenCalledTimes(calls);
     const errors = { BEGIN: new Error('begin') };
     const begin = transactionDriver(errors);
     const client = createClient(begin);

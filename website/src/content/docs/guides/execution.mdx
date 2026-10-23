@@ -1,0 +1,69 @@
+---
+title: Execution
+description: Execute and stream queries, cancel requests, run transactions, and pool connections.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../../components/Snippet.astro';
+import executeOptions from '../../../snippets/execute-options.ts?raw';
+import pool from '../../../snippets/pool.ts?raw';
+import streaming from '../../../snippets/streaming.ts?raw';
+import transaction from '../../../snippets/transaction.ts?raw';
+
+Import `createClient` and `createPool` from `snowtyped/snowflake`. `createClient` wraps an
+existing, connected `snowflake-sdk` connection and leaves connecting and destroying it to you. No
+implicit query retries are performed.
+
+## Cancellation and deadlines
+
+`execute`, `queryRaw`, `stream`, and `streamRaw` accept `{ signal, timeoutMs }`. Pass them to
+`queryRaw` as the second argument after a `sql` fragment.
+
+<Snippet code={executeOptions} />
+
+On a pool, the deadline also covers the wait for a connection. Abort and deadline cancellation wait
+for Snowflake to accept the cancel before releasing a request. A cancel that arrives before
+Snowflake registers the statement is retried. If the statement finishes first, the request settles
+with its real outcome: a committed write resolves rather than rejecting, and a statement's own error
+(such as a compilation error) is not replaced by the abort reason.
+Stopping consumption after a query has completed destroys the row stream; it does not cancel an
+already-completed server statement.
+
+## Streaming
+
+<Snippet code={streaming} />
+
+`stream` validates each row against the declared schema. `streamRaw` yields rows with an asserted
+type and no validation.
+
+## Transactions
+
+<Snippet code={transaction} />
+
+Inside the callback, use the client it receives, await its queries, and consume or close streams
+before returning.
+
+- Await running operations and close cursors before starting a transaction on a single client.
+- While a transaction is active, the outer client rejects new queries.
+- A transaction client cannot be used after its callback finishes.
+- Nested transactions are unsupported.
+- Other callers using the original SDK connection directly are outside the client's coordination.
+- If ROLLBACK itself fails, the transaction rejects with an `AggregateError` holding both
+  failures. The session state is then unknown, so the client rejects every later operation on that
+  connection; destroy and replace it. A pool destroys such a connection instead of reusing it.
+
+<Aside type="caution">
+  Transactions provide rollback for DML. Snowflake DDL can auto-commit, so do not rely on a
+  transaction to roll back DDL.
+</Aside>
+
+## Pooling
+
+<Snippet code={pool} />
+
+`createPool(connectionOptions, poolOptions)` delegates to the official SDK pool and loads
+`snowflake-sdk` only when called. It pins one connection for an entire transaction or streamed
+iteration. Pool options are `min`, `max`, `acquireTimeoutMillis`, `idleTimeoutMillis`,
+`evictionRunIntervalMillis`, and `testOnBorrow`. A connection whose session has terminated is
+destroyed instead of being lent again. Always `close()` the pool when you are done; it waits for
+running work first. See [production use](/guides/production/) for sizing, deadlines, and limits.
