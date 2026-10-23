@@ -10,7 +10,7 @@ Keep changes aligned with these boundaries:
 
 For a new operation, define its AST representation, input types, scope, inferred output, SQL compilation, and runtime validation together. Prefer semantic nodes over raw SQL fragments. Structured queries derive validation from declared schemas. Raw tagged queries explicitly allow caller-supplied result assertions, as requested by the user; these default to unknown and do not establish runtime validation. Do not require callers to provide decoders.
 
-Add behavioral unit tests and compile-time fixtures for new public typing contracts. Coverage thresholds are 100% per implemented source file for statements, branches, functions, and lines; maintain meaningful assertions instead of excluding uncovered behavior. Unit tests must never require Snowflake credentials.
+Add behavioral unit tests and compile-time fixtures for new public typing contracts. Export changes must update the snapshot in `tests/unit/public-api.test.ts` and the [release contract](docs/release-contract.md#public-api). Coverage thresholds are 100% per implemented source file for statements, branches, functions, and lines; maintain meaningful assertions instead of excluding uncovered behavior. Unit tests must never require Snowflake credentials.
 
 New Snowflake semantics need opt-in integration coverage using `tests/support/snowflake.ts`. Fixtures must own uniquely generated schemas and clean up only the schemas they created. Use a dedicated test account role and database; see `docs/snowflake-setup.md`.
 
@@ -32,6 +32,8 @@ choices, alpha/beta/stable transitions, and version PRs. Do not hand-edit packag
 versions or publish from contribution PRs. Run `pnpm test:versioning` when changing
 this tooling.
 
-The project uses MIT. Follow [npm publication](docs/versioning.md#npm-publication)
-to release alpha/beta versions; approve staged packages with npm 2FA. Run
-`pnpm test:release` when changing release policy or automation.
+The project uses MIT. Report vulnerabilities through [SECURITY.md](SECURITY.md),
+not public issues. Follow [npm publication](docs/versioning.md#npm-publication)
+to release alpha/beta versions; approve staged packages with npm 2FA. The
+[release contract](docs/release-contract.md) lists the gates for a stable
+release. Run `pnpm test:release` when changing release policy or automation.

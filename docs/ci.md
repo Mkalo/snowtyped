@@ -97,11 +97,13 @@ Offline CI does not publish. Follow [npm publication](versioning.md#npm-publicat
 to stage MIT-licensed alpha/beta releases, verify the exact commit and tarball,
 and approve publication with npm 2FA.
 
-A supported stable release additionally needs a successful protected hosted Snowflake run on that
-same SHA (#23), production-critical hardening evidence (#17/#24), and checked
-documentation and deployment/version agreement (#21/#22). These follow-ups are
-still release requirements even though their jobs are not yet part of
-`CI required`. First npm publication and production documentation deployment need
-your approval. Stable publication also needs the explicit repository
-variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while those stable
-gates are outstanding. Do not infer stable readiness from an experimental npm release.
+A supported stable release additionally needs the
+[release contract gates](release-contract.md#release-gates): a successful
+protected hosted Snowflake run on that same SHA (#23), the required production
+scenarios (#17), and checked documentation and deployment/version agreement
+(#21/#22). These are still release requirements even though their jobs are not
+yet part of `CI required`. First npm publication and production documentation
+deployment need your approval. Stable publication also needs the explicit
+repository variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while
+those stable gates are outstanding. Do not infer stable readiness from an
+experimental npm release.
