@@ -11,32 +11,35 @@ const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort()
 const expected = {
   snowtyped: {
     values: names(
-      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date
-      dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div
-      dynamicPivot eq flatten float generateSchema geography geometry gt gte ilike inArray
-      insert insertFrom integer introspect isNotNull isNull jsonPath lag lead length like lower
-      lt lte max mergeInto min mul ne not object or over pivot rangeBetween rank recursiveCte
-      rowNumber rowsBetween select snowflakeTable sql sub substring sum text time timestamp
-      timeTravel trim unpivot update updateFrom upper variant vector`,
+      `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date dateAdd
+      dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div dynamicPivot eq
+      exists flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
+      inSubquery integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte
+      matchRecognize max mergeInto min mul ne not notExists object or over pivot rangeBetween rank
+      recursiveCte rowNumber rowPattern rowsBetween scalar select snowflakeTable sql sub substring
+      sum text time timestamp timeTravel trim unpivot update updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
-      `AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue Column
-      ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType DatePart Expression
-      FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
-      GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
-      InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
-      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering PivotAggregate
-      PivotColumns PivotOptions PivotValue Predicate RangeBoundary RawQuery RecursiveName
-      RecursiveOperand RecursiveRow Selection SelectQuery ServerValue ServerValueKind
-      ServerValues SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation
-      SqlParameter Table TableOptions UnionRow UnpivotColumns UnpivotOptions UpdateValues
-      WindowFrame`,
-      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
-      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode MergeNode
-      OrderNode PivotLiteral PivotNode QueryNode RelationNode SelectNode SelfReferenceNode
-      SetOperationNode SourceReference StatementNode TableNode TemporalNode UnpivotNode
-      UpdateNode WindowFrameNode WireType`,
+      `AfterMatch AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType
+      CastValue Column ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType DatePart
+      DefineContext Expression FilteredMutation FlattenOptions FrameBoundary
+      FramedWindowOptions GeoJsonGeometry GeoPosition IdentityOptions InferColumn
+      InferExpression InferSelection InsertSource InsertValues IntersectRow IntervalUnit
+      IntrospectedColumn IntrospectedTable MatchRecognizeColumns MatchRecognizeOptions
+      MatchRowScope MatchVariableScope MeasureContext MergeQuery MutationQuery Navigation
+      OffsetWindowOptions OperandRow OrderedWindowOptions Ordering PivotAggregate PivotColumns
+      PivotOptions PivotValue Predicate QuantifiablePattern QuantifierOptions RangeBoundary
+      RawQuery RecursiveName RecursiveOperand RecursiveRow RowPattern RowsPerMatch Selection
+      SelectQuery ServerValue ServerValueKind ServerValues SetColumns SetOperand SetOperator
+      SetQuery SetScope SqlInterpolation SqlParameter Table TableOptions UnionRow
+      UnpivotColumns UnpivotOptions UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExistsNode
+      ExpressionNode FlattenNode FrameBoundaryNode IdentifierNode InsertNode InSubqueryNode
+      JoinNode MatchRecognizeNode MergeBranchNode MergeNode NavigationNode OrderNode PatternNode
+      PivotLiteral PivotNode QueryNode RelationNode SelectNode SelfReferenceNode SemanticsNode
+      SetOperationNode SourceReference StarNode StatementNode SubqueryNode TableNode TemporalNode
+      UnpivotNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {

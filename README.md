@@ -105,6 +105,18 @@ const page = all.orderBy(asc(all.columns.id)).limit(50);
 
 `.union()`, `.unionAll()`, `.intersect()`, and `.except()` combine queries whose projections have the same aliases and domains; branches are aligned by alias. UNION results are nullable when either branch is, INTERSECT only when both are, and EXCEPT keeps the left branch's types. Mixed numeric families (integer, decimal, float) or temporal kinds are rejected; same-family precision and scale widen in Snowflake. Chained calls apply to the whole preceding query, and nesting groups explicitly: every operand is parenthesized, so INTERSECT's higher keyword precedence never regroups a query. Order and paginate a combined query with its own `.columns`; branch CTEs are hoisted into one leading WITH, and serialization happens only after the set operation. Combined queries also support `.as()` and `.asCte()`.
 
+`exists`, `notExists`, `scalar`, and `inSubquery` embed a query as an expression. `.correlate(outer)` lets a subquery reference an enclosing source; correlated queries cannot execute on their own, and Snowflake only resolves correlations against the immediately enclosing query. Scalar subqueries project one column and are nullable because an empty result reads as NULL; correlated scalar subqueries must be ungrouped aggregates, and correlated subqueries cannot use LIMIT or OFFSET.
+
+```ts
+const theirs = select(orders)
+  .correlate(customers)
+  .where(eq(orders.columns.customerId, customers.columns.id));
+select(customers, {
+  name: customers.columns.name,
+  orders: scalar(theirs.select({ n: count() })),
+}).where(exists(theirs));
+```
+
 ## Snowflake syntax
 
 ```ts
@@ -143,6 +155,30 @@ const monthly = unpivot(budget, 'monthly', { value: 'amount', for: 'month', in: 
 ```
 
 `pivot` groups by every other source column; narrow the source with `.as()` first. Pivoted columns are nullable unless `aggregate` is `count` or a `default` is given, and `in` values are rendered as escaped literals because Snowflake does not accept binds there. `unpivot` requires same-typed columns (Snowflake also rejects differing NUMBER scale or timestamp precision), types `for` as the union of their keys, and drops nulls unless `includeNulls` is set. `dynamicPivot` compiles `IN (ANY)` to a raw query with `unknown` rows, since its columns are only known at execution.
+
+### MATCH_RECOGNIZE
+
+```ts
+const { variable, sequence, oneOrMore } = rowPattern;
+const vShapes = matchRecognize(stocks, 'V', {
+  partitionBy: ['company'],
+  orderBy: (row) => [asc(row.day)],
+  pattern: sequence(variable('start'), oneOrMore(variable('down')), oneOrMore(variable('up'))),
+  define: ({ row, lag }) => ({
+    down: lt(row.price, lag(row.price)),
+    up: gt(row.price, lag(row.price)),
+  }),
+  measures: ({ row, vars, first, last, matchNumber, classifier }) => ({
+    match: matchNumber(),
+    startDay: first(row.day),
+    bottomDay: last(vars.down.day),
+    kind: classifier(),
+  }),
+});
+const rows = await db.execute(select(vShapes).where(eq(vShapes.columns.kind, 'up')));
+```
+
+`matchRecognize` returns a table source that can be selected, joined, or derived further. Pattern variables come from the pattern, so `define`, `vars`, `count(variable)`, `classifier()`, and `afterMatch` only accept those names. `define` sees the classified row with `lag`, `lead`, `next`, and `last`; `measures` also get variable-qualified columns, `prev`, `first`, `final`, `running`, `matchNumber`, and `matchSequenceNumber`. Inside the clause, columns are named by their source keys. `rowsPerMatch` is `'one'` (partition keys plus measures), `'all'`, `'all-omit-empty'`, or `'all-with-unmatched'` (all source keys plus measures). Measures become nullable when unmatched rows or empty matches can appear. In ALL ROWS PER MATCH, wrap `first`/`last` of variable columns in `final`.
 
 `timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset (`2026-10-22T15:00:00-07:00`) is honored and a string without one is read in the session `TIMEZONE`. Database retention and supported selector rules still apply.
 
@@ -262,11 +298,11 @@ const result = await migrate(
 
 Snowflake commits each DDL statement on its own, so a failed migration keeps its earlier statements. The run stops with `FAILED`, and later runs refuse to continue until you fix the remaining statements and pass `resumeFailed: true`, which skips the committed ones. If a connection drops after Snowflake committed a statement but before it was recorded, that statement runs again on resume; prefer `IF NOT EXISTS` forms for such steps.
 
-`inspectSchema` reads base tables through INFORMATION_SCHEMA, and `diffSchema`/`checkDrift` compare them with `defineSchema(...)`. Diffs widen VARCHAR, change NUMBER precision, toggle NOT NULL, add nullable columns, drop columns and tables, and set comments. Narrowing NUMBER precision and setting NOT NULL fail if existing data does not fit. Adding a NOT NULL column to an existing table and other type changes (scale, timestamp precision, type family, unmodeled types) are reported as `unsupported` rather than rebuilt. Renames are never inferred. Column order, defaults, identity, clustering, and BINARY length (not reported by INFORMATION_SCHEMA) are not compared. `pushSchema` applies a diff directly without history or locking, refusing destructive changes unless `allowDestructive` is set; rerunning it continues a partial push.
+`inspectSchema` reads base tables through INFORMATION_SCHEMA, and `diffSchema`/`checkDrift` compare them with `defineSchema(...)`. Diffs widen VARCHAR, change NUMBER precision, toggle NOT NULL, add nullable, constant-default, and virtual columns, drop columns and tables, and set comments. Narrowing NUMBER precision and setting NOT NULL fail if existing data does not fit. Adding a NOT NULL column without a constant default, an identity column, or a non-constant default to an existing table, changing a column's kind of server value, and other type changes (scale, timestamp precision, type family, unmodeled types) are reported as `unsupported` rather than rebuilt. Renames are never inferred. Default and virtual expressions are compared by kind only, since Snowflake stores them rewritten; identity options are compared when declared. Column order, clustering, and BINARY length (not reported by INFORMATION_SCHEMA) are not compared. `pushSchema` applies a diff directly without history or locking, refusing destructive changes unless `allowDestructive` is set; rerunning it continues a partial push.
 
 ## Scope and distribution
 
-The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, complex nested relation projections, DDL for objects other than schemas and tables, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. Complex nested relation projections, DDL for objects other than schemas and tables, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 
