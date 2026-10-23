@@ -155,3 +155,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release.mjs finalize "$RELEASE_VERSION" "$RELEASE_SHA"
+
+  docs:
+    if: inputs.operation == 'finalize'
+    needs: finalize
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
+    with:
+      tag: v${{ inputs.version }}
