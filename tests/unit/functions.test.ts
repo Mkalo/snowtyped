@@ -7,8 +7,13 @@ import {
   caseWhen,
   cast,
   coalesce,
+  concat,
   count,
   date,
+  dateAdd,
+  dateDiff,
+  datePart,
+  dateTrunc,
   decimal,
   div,
   eq,
@@ -18,13 +23,17 @@ import {
   integer,
   isNull,
   jsonPath,
+  length,
   mul,
   select,
   snowflakeTable,
   sub,
+  substring,
   sum,
   text,
+  time,
   timestamp,
+  trim,
   variant,
 } from '../../src/index.js';
 import { resultSchema } from '../../src/schema.js';
@@ -41,9 +50,10 @@ const t = snowflakeTable('T', {
   flag: boolean('FLAG'),
   json: variant('JSON').notNull(),
   data: binary('DATA'),
+  clock: time('CLOCK').notNull(),
 });
 const o = snowflakeTable('O', { id: integer('ID').notNull(), name: text('NAME').notNull() });
-const { id, name, label, amount, price, ratio, day, at, flag, json, data } = t.columns;
+const { id, name, label, amount, price, ratio, day, at, flag, json, data, clock } = t.columns;
 
 describe('typed casts', () => {
   it('compiles every target and decodes the target domain', () => {
@@ -309,5 +319,109 @@ describe('COALESCE and CASE', () => {
       'CASE values must share one SQL domain.',
     );
     expect(() => caseWhen(gt(id, 1n), 'x').else(1n as never)).toThrow();
+  });
+});
+
+describe('string and date helpers', () => {
+  it('compiles text helpers with bound arguments and text domains', () => {
+    const selection = {
+      joined: concat(label, '-', name),
+      tag: concat(label, 'x'),
+      trimmed: trim(name),
+      clean: trim(label),
+      size: length(label),
+      part: substring(label, 2, 3),
+      tail: substring(name, -2),
+    };
+    const compiled = select(t, selection).compile();
+    for (const fragment of [
+      'CONCAT("LABEL", ?, "NAME")',
+      'TRIM("NAME")',
+      'LENGTH("LABEL")',
+      'SUBSTR("LABEL", ?, ?)',
+      'SUBSTR("NAME", ?)',
+    ])
+      expect(compiled.sql).toContain(fragment);
+    expect(compiled.binds).toEqual(['-', 'x', 2, 3, -2]);
+    expect(selection.size.wireType).toBe('integer');
+    expect(
+      resultSchema(selection).parse({
+        joined: null,
+        tag: 'ax',
+        trimmed: null,
+        clean: 'a',
+        size: '3',
+        part: 'bcd',
+        tail: null,
+      }),
+    ).toMatchObject({ size: 3n });
+    expect(() =>
+      resultSchema(selection).parse({ ...selection, tag: null, clean: null, size: null }),
+    ).toThrow();
+    expect(concat(label, o.columns.name).refs).toEqual([t.ref, o.ref]);
+    for (const invalid of [() => substring(label, 1.5), () => substring(label, 1, -1)])
+      expect(invalid).toThrow('SUBSTR');
+    expect(() => substring(label, 1, 0.5)).toThrow('SUBSTR');
+    for (const invalid of [
+      () => concat(label, day),
+      () => trim(day),
+      () => length(amount),
+      () => substring(at, 1),
+    ])
+      expect(invalid).toThrow('String helpers require text expressions.');
+  });
+
+  it('models date part applicability and temporal result domains', () => {
+    const selection = {
+      month: dateTrunc('month', day),
+      hour: dateTrunc('hour', at),
+      minute: dateTrunc('minute', clock),
+      tomorrow: dateAdd('day', 1n, day),
+      later: dateAdd('hour', 1n, day),
+      shifted: dateAdd('second', id, at),
+      days: dateDiff('day', day, at),
+      since: dateDiff('day', day, '2026-01-01'),
+      hours: dateDiff('hour', day, day),
+      year: datePart('year', day),
+      nanos: datePart('nanosecond', clock),
+    };
+    const compiled = select(t, selection).compile();
+    for (const fragment of [
+      'DATE_TRUNC(MONTH, "DAY")',
+      'DATE_TRUNC(HOUR, "AT_VALUE")',
+      'DATEADD(DAY, CAST(? AS NUMBER(38,0)), "DAY")',
+      'DATEADD(SECOND, "ID", "AT_VALUE")',
+      'DATEDIFF(DAY, "DAY", CAST(? AS DATE))',
+      'DATE_PART(YEAR, "DAY")',
+    ])
+      expect(compiled.sql).toContain(fragment);
+    expect(compiled.binds).toEqual(['1', '1', '2026-01-01']);
+    expect(Object.fromEntries(Object.entries(selection).map(([k, v]) => [k, v.wireType]))).toEqual({
+      month: 'date',
+      hour: 'timestamp_ntz',
+      minute: 'time',
+      tomorrow: 'date',
+      later: 'timestamp_ntz',
+      shifted: 'timestamp_ntz',
+      days: 'integer',
+      since: 'integer',
+      hours: 'integer',
+      year: 'integer',
+      nanos: 'integer',
+    });
+    expect(selection.month.readSchema.safeParse(null).success).toBe(false);
+    expect(selection.hour.readSchema.parse(null)).toBeNull();
+    expect(selection.shifted.readSchema.parse(null)).toBeNull();
+    expect(selection.days.readSchema.parse(null)).toBeNull();
+    expect(selection.year.readSchema.parse('2026')).toBe(2026n);
+    expect(() => dateTrunc('hour', day)).toThrow('The hour part does not apply to date values.');
+    expect(() => dateTrunc('day', clock)).toThrow('The day part does not apply to time values.');
+    expect(() => dateAdd('day', 1n, clock)).toThrow('does not apply to time values');
+    expect(() => dateDiff('day', clock, clock)).toThrow('does not apply to time values');
+    expect(() => datePart('hour', day)).toThrow('does not apply to date values');
+    expect(() => datePart('millisecond' as never, at)).toThrow('DATE_PART');
+    expect(() => dateTrunc('decade' as never, day)).toThrow('Unsupported date part: decade.');
+    expect(() => dateTrunc('day', label)).toThrow('Date helpers require');
+    expect(() => dateDiff('day', day, label)).toThrow('Date helpers require');
   });
 });

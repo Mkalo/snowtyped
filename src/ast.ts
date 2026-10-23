@@ -61,6 +61,21 @@ export interface CaseNode {
   readonly branches: readonly { readonly when: ExpressionNode; readonly result: ExpressionNode }[];
   readonly otherwise?: ExpressionNode;
 }
+export interface DatePartNode {
+  readonly kind: 'date-part';
+  readonly part:
+    | 'YEAR'
+    | 'QUARTER'
+    | 'MONTH'
+    | 'WEEK'
+    | 'DAY'
+    | 'HOUR'
+    | 'MINUTE'
+    | 'SECOND'
+    | 'MILLISECOND'
+    | 'MICROSECOND'
+    | 'NANOSECOND';
+}
 export interface InNode {
   readonly kind: 'in';
   readonly operand: ExpressionNode;
@@ -102,6 +117,7 @@ export type ExpressionNode =
   | UnaryNode
   | FunctionNode
   | CaseNode
+  | DatePartNode
   | InNode
   | WindowNode
   | JsonPathNode
@@ -253,6 +269,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         return `${node.name}(${node.distinct ? 'DISTINCT ' : ''}${node.args.length ? node.args.map((arg) => expression(arg, qualify)).join(', ') : node.name === 'COUNT' ? '*' : ''})`;
       case 'case':
         return `CASE ${node.branches.map((branch) => `WHEN ${expression(branch.when, qualify)} THEN ${expression(branch.result, qualify)}`).join(' ')}${node.otherwise ? ` ELSE ${expression(node.otherwise, qualify)}` : ''} END`;
+      case 'date-part':
+        return node.part;
       case 'in':
         return node.values.length === 0
           ? node.negate

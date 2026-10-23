@@ -6,6 +6,12 @@ import {
   caseWhen,
   cast,
   coalesce,
+  concat,
+  date,
+  dateAdd,
+  dateDiff,
+  datePart,
+  dateTrunc,
   decimal,
   div,
   eq,
@@ -15,11 +21,15 @@ import {
   integer,
   isNull,
   jsonPath,
+  length,
   mul,
   select,
   snowflakeTable,
   sub,
+  substring,
   text,
+  timestamp,
+  trim,
   variant,
 } from '../../src/index.js';
 
@@ -31,9 +41,11 @@ const accounts = snowflakeTable('ACCOUNTS', {
   rate: float('RATE').notNull(),
   bonus: decimal('BONUS'),
   active: boolean('ACTIVE'),
+  opened: date('OPENED').notNull(),
+  seen: timestamp('SEEN'),
 });
 const owners = snowflakeTable('OWNERS', { id: integer('ID').notNull() });
-const { id, code, balance, data, rate, bonus, active } = accounts.columns;
+const { id, code, balance, data, rate, bonus, active, opened, seen } = accounts.columns;
 
 const casts = select(accounts, {
   text: cast(id, 'text'),
@@ -146,3 +158,46 @@ caseWhen(gt(id, 1n), 'x').else(1n);
 caseWhen(id, 'x');
 // @ts-expect-error CASE keeps the scope of its conditions.
 select(owners, { value: caseWhen(gt(id, 1n), 'x').else('y') });
+
+const strings = select(accounts, {
+  label: concat(code, ':', cast(id, 'text')),
+  tag: concat(cast(id, 'text'), '!'),
+  trimmed: trim(code),
+  size: length(cast(id, 'text')),
+  prefix: substring(code, 1, 2),
+});
+expectTypeOf<InferSelection<typeof strings.selection>>().toEqualTypeOf<{
+  readonly label: string | null;
+  readonly tag: string;
+  readonly trimmed: string | null;
+  readonly size: bigint;
+  readonly prefix: string | null;
+}>();
+const dates = select(accounts, {
+  month: dateTrunc('month', opened),
+  next: dateAdd('day', 1n, opened),
+  shifted: dateAdd('hour', id, seen),
+  age: dateDiff('day', opened, '2026-01-01'),
+  gap: dateDiff('day', opened, seen),
+  year: datePart('year', opened),
+});
+expectTypeOf<InferSelection<typeof dates.selection>>().toEqualTypeOf<{
+  readonly month: string;
+  readonly next: string;
+  readonly shifted: string | null;
+  readonly age: bigint;
+  readonly gap: bigint | null;
+  readonly year: bigint;
+}>();
+// @ts-expect-error String helpers accept text representations.
+concat(code, 1n);
+// @ts-expect-error LENGTH accepts text representations.
+length(id);
+// @ts-expect-error Unknown date parts are rejected.
+dateTrunc('decade', opened);
+// @ts-expect-error DATE_PART does not support millisecond parts.
+datePart('millisecond', seen);
+// @ts-expect-error DATEADD amounts are integers.
+dateAdd('day', 1, opened);
+// @ts-expect-error DATEADD amounts are integer expressions.
+dateAdd('day', balance, opened);

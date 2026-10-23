@@ -6,8 +6,13 @@ import {
   caseWhen,
   cast,
   coalesce,
+  concat,
   count,
   date,
+  dateAdd,
+  dateDiff,
+  datePart,
+  dateTrunc,
   decimal,
   div,
   eq,
@@ -16,15 +21,18 @@ import {
   insert,
   integer,
   isNull,
+  length,
   mul,
   select,
   snowflakeTable,
   sql,
   sub,
+  substring,
   sum,
   text,
   time,
   timestamp,
+  trim,
 } from '../../src/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
 
@@ -244,5 +252,73 @@ describe('typed expression helpers against Snowflake', () => {
       total: sum(caseWhen(eq(m.grp, 'a'), m.qty).else(0n)),
     });
     expect((await db.execute(total)).rows).toEqual([{ total: '9007199254740996' }]);
+  });
+
+  it('applies string helpers with text nullability', async () => {
+    const query = select(metrics, {
+      joined: concat(m.grp, '-', m.note),
+      trimmed: trim(m.note),
+      size: length(m.note),
+      part: substring(m.note, 2, 3),
+      tail: substring(m.grp, -1),
+    }).orderBy(asc(m.id));
+    expect((await db.execute(query)).rows).toEqual([
+      { joined: 'a- x ', trimmed: 'x', size: 3n, part: 'x ', tail: 'a' },
+      { joined: null, trimmed: null, size: null, part: null, tail: 'a' },
+      { joined: 'b-hello', trimmed: 'hello', size: 5n, part: 'ell', tail: 'b' },
+    ]);
+  });
+
+  it('truncates, shifts, diffs, and extracts temporal values', async () => {
+    const query = select(metrics, {
+      month: dateTrunc('month', m.day),
+      hour: dateTrunc('hour', m.at),
+      minute: dateTrunc('minute', m.clock),
+      nextDay: dateAdd('day', 1n, m.day),
+      nextYear: dateAdd('year', 1n, m.day),
+      later: dateAdd('hour', 2n, m.day),
+      days: dateDiff('day', m.day, '2026-03-01'),
+      seconds: dateDiff('second', m.at, dateAdd('minute', m.id, m.at)),
+      year: datePart('year', m.day),
+      nanos: datePart('nanosecond', m.clock),
+    }).orderBy(asc(m.id));
+    expect((await db.execute(query)).rows).toEqual([
+      {
+        month: '2026-01-01',
+        hour: '2026-01-15 10:00:00.000000000',
+        minute: '10:30:00.000000000',
+        nextDay: '2026-01-16',
+        nextYear: '2027-01-15',
+        later: '2026-01-15 02:00:00.000000000',
+        days: 45n,
+        seconds: 60n,
+        year: 2026n,
+        nanos: 123456789n,
+      },
+      {
+        month: '2026-02-01',
+        hour: '2026-02-28 23:00:00.000000000',
+        minute: '23:59:00.000000000',
+        nextDay: '2026-03-01',
+        nextYear: '2027-02-28',
+        later: '2026-02-28 02:00:00.000000000',
+        days: 1n,
+        seconds: 120n,
+        year: 2026n,
+        nanos: 0n,
+      },
+      {
+        month: '2024-02-01',
+        hour: '2024-02-29 00:00:00.000000000',
+        minute: '00:00:00.000000000',
+        nextDay: '2024-03-01',
+        nextYear: '2025-02-28',
+        later: '2024-02-29 02:00:00.000000000',
+        days: 731n,
+        seconds: 180n,
+        year: 2024n,
+        nanos: 0n,
+      },
+    ]);
   });
 });

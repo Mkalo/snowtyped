@@ -65,9 +65,18 @@ export {
   caseWhen,
   cast,
   coalesce,
+  concat,
+  type DatePart,
+  dateAdd,
+  dateDiff,
+  datePart,
+  dateTrunc,
   div,
+  length,
   mul,
   sub,
+  substring,
+  trim,
 } from './functions.js';
 export {
   generateSchema,

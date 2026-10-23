@@ -1,5 +1,12 @@
 import * as z from 'zod';
-import type { ArithmeticNode, CastNode, ExpressionNode, SourceReference } from './ast.js';
+import type {
+  ArithmeticNode,
+  CastNode,
+  DatePartNode,
+  ExpressionNode,
+  SourceReference,
+  WireType,
+} from './ast.js';
 import {
   type AnyExpression,
   type Expression,
@@ -101,6 +108,22 @@ export interface CaseExpression<T, S extends string, N extends string>
     value: V,
   ): Expression<T | Widen<V>, S | ExpressionScope<V>, N | ExpressionNullScope<V>>;
 }
+type AnyNull<Vs extends readonly unknown[]> = {
+  [K in keyof Vs]: Vs[K] extends AnyExpression ? NullOf<InferExpression<Vs[K]>> : never;
+}[number];
+type TextExpression = Expression<string | null, string, string>;
+export type DatePart =
+  | 'year'
+  | 'quarter'
+  | 'month'
+  | 'week'
+  | 'day'
+  | 'hour'
+  | 'minute'
+  | 'second'
+  | 'millisecond'
+  | 'microsecond'
+  | 'nanosecond';
 type Numeric = bigint | number | string;
 type NumericExpression = Expression<Numeric | null, string, string>;
 type Operand<L> = NoInfer<NonNullable<InferExpression<L>>> | NumericExpression;
@@ -140,6 +163,22 @@ const literalTypes: Readonly<Record<string, CastType>> = {
   number: 'float',
   boolean: 'boolean',
 };
+const dateParts: readonly string[] = ['year', 'quarter', 'month', 'week', 'day'];
+const timeParts: readonly string[] = [
+  'hour',
+  'minute',
+  'second',
+  'millisecond',
+  'microsecond',
+  'nanosecond',
+];
+const temporalTypes: readonly (WireType | undefined)[] = [
+  'date',
+  'time',
+  'timestamp_ntz',
+  'timestamp_ltz',
+  'timestamp_tz',
+];
 function nullable(value: AnyExpression): boolean {
   return value.wireType === 'variant' || value.readSchema.safeParse(null).success;
 }
@@ -210,6 +249,33 @@ function arithmetic(
     values.some(nullable),
     values,
   );
+}
+function textual(values: readonly AnyExpression[]): void {
+  if (values.some((value) => value.wireType))
+    throw new TypeError('String helpers require text expressions.');
+}
+function temporal(value: AnyExpression): WireType | undefined {
+  if (!temporalTypes.includes(value.wireType))
+    throw new TypeError('Date helpers require date, time, or timestamp expressions.');
+  return value.wireType;
+}
+function partNode(
+  part: string,
+  types: readonly (WireType | undefined)[],
+  timeOfDate = false,
+): ExpressionNode {
+  if (!dateParts.includes(part) && !timeParts.includes(part))
+    throw new TypeError(`Unsupported date part: ${part}.`);
+  for (const type of types)
+    if (
+      (type === 'date' && !timeOfDate && !dateParts.includes(part)) ||
+      (type === 'time' && !timeParts.includes(part))
+    )
+      throw new TypeError(`The ${part} part does not apply to ${type} values.`);
+  return Object.freeze({ kind: 'date-part', part: part.toUpperCase() as DatePartNode['part'] });
+}
+function call(name: string, args: readonly ExpressionNode[]): ExpressionNode {
+  return { kind: 'function', name, args: Object.freeze([...args]) };
 }
 function caseExpression(
   branches: readonly (readonly [AnyExpression, unknown])[],
@@ -373,4 +439,136 @@ export function caseWhen<P extends PredicateExpression, V extends Literal | AnyE
     ExpressionScope<P> | ExpressionScope<V>,
     ExpressionNullScope<V>
   >;
+}
+export function concat<E extends TextExpression, R extends readonly (string | TextExpression)[]>(
+  first: E,
+  ...rest: R
+): Expression<
+  string | AnyNull<[E, ...R]>,
+  ExpressionScope<E> | ExpressionScope<R[number]>,
+  ExpressionNullScope<E> | ExpressionNullScope<R[number]>
+>;
+export function concat(first: AnyExpression, ...rest: unknown[]): AnyExpression {
+  const values = [first, ...rest.filter(isExpression)];
+  textual(values);
+  return derive(
+    call('CONCAT', [
+      first.expression,
+      ...rest.map((value) => (isExpression(value) ? value.expression : literal(first, value))),
+    ]),
+    domain('text'),
+    values.some(nullable),
+    values,
+  );
+}
+export function trim<E extends TextExpression>(
+  value: E,
+): Expression<string | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>> {
+  textual([value]);
+  return derive(call('TRIM', [value.expression]), domain('text'), nullable(value), [
+    value,
+  ]) as Expression<string | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>>;
+}
+export function length<E extends TextExpression>(
+  value: E,
+): Expression<bigint | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>> {
+  textual([value]);
+  return derive(call('LENGTH', [value.expression]), domain('integer'), nullable(value), [
+    value,
+  ]) as Expression<bigint | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>>;
+}
+export function substring<E extends TextExpression>(
+  value: E,
+  start: number,
+  count?: number,
+): Expression<string | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>> {
+  textual([value]);
+  if (
+    !Number.isSafeInteger(start) ||
+    (count !== undefined && !(Number.isSafeInteger(count) && count >= 0))
+  )
+    throw new TypeError('SUBSTR needs an integer start and a nonnegative integer length.');
+  return derive(
+    call('SUBSTR', [
+      value.expression,
+      scalarParameter(start),
+      ...(count === undefined ? [] : [scalarParameter(count)]),
+    ]),
+    domain('text'),
+    nullable(value),
+    [value],
+  ) as Expression<string | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>>;
+}
+export function dateTrunc<E extends TextExpression>(
+  part: DatePart,
+  value: E,
+): Expression<InferExpression<E>, ExpressionScope<E>, ExpressionNullScope<E>> {
+  const node = partNode(part, [temporal(value)]);
+  return derive(call('DATE_TRUNC', [node, value.expression]), value, nullable(value), [
+    value,
+  ]) as Expression<InferExpression<E>, ExpressionScope<E>, ExpressionNullScope<E>>;
+}
+export function dateAdd<E extends TextExpression, A extends bigint | Expression<bigint | null>>(
+  part: DatePart,
+  amount: A,
+  value: E,
+): Expression<
+  NonNullable<InferExpression<E>> | NullOf<InferExpression<E> | ValueOf<A>>,
+  ExpressionScope<E> | ExpressionScope<A>,
+  ExpressionNullScope<E> | ExpressionNullScope<A>
+> {
+  const type = temporal(value);
+  const node = partNode(part, [type], true);
+  const values = isExpression(amount) ? [value, amount] : [value];
+  return derive(
+    call('DATEADD', [
+      node,
+      isExpression(amount) ? amount.expression : literal(domain('integer'), amount),
+      value.expression,
+    ]),
+    type === 'date' && timeParts.includes(part) ? domain('timestamp_ntz') : value,
+    values.some(nullable),
+    values,
+  ) as Expression<
+    NonNullable<InferExpression<E>> | NullOf<InferExpression<E> | ValueOf<A>>,
+    ExpressionScope<E> | ExpressionScope<A>,
+    ExpressionNullScope<E> | ExpressionNullScope<A>
+  >;
+}
+export function dateDiff<S extends TextExpression, E extends string | TextExpression>(
+  part: DatePart,
+  start: S,
+  end: E,
+): Expression<
+  bigint | NullOf<InferExpression<S> | ValueOf<E>>,
+  ExpressionScope<S> | ExpressionScope<E>,
+  ExpressionNullScope<S> | ExpressionNullScope<E>
+> {
+  const values = isExpression(end) ? [start, end] : [start];
+  const node = partNode(part, values.map(temporal), true);
+  return derive(
+    call('DATEDIFF', [
+      node,
+      start.expression,
+      isExpression(end) ? end.expression : literal(start, end),
+    ]),
+    domain('integer'),
+    values.some(nullable),
+    values,
+  ) as Expression<
+    bigint | NullOf<InferExpression<S> | ValueOf<E>>,
+    ExpressionScope<S> | ExpressionScope<E>,
+    ExpressionNullScope<S> | ExpressionNullScope<E>
+  >;
+}
+export function datePart<E extends TextExpression>(
+  part: Exclude<DatePart, 'millisecond' | 'microsecond'>,
+  value: E,
+): Expression<bigint | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>> {
+  if ((['millisecond', 'microsecond'] as readonly string[]).includes(part))
+    throw new TypeError('DATE_PART does not support millisecond or microsecond parts.');
+  const node = partNode(part, [temporal(value)]);
+  return derive(call('DATE_PART', [node, value.expression]), domain('integer'), nullable(value), [
+    value,
+  ]) as Expression<bigint | NullOf<InferExpression<E>>, ExpressionScope<E>, ExpressionNullScope<E>>;
 }
