@@ -21,13 +21,14 @@ import {
   type Predicate,
 } from './expressions.js';
 import { assertScope, type SelectQuery } from './query.js';
-import type {
-  AnyColumn,
-  ColumnMap,
-  InferColumn,
-  InferSelection,
-  Selection,
-  Table,
+import {
+  type AnyColumn,
+  type ColumnMap,
+  type InferColumn,
+  type InferSelection,
+  isLeaf,
+  type Selection,
+  type Table,
 } from './schema.js';
 
 type WritableKeys<C extends ColumnMap> = {
@@ -232,6 +233,8 @@ export function insertFrom<
 ): MutationQuery {
   checkTable(table);
   query.compile();
+  if (!Object.values(query.selection).every(isLeaf))
+    throw new TypeError('An INSERT source needs flat columns, not nested projections.');
   const keys = Object.keys(query.selection);
   const columns = keys.map((key) => {
     const column = writable(table, key);

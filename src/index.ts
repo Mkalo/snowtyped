@@ -200,6 +200,7 @@ export {
   type InferSelection,
   integer,
   object,
+  type Projection,
   type Selection,
   type ServerValue,
   type ServerValueKind,
