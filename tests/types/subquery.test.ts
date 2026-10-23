@@ -66,6 +66,13 @@ const middle = select(orders, { id: orders.columns.id })
     ),
   );
 select(u).where(exists(middle));
+const both = select(other, { id: other.columns.id })
+  .correlate(users, orders)
+  .where(eq(other.columns.id, users.columns.id))
+  .where(eq(other.columns.id, orders.columns.userId));
+select(users).innerJoin(orders, eq(users.columns.id, orders.columns.userId)).where(exists(both));
+// @ts-expect-error Both correlated sources must be in the enclosing scope.
+select(users).where(exists(both));
 
 // @ts-expect-error A correlated query cannot execute on its own.
 db.execute(correlated);

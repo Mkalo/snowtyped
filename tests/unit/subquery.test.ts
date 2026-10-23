@@ -122,6 +122,9 @@ describe('subqueries', () => {
     expect(() => scalar(total.groupBy(orders.columns.userId))).toThrow('GROUP BY');
     expect(() => scalar(total.limit(1))).toThrow('LIMIT');
     expect(() => scalar(total.offset(1))).toThrow('OFFSET');
+    expect(() => exists(userOrders.limit(1))).toThrow('LIMIT and OFFSET');
+    expect(() => inSubquery(users.columns.id, userOrders.offset(1))).toThrow('LIMIT and OFFSET');
+    expect(() => exists(select(orders).limit(1))).not.toThrow();
     expect(scalar(total.groupBy()).refs).toEqual([users.ref]);
     expect(() => scalar(select(orders) as never)).toThrow('exactly one column');
   });

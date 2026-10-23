@@ -34,6 +34,7 @@ export type ScopedSelection<S extends string> = Readonly<
 export type DerivedColumns<S extends Selection, N extends string, Nullable extends string> = {
   [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N>;
 };
+type TableName<T> = T extends Table<ColumnMap, infer N> ? N : never;
 interface Uncorrelated {
   readonly outerScopeType?: never;
 }
@@ -56,9 +57,9 @@ export interface SelectQuery<
   select<const Next extends ScopedSelection<Scope | Outer>>(
     selection: Next,
   ): SelectQuery<Next, Scope, Nullable, Outer>;
-  correlate<C extends ColumnMap, N extends string>(
-    ...tables: readonly [Table<C, N>, ...Table<C, N>[]]
-  ): SelectQuery<S, Scope, Nullable, Outer | N>;
+  correlate<const T extends readonly [Table, ...Table[]]>(
+    ...tables: T
+  ): SelectQuery<S, Scope, Nullable, Outer | TableName<T[number]>>;
   innerJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
     on: Predicate<Scope | N | Outer>,
@@ -381,7 +382,10 @@ function subquery(query: AnySelectQuery, single: boolean) {
   const ast = checkedAst(state);
   if (single && ast.projections.length !== 1)
     throw new TypeError('Scalar and IN subqueries must project exactly one column.');
-  return { state, ast, correlated: query.outerSources };
+  const correlated = query.outerSources;
+  if (correlated.length && (ast.limit !== undefined || ast.offset !== undefined))
+    throw new TypeError('Snowflake rejects LIMIT and OFFSET in correlated subqueries.');
+  return { state, ast, correlated };
 }
 function existence<Outer extends string>(
   query: AnySelectQuery,
@@ -423,16 +427,8 @@ export function scalar<
 ): Expression<InferSelection<S, Nullable>[keyof S] | null, Outer> {
   const { state, ast, correlated } = subquery(query, true);
   const value = Object.values(state.selection)[0] as AnyExpression;
-  if (
-    correlated.length &&
-    (value.phase !== 'aggregate' ||
-      ast.groupBy?.length ||
-      ast.limit !== undefined ||
-      ast.offset !== undefined)
-  )
-    throw new TypeError(
-      'A correlated scalar subquery must project an aggregate without GROUP BY, LIMIT, or OFFSET.',
-    );
+  if (correlated.length && (value.phase !== 'aggregate' || ast.groupBy?.length))
+    throw new TypeError('A correlated scalar subquery must project an aggregate without GROUP BY.');
   const node: ExpressionNode = { kind: 'subquery', query: ast, correlated };
   return expression(node, value.readSchema.nullable(), {
     valueSchema: value.valueSchema.nullable(),
