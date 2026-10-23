@@ -1,6 +1,6 @@
 {
   "name": "snowtyped",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "Schema-driven Snowflake queries, runtime validation, and parameterized raw SQL for TypeScript.",
   "repository": {

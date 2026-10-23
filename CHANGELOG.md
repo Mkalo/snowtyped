@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-alpha.1
+
+### Minor Changes
+
+- ddde1a6: Disposable update version-PR rehearsal; never publish.
+
+### Patch Changes
+
+- 498ebef: Disposable initial version-PR rehearsal; never publish.
+
 ## 0.1.0-alpha.0 — 2026-10-22
 
 - Added schema-derived TypeScript inference and compiled Zod 4 validation.
