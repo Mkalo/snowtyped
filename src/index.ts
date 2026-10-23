@@ -1,4 +1,5 @@
 export {
+  type AssignmentNode,
   type BindValue,
   type CompiledQuery,
   type CteNode,
@@ -12,6 +13,7 @@ export {
   type InsertNode,
   identifier,
   type JoinNode,
+  type MergeBranchNode,
   type MergeNode,
   type OrderNode,
   quoteIdentifier,
@@ -64,14 +66,18 @@ export {
 } from './introspection.js';
 export {
   deleteFrom,
+  deleteUsing,
   type FilteredMutation,
+  type InsertSource,
   type InsertValues,
   insert,
+  insertFrom,
   type MergeQuery,
   type MutationQuery,
   mergeInto,
   type UpdateValues,
   update,
+  updateFrom,
 } from './mutations.js';
 export { type SelectQuery, select } from './query.js';
 export {
