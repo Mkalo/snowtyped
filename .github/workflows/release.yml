@@ -56,6 +56,7 @@ jobs:
     outputs:
       artifact-id: ${{ steps.artifact.outputs.artifact-id }}
       version: ${{ steps.identity.outputs.version }}
+      sha: ${{ env.RELEASE_SHA }}
       eligible: ${{ steps.candidate.outputs.eligible != 'false' }}
     steps:
       - name: Validate candidate inputs
@@ -113,9 +114,19 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  stage:
+  integration:
+    name: Live Snowflake tests on the candidate
     if: (github.event_name == 'workflow_run' || inputs.operation == 'release') && needs.prepare.outputs.eligible == 'true'
     needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/integration.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+
+  stage:
+    if: (github.event_name == 'workflow_run' || inputs.operation == 'release') && needs.prepare.outputs.eligible == 'true'
+    needs: [prepare, integration]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: npm
