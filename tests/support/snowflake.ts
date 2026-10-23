@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { ConnectionOptions } from 'snowflake-sdk';
 import snowflake from 'snowflake-sdk';
-import { boolean, decimal, identifier, integer, snowflakeTable, text } from '../../src/index.js';
+import {
+  boolean,
+  decimal,
+  identifier,
+  integer,
+  type RawQuery,
+  snowflakeTable,
+  sql,
+  text,
+} from '../../src/index.js';
 import { createClient } from '../../src/snowflake/index.js';
 
 export function integrationConfig(environment: NodeJS.ProcessEnv = process.env): ConnectionOptions {
@@ -46,6 +55,10 @@ export function integrationConfig(environment: NodeJS.ProcessEnv = process.env):
     application: 'SNOWTYPED_INTEGRATION',
     clientRequestMFAToken: false,
   };
+}
+
+export function tableIdentifier(table: { node: { parts: readonly string[] } }): RawQuery {
+  return sql.identifier(...(table.node.parts as [string, ...string[]]));
 }
 
 function quoteParts(...parts: [string, ...string[]]): string {

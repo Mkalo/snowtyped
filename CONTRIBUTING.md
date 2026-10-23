@@ -14,6 +14,8 @@ Add behavioral unit tests and compile-time fixtures for new public typing contra
 
 New Snowflake semantics need opt-in integration coverage using `tests/support/snowflake.ts`. Fixtures must own uniquely generated schemas and clean up only the schemas they created. Use a dedicated test account role and database; see `docs/snowflake-setup.md`.
 
+Every supported server-facing feature has live tests listed in [live coverage](docs/live-coverage.md). A new public export, builder method, or semantic variant updates that document and adds live assertions of SQL behavior and returned values, including NULL, empty, and unmatched cases where they apply. Type-only contracts, invalid construction, client-side guards, and unreproducible races go under its exclusions with the unit or type test that covers them. A live test that would expose a bug is filed as an issue and listed under known gaps rather than asserting the wrong behavior. `tests/unit/live-coverage.test.ts` fails when a runtime export or builder method is missing from the document.
+
 Package checks install the actual tarball in a temporary consumer and verify ESM/CJS loading, declaration resolution, and tree shaking. Keep these checks working when exports or dependencies change. Never commit environment files, private keys, generated bootstrap SQL, build artifacts, or coverage output.
 
 The documentation site in `website/` is the authoritative user documentation. Changes to
