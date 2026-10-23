@@ -18,7 +18,7 @@ const expected = {
       matchRecognize max mergeInto min mul ne not notExists object or over pivot rangeBetween rank
       recursiveCte rowNumber rowPattern rowsBetween scalar select snowflakeTable sql structured
       structuredType sub substring sum text time timestamp timeTravel trim unpivot update updateFrom
-      upper variant vector`,
+      upper variant vector many one withRelations`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
@@ -34,7 +34,8 @@ const expected = {
       RecursiveOperand RecursiveRow RowPattern RowsPerMatch Selection SelectQuery ServerValue
       ServerValueKind ServerValues SetColumns SetOperand SetOperator SetQuery SetScope
       SqlInterpolation SqlParameter StructuredType Table TableOptions UnionRow UnpivotColumns
-      UnpivotOptions UpdateValues WindowFrame`,
+      UnpivotOptions UpdateValues WindowFrame LoadedQuery LoadedRow LoadOptions Relation
+      RelationCardinality RelationKeyType RelationRow`,
       `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExistsNode
       ExpressionNode FlattenNode FrameBoundaryNode IdentifierNode InsertNode InSubqueryNode JoinNode
       MatchRecognizeNode MergeBranchNode MergeNode NavigationNode OrderNode PatternNode PivotLiteral
@@ -46,7 +47,7 @@ const expected = {
   'snowtyped/snowflake': {
     values: names('createClient createPool'),
     types: names(
-      'ExecuteOptions MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
+      'ExecuteOptions LoadedResult MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
     ),
   },
   'snowtyped/ddl': {
