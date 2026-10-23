@@ -1,11 +1,12 @@
 ---
 title: Snowflake syntax
-description: Window functions, QUALIFY, FLATTEN, ASOF JOIN, PIVOT, UNPIVOT, and time travel.
+description: Window functions, QUALIFY, FLATTEN, ASOF JOIN, PIVOT, UNPIVOT, MATCH_RECOGNIZE, and time travel.
 ---
 
 import Snippet from '../../../components/Snippet.astro';
 import asof from '../../../snippets/asof.ts?raw';
 import flatten from '../../../snippets/flatten.ts?raw';
+import matchRecognize from '../../../snippets/match-recognize.ts?raw';
 import offsetWindows from '../../../snippets/offset-windows.ts?raw';
 import pivot from '../../../snippets/pivot.ts?raw';
 import timeTravel from '../../../snippets/time-travel.ts?raw';
@@ -72,6 +73,31 @@ Both return a table you can select from, join, filter, and turn into a derived t
 rows are `unknown` and are not validated.
 
 <Snippet code={pivot} />
+
+## MATCH_RECOGNIZE
+
+`matchRecognize(source, name, options)` creates a table source for row pattern matching. You can
+select from it, join it, or wrap it in a derived table or CTE. Build the pattern with `rowPattern`:
+`variable`, `sequence`, `alternation`, `permute`, `exclude`, the `start` and `end` anchors, and the
+quantifiers `zeroOrMore`, `oneOrMore`, `optional`, and `repeat`, each with an optional
+`{ reluctant: true }`.
+
+The variable names come from the pattern. `define` keys, `vars`, `count(variable)`, `classifier()`
+values, and `afterMatch` targets accept only those names. Variables you don't define match every
+row.
+
+- `define` receives the row being classified with `lag`, `lead`, `next`, and `last`.
+- `measures` also receive variable-qualified columns (`vars.down.day`), `prev`, `first`, `final`,
+  `running`, `count`, `matchNumber`, `matchSequenceNumber`, and `classifier`.
+- Columns inside the clause are named by their source keys, and `partitionBy` lists source keys.
+- `rowsPerMatch` is `'one'` (the default: partition keys plus measures), `'all'`,
+  `'all-omit-empty'`, or `'all-with-unmatched'` (all source keys plus measures).
+- Measures become nullable when unmatched rows or empty matches can appear.
+- `afterMatch` is `'past-last-row'`, `'to-next-row'`, `{ toFirst: variable }`, or
+  `{ toLast: variable }`.
+- In ALL ROWS PER MATCH, wrap `first` or `last` of variable columns in `final`.
+
+<Snippet code={matchRecognize} />
 
 ## Time travel
 

@@ -103,6 +103,10 @@ insert(users, { id: 1n, name: 'Ada', data: {}, missing: true });
 update(users, { missing: true });
 // @ts-expect-error Update expressions must refer to the mutation's table.
 update(users, { id: other.columns.id });
+const tagged = snowflakeTable('TAGGED', {
+  tag: variant('TAG', z.enum(['a', 'b'])).notNull(),
+});
+select(tagged).where(eq(tagged.columns.tag, 'a'));
 const constrained = snowflakeTable('CONSTRAINED', {
   id: integer('ID', { precision: 10 }).notNull(),
   amount: decimal('AMOUNT', { precision: 12, scale: 2 }).notNull(),
