@@ -72,19 +72,21 @@ function column<T, R extends boolean, D extends DataType>(
       ...(!['text', 'boolean', 'binary'].includes(dataType)
         ? { wireType: dataType as WireType }
         : {}),
+      // NULL goes through the same wrapper so it carries the column type; a bare NULL
+      // bind is VARCHAR, which Snowflake rejects for VARIANT and BINARY in INSERT ... SELECT.
       encode(parsed) {
-        if (dataType === 'variant' && parsed !== null) return jsonParameter(parsed);
-        if (dataType === 'binary' && parsed !== null) {
-          const bytes = parsed as Uint8Array;
+        if (dataType === 'variant') return jsonParameter(parsed);
+        if (dataType === 'binary')
           return Object.freeze({
             kind: 'function',
             name: 'TO_BINARY',
             args: Object.freeze([
-              scalarParameter(Buffer.from(bytes).toString('hex')),
+              scalarParameter(
+                parsed === null ? null : Buffer.from(parsed as Uint8Array).toString('hex'),
+              ),
               scalarParameter('HEX'),
             ]),
           });
-        }
         return scalarParameter(parsed);
       },
     }),
@@ -115,11 +117,19 @@ export function decimal(name: string): Column<string, false, string, 'decimal'> 
 export function boolean(name: string): Column<boolean, false, string, 'boolean'> {
   return column(name, 'boolean', z.boolean(), z.boolean(), false);
 }
+/** Decodes `<significand>p<exponent>` wire text; plain numeric text is also accepted. */
+function decodeFloat(value: string): number {
+  const match = /^(-?\d+)p(-?\d+)$/.exec(value);
+  if (!match) return Number(value);
+  const exponent = Number(match[2]);
+  const half = Math.trunc(exponent / 2);
+  return Number(match[1]) * 2 ** half * 2 ** (exponent - half);
+}
 export function float(name: string): Column<number, false, string, 'float'> {
   return column(
     name,
     'float',
-    z.string().transform(Number).pipe(z.number().finite()),
+    z.string().transform(decodeFloat).pipe(z.number().finite()),
     z.number().finite(),
     false,
   );

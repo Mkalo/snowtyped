@@ -2,7 +2,7 @@
 
 A Snowflake-first TypeScript query library built on `snowflake-sdk`, with an owned AST, declared schemas, inferred results, and compiled Zod 4 runtime validation. Parameterized raw SQL is also supported, with a query-time return type or `unknown` by default.
 
-Version `0.1.0-alpha.0`. Alpha software under the [MIT license](LICENSE); the public API may change before a stable release.
+Alpha software under the [MIT license](LICENSE); the public API may change before a stable release. The [release contract](docs/release-contract.md) defines the stable API, supported versions, and release gates.
 
 ## Development and verification
 
@@ -14,7 +14,7 @@ pnpm check
 pnpm test:integration
 ```
 
-`pnpm check` runs Biome, strict TypeScript checks and type fixtures, a type-instantiation budget for a generated large schema, offline unit tests with 100% per-file coverage thresholds, ESM/CJS builds, publint, Are the Types Wrong, and tests against an installed tarball. Those package tests check `import`, `require`, mixed-format interoperability, NodeNext/Bundler declaration resolution, and tree shaking. CI targets Windows/Linux and Node 22/24.
+`pnpm check` runs Biome, strict TypeScript checks and type fixtures, offline unit tests with 100% per-file coverage thresholds, ESM/CJS builds, publint, Are the Types Wrong, and tests against an installed tarball. Those package tests check `import`, `require`, mixed-format interoperability, NodeNext/Bundler declaration resolution, and tree shaking. CI targets Windows/Linux and Node 22/24.
 
 See [CI and release checks](docs/ci.md) for the required matrix gate, retained diagnostics, and release prerequisites.
 
@@ -83,7 +83,7 @@ const query = select(customers)
 
 Project joined columns after joining so they are in scope. Inner, left, right, full, and cross joins are supported. Use `alias(table, 'c')` for repeated table names. Table/alias scopes are checked statically and at runtime; dynamic identities that share a static name are distinguished at runtime.
 
-Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.limit(n)`, and `.offset(n)`. Counts decode as `bigint`; sums decode as exact decimal strings, with nullability for empty groups. A query with GROUP BY or any aggregate rejects columns that are neither grouping keys nor aggregated, nested aggregates outside OVER, and window functions in ORDER BY. Window functions cannot be nested inside aggregates or other windows, and OVER requires an aggregate or window function. DISTINCT order expressions must be projected.
+Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.limit(n)`, and `.offset(n)`. Counts decode as `bigint`; sums decode as exact decimal strings, with nullability for empty groups. A query with GROUP BY or any aggregate rejects columns that are neither grouping keys nor aggregated, and nested aggregates outside OVER; if its projections are all text, boolean, or binary, an ORDER BY window function must also be projected. Window functions cannot be nested inside aggregates or other windows, and OVER requires an aggregate or window function. DISTINCT order expressions must be projected.
 
 `.as('name')` turns a query into a derived table; `.asCte('name')` makes a CTE source. Its `.columns` retain inferred output types and outer-join nullability. Selecting or joining a CTE includes its definition automatically.
 
@@ -108,7 +108,7 @@ const prices = select(trades)
 
 `over(aggregate, options)` supports aggregate windows. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
-`timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Database retention and supported selector rules still apply.
+`timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset (`2026-10-22T15:00:00-07:00`) is honored and a string without one is read in the session `TIMEZONE`. Database retention and supported selector rules still apply.
 
 ## Writes
 
@@ -158,6 +158,7 @@ Interpolated scalars become bindings. Nested fragments compose with bindings in 
 
 ```ts
 await db.execute(query, { signal: controller.signal, timeoutMs: 5_000 });
+await db.queryRaw<Row[]>(sql`SELECT ...`, { signal: controller.signal, timeoutMs: 5_000 });
 for await (const row of db.stream(query)) {
   /* typed and validated per row */
 }
@@ -178,11 +179,13 @@ try {
 }
 ```
 
-Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
+Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. Set `testOnBorrow: true` to heartbeat each connection before lending it, so a terminated session is replaced before a request runs on it. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
 
-Abort/deadline cancellation waits for the SDK's cancellation callback before releasing a request. Stopping consumption after a query has completed destroys the row stream; it does not attempt to cancel an already-completed server statement.
+A pooled request's `signal` and `timeoutMs` also cover the wait for a connection, so a request that stops waiting never runs; `acquireTimeoutMillis` bounds that wait for every request. A connection whose session has terminated is destroyed instead of returned to the pool, though the request that found it still rejects. `close()` rejects new work, waits for running and queued operations, including unfinished streams, and then closes every connection. See [production behavior](docs/production.md) for operational limits, cleanup, and benchmark baselines.
 
-Await running operations and close cursors before starting a transaction on a single client. Use the callback's client, await its queries, and consume/close streams within that callback. An expired client cannot join a later transaction. Nested transactions are unsupported. Transactions provide rollback for DML; Snowflake DDL can auto-commit and must not be used as rollback-protected work. Other callers using the original SDK connection directly are outside this client's coordination.
+Raw options require a `sql` query value; direct tagged templates take no options. Abort/deadline cancellation waits for Snowflake to accept the cancel before releasing a request. A cancel that arrives before Snowflake registers the statement is retried; if the statement finishes first, the request settles with its real outcome, so a committed write resolves rather than rejecting. Stopping consumption after a query has completed destroys the row stream; it does not attempt to cancel an already-completed server statement.
+
+Await running operations and close cursors before starting a transaction on a single client. Use the callback's client, await its queries, and consume/close streams within that callback. An expired client cannot join a later transaction. Nested transactions are unsupported. Transactions provide rollback for DML; Snowflake DDL can auto-commit and must not be used as rollback-protected work. Other callers using the original SDK connection directly are outside this client's coordination. If ROLLBACK itself fails, the transaction rejects with an `AggregateError` holding both failures and the connection's session state is unknown: a pool destroys that connection, and a single client rejects every later operation on it, so the caller should destroy and replace the SDK connection.
 
 ## Introspection
 
@@ -190,8 +193,8 @@ Await running operations and close cursors before starting a transaction on a si
 
 ## Scope and distribution
 
-The first-class API covers the operations above. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, advanced frames, default/generated columns, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, advanced frames, default/generated columns, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [PLANNING.md](PLANNING.md). Publishing remains disabled until licensing and API review are settled.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [PLANNING.md](PLANNING.md). Use GitHub issues for bugs and questions, and report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

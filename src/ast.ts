@@ -267,15 +267,19 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         throw new TypeError('Unsupported expression AST node.');
     }
   }
-  function order(node: OrderNode, qualify: boolean): string {
-    return `${expression(node.expression, qualify)} ${node.direction}${node.nulls ? ` NULLS ${node.nulls}` : ''}`;
+  function order(node: OrderNode, qualify: boolean, rendered?: string): string {
+    return `${rendered ?? expression(node.expression, qualify)} ${node.direction}${node.nulls ? ` NULLS ${node.nulls}` : ''}`;
+  }
+  function projectionOf(node: SelectNode, value: ExpressionNode) {
+    const key = JSON.stringify(value);
+    return node.projections.find((projection) => JSON.stringify(projection.column) === key);
   }
   function source(node: RelationNode): string {
     switch (node.kind) {
       case 'identifier':
         return quoteIdentifier(node);
       case 'table':
-        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
+        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)}${node.temporal.selector === 'TIMESTAMP' ? '::TIMESTAMP_TZ' : ''})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
       case 'derived':
         return `(${selectStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
       case 'cte':
@@ -289,6 +293,12 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   function wire(value: string, type?: WireType): string {
     if (!type) return value;
     if (type === 'variant') return `TO_JSON(${value})`;
+    if (type === 'float') {
+      // Text conversion keeps at most 16 digits, so send an exact integer significand and a
+      // binary exponent instead. The scale is split to stay finite for subnormals.
+      const scale = `(60 - FLOOR(LOG(2, ABS(${value}))))`;
+      return `CASE WHEN ABS(${value}) > 0 AND ABS(${value}) < 'inf'::DOUBLE THEN TO_VARCHAR((${value} * POW(2, FLOOR(${scale} / 2)) * POW(2, ${scale} - FLOOR(${scale} / 2)))::NUMBER(38, 0)) || 'p' || TO_VARCHAR(-${scale}) ELSE TO_VARCHAR(${value}) END`;
+    }
     const formats: Partial<Record<WireType, string>> = {
       date: 'YYYY-MM-DD',
       time: 'HH24:MI:SS.FF9',
@@ -306,9 +316,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       const extras: { column: ExpressionNode; alias: string }[] = [];
       const used = new Set(node.projections.map((item) => item.alias));
       const ordering = (node.orderBy ?? []).map((item, index) => {
-        const projected = node.projections.find(
-          (projection) => JSON.stringify(projection.column) === JSON.stringify(item.expression),
-        );
+        const projected = projectionOf(node, item.expression);
         if (node.distinct && !projected)
           throw new TypeError('DISTINCT ORDER BY expressions must be projected.');
         let name = projected?.alias;
@@ -318,7 +326,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           used.add(name);
           extras.push({ column: item.expression, alias: name });
         }
-        return `${quoteIdentifier(identifier('__sflib_result', name))} ${item.direction}${item.nulls ? ` NULLS ${item.nulls}` : ''}`;
+        return order(item, false, quoteIdentifier(identifier('__sflib_result', name)));
       });
       const native = selectStatement(
         { ...node, projections: [...node.projections, ...extras] },
@@ -352,8 +360,14 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       text += ` GROUP BY ${node.groupBy.map((value) => expression(value, qualified)).join(', ')}`;
     if (node.having) text += ` HAVING ${expression(node.having, qualified)}`;
     if (node.qualify) text += ` QUALIFY ${expression(node.qualify, qualified)}`;
-    if (node.orderBy?.length)
-      text += ` ORDER BY ${node.orderBy.map((value) => order(value, qualified)).join(', ')}`;
+    if (node.orderBy?.length) {
+      // Ordering by the alias keeps projected window functions over aggregates valid in grouped queries.
+      const ordering = node.orderBy.map((value) => {
+        const projected = projectionOf(node, value.expression);
+        return order(value, qualified, projected && quoteIdentifier(identifier(projected.alias)));
+      });
+      text += ` ORDER BY ${ordering.join(', ')}`;
+    }
     if (node.limit !== undefined) text += ` LIMIT ${node.limit}`;
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;

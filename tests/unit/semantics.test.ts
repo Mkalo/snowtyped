@@ -127,7 +127,7 @@ describe('SQL type domains', () => {
     expect(inArray(path, [1, null]).expression).toMatchObject({
       values: [
         { name: 'PARSE_JSON', args: [{ value: '1' }] },
-        { kind: 'parameter', value: null },
+        { name: 'PARSE_JSON', args: [{ value: null }] },
       ],
     });
     expect(eq(path, null).expression).toMatchObject({ operator: 'IS NULL' });
@@ -282,15 +282,33 @@ describe('grouping rules', () => {
     expect(() => select(t, { n: count() }).orderBy(asc(c.id)).as('D')).toThrow('"T"."ID" must');
   });
 
-  it('rejects nested aggregates and window ordering in grouped queries', () => {
+  it('rejects nested aggregates and checks window ordering in grouped queries', () => {
     expect(() => select(t, { total: sum(count()) }).compile()).toThrow(
       'Aggregate functions cannot be nested without OVER.',
     );
     expect(() => select(t, { total: max(and(gt(min(c.id), 1n))) }).compile()).toThrow(
       'cannot be nested',
     );
-    expect(() => grouped.orderBy(desc(rowNumber())).compile()).toThrow(
-      'Grouped queries cannot order by window functions',
+    expect(grouped.orderBy(desc(rowNumber({ orderBy: [desc(count())] }))).compile().sql).toContain(
+      'ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) AS "__sflib_order_0"',
+    );
+    expect(() => grouped.orderBy(desc(rowNumber({ orderBy: [asc(c.id)] }))).compile()).toThrow(
+      '"T"."ID" must',
+    );
+    const rank = rowNumber({ orderBy: [asc(c.name)] });
+    const names = select(t, { name: c.name }).groupBy(c.name);
+    expect(() => names.orderBy(desc(rank)).compile()).toThrow(
+      'Grouped queries must project window functions used in ORDER BY.',
+    );
+    expect(
+      names
+        .select({ name: c.name, active: c.active })
+        .groupBy(c.name, c.active)
+        .orderBy(asc(c.name))
+        .compile().sql,
+    ).toContain('ORDER BY "name" ASC');
+    expect(names.select({ name: c.name, rank }).orderBy(desc(rank)).compile().sql).toContain(
+      'ORDER BY "__sflib_result"."rank" DESC',
     );
     expect(select(t, { id: c.id }).orderBy(desc(rowNumber())).compile().sql).toContain(
       'ROW_NUMBER() OVER ()',

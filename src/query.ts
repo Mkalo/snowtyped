@@ -192,9 +192,16 @@ function assertGrouping(ast: SelectNode): void {
   ];
   const orders = (ast.orderBy ?? []).map((item) => item.expression);
   if (!ast.groupBy?.length && ![...values, ...orders].some(containsAggregate)) return;
-  if (orders.some(containsWindow))
-    throw new TypeError('Grouped queries cannot order by window functions; order a derived query.');
   for (const value of [...values, ...orders]) assertGrouped(value, ast.groupBy ?? []);
+  // Only the wire wrapper can order by a hidden alias; otherwise the window must be projected.
+  if (
+    !ast.projections.some((item) => item.wireType) &&
+    orders.some(
+      (order) =>
+        containsWindow(order) && !ast.projections.some((item) => sameNode(item.column, order)),
+    )
+  )
+    throw new TypeError('Grouped queries must project window functions used in ORDER BY.');
 }
 function projections(selection: Selection) {
   return Object.freeze(

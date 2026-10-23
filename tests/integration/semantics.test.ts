@@ -134,6 +134,14 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
     expect((await db.execute(implicit)).rows).toEqual([{ n: 3n }]);
   });
 
+  it('orders grouped queries by projected or hidden window functions', async () => {
+    const rank = rowNumber({ orderBy: [asc(c.grp)] });
+    const projected = select(facts, { grp: c.grp, rank }).groupBy(c.grp).orderBy(desc(rank));
+    expect((await db.execute(projected)).rows.map((row) => row.grp)).toEqual(['a', 'B', 'A']);
+    const hidden = select(facts, { grp: c.grp, n: count() }).groupBy(c.grp).orderBy(desc(rank));
+    expect((await db.execute(hidden)).rows.map((row) => row.grp)).toEqual(['a', 'B', 'A']);
+  });
+
   it('assigns across compatible SQL types', async () => {
     await db.execute(update(facts, { at: c.day }).where(eq(c.id, 3n)));
     const query = select(facts, { at: c.at }).where(eq(c.id, 3n));

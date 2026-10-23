@@ -2,7 +2,7 @@
 
 Snowtyped uses MIT. Changesets manages versions and changelogs; the separate
 release workflow stages alpha/beta packages for your npm approval with 2FA.
-Stable support guarantees remain tracked in #24.
+The [release contract](release-contract.md) defines stable guarantees and gates.
 
 ## Changesets
 
@@ -81,33 +81,51 @@ snowtyped / release.yml / npm**, allowing **npm stage publish only**, and select
 **Require two-factor authentication and disallow tokens** in package settings.
 Complete the first trusted publish within two days of configuring it.
 
-For a new package, npm requires a one-time bootstrap before trusted publishing
-can be configured. First run **Release package → prepare** on main with a reviewed
-version and its full commit SHA; inspect the downloaded tarball and `release.json`.
-After explicitly approving the bootstrap, stage that exact tarball locally:
+For each release:
+1. Merge the code PR with its changeset, then review and merge the generated
+   version PR.
+2. Successful main CI automatically starts **Release package**. Pending
+   changesets and completed releases are skipped. CI builds and tests the
+   exact tarball, then stages it with OIDC and provenance.
+3. Review the CI stage's version, dist-tag, SHA-512, and provenance in npm's
+   Staged Packages UI. Approve it with 2FA to publish the version.
+4. The same workflow waits up to one hour for approval, verifies the public bytes
+   and signatures, creates `v<version>` and the matching GitHub release, then
+   deploys that tag's [documentation](docs-deployment.md).
+
+There are no routine workflow dispatches. If approval takes longer than an hour,
+approve the existing CI stage and rerun the original release workflow; identical
+published bytes are reused. **Release package → release** also supports recovery,
+defaulting to the current main commit/version. Optional **prepare** previews an
+artifact without staging it.
+
+### One-time bootstrap
+
+Keep `NPM_RELEASES_ENABLED` unset or false until npm trust is configured. Prepare
+and inspect a candidate first. With `NPM_CLI_JS` pointing to npm 12.2.1's
+`bin/npm-cli.js`, run these with the candidate's version, SHA, and downloaded
+artifact directory:
 
 ```sh
-npm exec --yes --package=npm@12.2.1 -- npm stage publish ./snowtyped-<version>.tgz --access public --tag alpha --ignore-scripts --provenance=false --registry https://registry.npmjs.org
+node scripts/release.mjs bootstrap-check <version> <sha> <artifact-directory>
+node scripts/release.mjs bootstrap <version> <sha> <artifact-directory>
+node scripts/release.mjs trust <version> <sha> <artifact-directory>
 ```
 
-This creates a **public `0.0.0-stage` placeholder** and a pending alpha stage.
-Reject the local stage with `npm stage reject <stage-id>` and 2FA; do not approve
-it because it lacks CI provenance. Configure trusted publishing, then use CI to
-stage the real alpha with provenance.
+Bootstrap creates a **public `0.0.0-stage` placeholder** using a separate pending
+`0.0.0-bootstrap.0` holding package. **Never approve or reject the holding stage
+before the real CI release is public.** Rejecting the only stage unpublishes the
+placeholder and triggers npm's 24-hour name cooldown. The commands detect the
+unpublished record and block until its exact deadline, before npm authentication
+or writes.
 
-For each release:
-1. Merge the reviewed Changesets version PR and wait for its exact main commit's
-   latest push CI to pass all four matrix jobs, Changesets, and `CI required`.
-2. Dispatch **Release package → stage** on main with that version and SHA. Stage
-   the workflow run's own commit so OIDC identifies the actual source. If main
-   advances, rerun the original stage run rather than dispatching an older SHA.
-   CI rebuilds, tests, inspects, and stages the same tarball with provenance.
-3. Inspect `npm stage list snowtyped` and `npm stage view <stage-id>` against the
-   artifact's version, dist-tag, SHA-512, and provenance. Publish it with
-   `npm stage approve <stage-id>` and 2FA, or approve it on npm's Staged Packages UI.
-4. Dispatch **Release package → finalize** with the same SHA/version. It verifies
-   registry bytes, provenance identity, and signatures before creating `v<version>`
-   and GitHub release notes from the matching changelog section.
+Trust requires 2FA, disallows tokens, and configures the stage-only publisher.
+Check its output, set repository variable `NPM_RELEASES_ENABLED=true`, and run
+**Release package → release** once for the initial candidate. Later releases
+start automatically. After the real release is public, run
+`node scripts/release.mjs cleanup-bootstrap <version> <sha> <artifact-directory>`.
+It rejects only the saved holding-stage ID after verifying the public release's
+bytes, provenance, and signatures. Retain the artifact directory and its receipt.
 
 Alpha uses `alpha`, beta uses `beta`; neither advances `latest`. Stable uses
 `latest` only with `NPM_STABLE_RELEASES_ENABLED=true` after the stable gates in
@@ -115,10 +133,10 @@ Alpha uses `alpha`, beta uses `beta`; neither advances `latest`. Stable uses
 registry write. A running release cannot be cancelled by another release;
 GitHub may replace an older queued dispatch.
 
-If a stage already exists, inspect it and approve or reject it with 2FA. Conflicts
+If a real release stage already exists, inspect it and approve or reject it with 2FA. Conflicts
 fail safely. Identical published versions are reused; different bytes or an
 existing Git tag on another SHA fail. If publication succeeds but finalization
-fails, rerun **finalize**. Advanced dist-tags stay untouched; correct missing or
+fails, rerun the original release workflow. Advanced dist-tags stay untouched; correct missing or
 wrong tags deliberately with npm 2FA. Fix bad public releases with a new patch
 and, when appropriate, `npm deprecate snowtyped@<version> "<reason and replacement>"`.
 Never automatically unpublish or replace an immutable version.

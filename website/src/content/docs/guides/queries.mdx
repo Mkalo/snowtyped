@@ -1,0 +1,76 @@
+---
+title: Queries
+description: Compose immutable, typed SELECT queries with joins, grouping, ordering, and CTEs.
+---
+
+import Snippet from '../../../components/Snippet.astro';
+import aliases from '../../../snippets/aliases.ts?raw';
+import derived from '../../../snippets/derived.ts?raw';
+import firstQuery from '../../../snippets/first-query.ts?raw';
+import grouping from '../../../snippets/grouping.ts?raw';
+import joins from '../../../snippets/joins.ts?raw';
+
+`select(table)` selects every declared column. `select(table, projection)` or `.select(projection)`
+selects specific columns and expressions. Projection keys become the exact output aliases.
+
+<Snippet code={firstQuery} />
+
+Builders are immutable. Each call returns a new query, and calling a clause such as `.where()`
+again replaces that clause on the new query.
+
+## Expressions
+
+| Category    | Helpers                                                       |
+| ----------- | ------------------------------------------------------------- |
+| Comparison  | `eq`, `ne`, `gt`, `gte`, `lt`, `lte`                          |
+| Logic       | `and`, `or`, `not`                                            |
+| Nullability | `isNull`, `isNotNull`                                         |
+| Membership  | `inArray`                                                     |
+| Text        | `like`, `ilike`, `lower`, `upper`                             |
+| Aggregates  | `count`, `sum`, `min`, `max`                                  |
+| Ordering    | `asc`, `desc`, with optional `FIRST`/`LAST` null ordering     |
+
+Literal values become bind parameters. An empty `inArray` list compiles to a constant false, or
+true for a negated membership test.
+
+Every expression carries its SQL type as `dataType`. A comparison accepts a literal of the left
+operand's type, or an expression of a comparable SQL type: numeric types with each other, DATE with
+timestamps, and VARIANT with anything. TEXT, DECIMAL, DATE, TIME, and timestamps all decode as
+`string` but cannot be compared with each other. `like`, `ilike`, `lower`, and `upper` need TEXT or
+VARIANT; `sum` needs a numeric type; predicates must be BOOLEAN; and UPDATE or MERGE expression
+values follow the comparison rule. These checks run at compile time and again at runtime. Literals
+compared with a `jsonPath` are bound as JSON.
+
+## Joins
+
+Inner, left, right, full, and cross joins are supported. Project joined columns after joining so
+they are in scope. Outer joins make the columns of the optional side nullable in the result type.
+
+<Snippet code={joins} />
+
+Use `alias(table, 'name')` for repeated table names. Table and alias scopes are checked statically
+and at runtime; dynamic identities that share a static name are distinguished at runtime.
+
+<Snippet code={aliases} />
+
+## Grouping and pagination
+
+Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.limit(n)`, and
+`.offset(n)`.
+
+<Snippet code={grouping} />
+
+Counts decode as `bigint`. Sums decode as exact decimal strings and are nullable, because a sum
+over an empty group is NULL. A query with `.groupBy()` or any aggregate rejects
+columns that are neither grouping keys nor aggregated, and nested aggregates outside `over()`.
+Grouping keys match structurally, so `groupBy(lower(name))` allows `lower(name)` but not `name`.
+In a grouped query whose projections are all text, boolean, or binary, a window function in
+`.orderBy()` must also be projected. With `.distinct()`, order expressions must be projected.
+
+## Derived tables and CTEs
+
+`.as('name')` turns a query into a derived table, and `.asCte('name')` makes it a CTE source. The
+result's `.columns` keep their inferred output types and outer-join nullability. Selecting from or
+joining a CTE includes its definition automatically.
+
+<Snippet code={derived} />

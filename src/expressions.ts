@@ -92,7 +92,7 @@ export function scalarParameter(value: unknown): ExpressionNode {
   throw new TypeError('Unsupported expression parameter.');
 }
 export function jsonParameter(value: unknown): ExpressionNode {
-  const encoded = JSON.stringify(value);
+  const encoded = value === null ? null : JSON.stringify(value);
   if (encoded === undefined) throw new TypeError('VARIANT values must be JSON serializable.');
   return Object.freeze({
     kind: 'function',
@@ -519,7 +519,7 @@ export function jsonPath<E extends Expression<unknown, string, string, 'variant'
       ...metadata([value]),
       dataType: 'variant',
       valueSchema: z.unknown(),
-      encode: (item) => (item === null ? scalarParameter(null) : jsonParameter(item)),
+      encode: jsonParameter,
       wireType: 'variant',
     },
   );
