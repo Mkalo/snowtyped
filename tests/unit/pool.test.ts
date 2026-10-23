@@ -11,6 +11,7 @@ import { createPool } from '../../src/snowflake/index.js';
 const table = snowflakeTable('T', { id: integer('ID').notNull() });
 function fakePool(error?: Error, errors: Record<string, Error> = {}) {
   const connection = {
+    isUp: () => true,
     execute: vi.fn((options: StatementOption) => {
       const failure = errors[options.sqlText] ?? error;
       const rows = options.rowMode === 'array' ? [['1']] : [{ ID: '1' }];
@@ -123,6 +124,13 @@ describe('SDK-backed pool leases', () => {
       await driver.acquire.mock.results[0]?.value,
     );
     expect(driver.release).not.toHaveBeenCalled();
+    await db.close();
+  });
+
+  it('passes testOnBorrow through to the SDK pool', async () => {
+    fakePool();
+    const db = await createPool({}, { testOnBorrow: true });
+    expect(sdk.createPool).toHaveBeenCalledWith({}, { min: 0, max: 5, testOnBorrow: true });
     await db.close();
   });
 });

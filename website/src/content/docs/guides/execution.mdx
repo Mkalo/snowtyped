@@ -20,10 +20,11 @@ implicit query retries are performed.
 
 <Snippet code={executeOptions} />
 
-Abort and deadline cancellation wait for Snowflake to accept the cancel before releasing a request.
-A cancel that arrives before Snowflake registers the statement is retried. If the statement finishes
-first, the request settles with its real outcome: a committed write resolves rather than rejecting,
-and a statement's own error (such as a compilation error) is not replaced by the abort reason.
+On a pool, the deadline also covers the wait for a connection. Abort and deadline cancellation wait
+for Snowflake to accept the cancel before releasing a request. A cancel that arrives before
+Snowflake registers the statement is retried. If the statement finishes first, the request settles
+with its real outcome: a committed write resolves rather than rejecting, and a statement's own error
+(such as a compilation error) is not replaced by the abort reason.
 Stopping consumption after a query has completed destroys the row stream; it does not cancel an
 already-completed server statement.
 
@@ -61,5 +62,7 @@ before returning.
 
 `createPool(connectionOptions, poolOptions)` delegates to the official SDK pool and loads
 `snowflake-sdk` only when called. It pins one connection for an entire transaction or streamed
-iteration. Pool options are `min`, `max`, `acquireTimeoutMillis`, `idleTimeoutMillis`, and
-`evictionRunIntervalMillis`. Always `close()` the pool when you are done.
+iteration. Pool options are `min`, `max`, `acquireTimeoutMillis`, `idleTimeoutMillis`,
+`evictionRunIntervalMillis`, and `testOnBorrow`. A connection whose session has terminated is
+destroyed instead of being lent again. Always `close()` the pool when you are done; it waits for
+running work first. See [production use](/guides/production/) for sizing, deadlines, and limits.
