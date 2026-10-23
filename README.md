@@ -180,7 +180,7 @@ Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool dele
 
 Abort/deadline cancellation waits for the SDK's cancellation callback before releasing a request. Stopping consumption after a query has completed destroys the row stream; it does not attempt to cancel an already-completed server statement.
 
-Await running operations and close cursors before starting a transaction on a single client. Use the callback's client, await its queries, and consume/close streams within that callback. An expired client cannot join a later transaction. Nested transactions are unsupported. Transactions provide rollback for DML; Snowflake DDL can auto-commit and must not be used as rollback-protected work. Other callers using the original SDK connection directly are outside this client's coordination.
+Await running operations and close cursors before starting a transaction on a single client. Use the callback's client, await its queries, and consume/close streams within that callback. An expired client cannot join a later transaction. Nested transactions are unsupported. Transactions provide rollback for DML; Snowflake DDL can auto-commit and must not be used as rollback-protected work. Other callers using the original SDK connection directly are outside this client's coordination. If ROLLBACK itself fails, the transaction rejects with an `AggregateError` holding both failures and the connection's session state is unknown: a pool destroys that connection, and a single client rejects every later operation on it, so the caller should destroy and replace the SDK connection.
 
 ## Introspection
 

@@ -9,9 +9,10 @@ import { insert, integer, select, snowflakeTable, sql } from '../../src/index.js
 import { createPool } from '../../src/snowflake/index.js';
 
 const table = snowflakeTable('T', { id: integer('ID').notNull() });
-function fakePool(error?: Error) {
+function fakePool(error?: Error, errors: Record<string, Error> = {}) {
   const connection = {
     execute: vi.fn((options: StatementOption) => {
+      const failure = errors[options.sqlText] ?? error;
       const rows = options.rowMode === 'array' ? [['1']] : [{ ID: '1' }];
       const statement = {
         getQueryId: () => 'q',
@@ -19,13 +20,14 @@ function fakePool(error?: Error) {
         getNumUpdatedRows: () => 1,
         streamRows: () => Readable.from(rows, { objectMode: true }),
       } as RowStatement;
-      options.complete?.(error as SnowflakeError | undefined, statement, rows);
+      options.complete?.(failure as SnowflakeError | undefined, statement, rows);
       return statement;
     }),
   };
   const pool = {
     acquire: vi.fn(async () => connection),
     release: vi.fn(async () => {}),
+    destroy: vi.fn(async () => {}),
     drain: vi.fn(async () => {}),
     clear: vi.fn(async () => {}),
   };
@@ -104,5 +106,23 @@ describe('SDK-backed pool leases', () => {
     }).rejects.toThrow('query failed');
     expect(failed.release).toHaveBeenCalledTimes(2);
     await other.close();
+  });
+
+  it('destroys the lease instead of releasing it when ROLLBACK fails', async () => {
+    const rollback = new Error('rollback failed');
+    const driver = fakePool(undefined, { ROLLBACK: rollback });
+    const db = await createPool({});
+    const callback = new Error('callback');
+    const failure = await db
+      .transaction(async () => {
+        throw callback;
+      })
+      .catch((error: unknown) => error);
+    expect((failure as AggregateError).errors).toEqual([callback, rollback]);
+    expect(driver.destroy).toHaveBeenCalledExactlyOnceWith(
+      await driver.acquire.mock.results[0]?.value,
+    );
+    expect(driver.release).not.toHaveBeenCalled();
+    await db.close();
   });
 });
