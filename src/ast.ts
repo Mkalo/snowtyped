@@ -49,6 +49,8 @@ export interface FunctionNode {
   readonly name: string;
   readonly args: readonly ExpressionNode[];
   readonly distinct?: boolean;
+  /** Aggregate and window functions are the only valid operands of OVER. */
+  readonly role?: 'aggregate' | 'window';
 }
 export interface InNode {
   readonly kind: 'in';
@@ -58,7 +60,7 @@ export interface InNode {
 }
 export interface WindowNode {
   readonly kind: 'window';
-  readonly value: ExpressionNode;
+  readonly value: FunctionNode;
   readonly partitionBy: readonly ExpressionNode[];
   readonly orderBy: readonly OrderNode[];
 }

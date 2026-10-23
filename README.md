@@ -14,7 +14,7 @@ pnpm check
 pnpm test:integration
 ```
 
-`pnpm check` runs Biome, strict TypeScript checks and type fixtures, offline unit tests with 100% per-file coverage thresholds, ESM/CJS builds, publint, Are the Types Wrong, and tests against an installed tarball. Those package tests check `import`, `require`, mixed-format interoperability, NodeNext/Bundler declaration resolution, and tree shaking. CI targets Windows/Linux and Node 22/24.
+`pnpm check` runs Biome, strict TypeScript checks and type fixtures, a type-instantiation budget for a generated large schema, offline unit tests with 100% per-file coverage thresholds, ESM/CJS builds, publint, Are the Types Wrong, and tests against an installed tarball. Those package tests check `import`, `require`, mixed-format interoperability, NodeNext/Bundler declaration resolution, and tree shaking. CI targets Windows/Linux and Node 22/24.
 
 See [CI and release checks](docs/ci.md) for the required matrix gate, retained diagnostics, and release prerequisites.
 
@@ -72,6 +72,8 @@ Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z
 
 Supported helpers include `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `and`, `or`, `not`, `isNull`, `isNotNull`, `inArray`, `like`, `ilike`, `lower`, `upper`, `count`, `sum`, `min`, and `max`. `asc`/`desc` accept optional `FIRST`/`LAST` null ordering. Empty membership lists compile to a constant false (or true for negated membership).
 
+Every expression carries its SQL type as `dataType`. Comparisons accept a literal of the left operand's type or an expression of a comparable SQL type: numeric types with each other, DATE with timestamps, and VARIANT with anything. TEXT, DECIMAL, DATE, TIME, and timestamps share `string` but are not comparable with each other. `like`, `ilike`, `lower`, and `upper` need TEXT or VARIANT, `sum` needs a numeric type, predicates must be BOOLEAN, and UPDATE/MERGE expression values follow the comparison rule. These checks apply at compile time and at runtime. Literals compared with a `jsonPath` are bound as JSON.
+
 ```ts
 const query = select(customers)
   .leftJoin(orders, eq(customers.columns.id, orders.columns.customerId))
@@ -81,7 +83,7 @@ const query = select(customers)
 
 Project joined columns after joining so they are in scope. Inner, left, right, full, and cross joins are supported. Use `alias(table, 'c')` for repeated table names. Table/alias scopes are checked statically and at runtime; dynamic identities that share a static name are distinguished at runtime.
 
-Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.limit(n)`, and `.offset(n)`. Counts decode as `bigint`; sums decode as exact decimal strings, with nullability for empty groups. Grouping legality beyond supported expression/scope checks is enforced by Snowflake. DISTINCT order expressions must be projected.
+Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.limit(n)`, and `.offset(n)`. Counts decode as `bigint`; sums decode as exact decimal strings, with nullability for empty groups. A query with GROUP BY or any aggregate rejects columns that are neither grouping keys nor aggregated, nested aggregates outside OVER, and window functions in ORDER BY. Window functions cannot be nested inside aggregates or other windows, and OVER requires an aggregate or window function. DISTINCT order expressions must be projected.
 
 `.as('name')` turns a query into a derived table; `.asCte('name')` makes a CTE source. Its `.columns` retain inferred output types and outer-join nullability. Selecting or joining a CTE includes its definition automatically.
 

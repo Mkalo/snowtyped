@@ -12,6 +12,7 @@ import {
   type ExpressionNullScope,
   expression,
   type InferExpression,
+  jsonParameter,
   scalarParameter,
 } from './expressions.js';
 
@@ -29,12 +30,15 @@ export type DataType =
   | 'timestamp_tz'
   | 'variant'
   | 'binary';
-export interface Column<T, Required extends boolean = false, Scope extends string = string>
-  extends Expression<ColumnValue<T, Required>, Scope> {
+export interface Column<
+  T,
+  Required extends boolean = false,
+  Scope extends string = string,
+  D extends DataType = DataType,
+> extends Expression<ColumnValue<T, Required>, Scope, Scope, D> {
   readonly node: IdentifierNode;
-  readonly dataType: DataType;
   readonly required: Required;
-  notNull(): Column<T, true, Scope>;
+  notNull(): Column<T, true, Scope, D>;
 }
 export type AnyColumn = Column<unknown, boolean, string>;
 export type InferColumn<C> = C extends Column<infer T, infer R, string> ? ColumnValue<T, R> : never;
@@ -46,36 +50,30 @@ export type InferSelection<S extends Selection, Nullable extends string = never>
     | (Extract<ExpressionNullScope<S[K]>, Nullable> extends never ? never : null);
 };
 export type BoundColumns<C extends ColumnMap, Name extends string> = {
-  [K in keyof C]: C[K] extends Column<infer T, infer R, string> ? Column<T, R, Name> : never;
+  [K in keyof C]: C[K] extends Column<infer T, infer R, string, infer D>
+    ? Column<T, R, Name, D>
+    : never;
 };
 
-function column<T, R extends boolean>(
+function column<T, R extends boolean, D extends DataType>(
   name: string,
-  dataType: DataType,
+  dataType: D,
   read: z.ZodType<T>,
   value: z.ZodType<T>,
   required: R,
-): Column<T, R> {
+): Column<T, R, string, D> {
   const readSchema = (required ? read : read.nullable()) as z.ZodType<ColumnValue<T, R>>;
   const valueSchema = (required ? value : value.nullable()) as z.ZodType<ColumnValue<T, R>>;
   const node = identifier(name);
   return Object.freeze({
     ...expression(node, readSchema, {
+      dataType,
       valueSchema,
       ...(!['text', 'boolean', 'binary'].includes(dataType)
         ? { wireType: dataType as WireType }
         : {}),
       encode(parsed) {
-        if (dataType === 'variant' && parsed !== null) {
-          const encoded = JSON.stringify(parsed);
-          if (encoded === undefined)
-            throw new TypeError('VARIANT values must be JSON serializable.');
-          return Object.freeze({
-            kind: 'function',
-            name: 'PARSE_JSON',
-            args: Object.freeze([scalarParameter(encoded)]),
-          });
-        }
+        if (dataType === 'variant' && parsed !== null) return jsonParameter(parsed);
         if (dataType === 'binary' && parsed !== null) {
           const bytes = parsed as Uint8Array;
           return Object.freeze({
@@ -91,15 +89,14 @@ function column<T, R extends boolean>(
       },
     }),
     node,
-    dataType,
     required,
     notNull: () => column(name, dataType, read, value, true),
   });
 }
-export function text(name: string): Column<string> {
+export function text(name: string): Column<string, false, string, 'text'> {
   return column(name, 'text', z.string(), z.string(), false);
 }
-export function integer(name: string): Column<bigint> {
+export function integer(name: string): Column<bigint, false, string, 'integer'> {
   return column(
     name,
     'integer',
@@ -111,14 +108,14 @@ export function integer(name: string): Column<bigint> {
     false,
   );
 }
-export function decimal(name: string): Column<string> {
+export function decimal(name: string): Column<string, false, string, 'decimal'> {
   const schema = z.string().regex(/^-?\d+(?:\.\d+)?$/);
   return column(name, 'decimal', schema, schema, false);
 }
-export function boolean(name: string): Column<boolean> {
+export function boolean(name: string): Column<boolean, false, string, 'boolean'> {
   return column(name, 'boolean', z.boolean(), z.boolean(), false);
 }
-export function float(name: string): Column<number> {
+export function float(name: string): Column<number, false, string, 'float'> {
   return column(
     name,
     'float',
@@ -127,10 +124,10 @@ export function float(name: string): Column<number> {
     false,
   );
 }
-export function date(name: string): Column<string> {
+export function date(name: string): Column<string, false, string, 'date'> {
   return column(name, 'date', z.string(), z.iso.date(), false);
 }
-export function time(name: string): Column<string> {
+export function time(name: string): Column<string, false, string, 'time'> {
   return column(
     name,
     'time',
@@ -139,12 +136,23 @@ export function time(name: string): Column<string> {
     false,
   );
 }
-export function timestamp(name: string, mode: 'ntz' | 'ltz' | 'tz' = 'ntz'): Column<string> {
+export function timestamp(name: string): Column<string, false, string, 'timestamp_ntz'>;
+export function timestamp<M extends 'ntz' | 'ltz' | 'tz'>(
+  name: string,
+  mode: M,
+): Column<string, false, string, `timestamp_${M}`>;
+export function timestamp(
+  name: string,
+  mode: 'ntz' | 'ltz' | 'tz' = 'ntz',
+): Column<string, false, string, `timestamp_${typeof mode}`> {
   return column(name, `timestamp_${mode}`, z.string(), z.string().min(1), false);
 }
-export function variant(name: string): Column<unknown>;
-export function variant<T>(name: string, schema: z.ZodType<T>): Column<T>;
-export function variant(name: string, schema: z.ZodType<unknown> = z.unknown()): Column<unknown> {
+export function variant(name: string): Column<unknown, false, string, 'variant'>;
+export function variant<T>(name: string, schema: z.ZodType<T>): Column<T, false, string, 'variant'>;
+export function variant(
+  name: string,
+  schema: z.ZodType<unknown> = z.unknown(),
+): Column<unknown, false, string, 'variant'> {
   return column(
     name,
     'variant',
@@ -156,7 +164,7 @@ export function variant(name: string, schema: z.ZodType<unknown> = z.unknown()):
     false,
   );
 }
-export function binary(name: string): Column<Uint8Array> {
+export function binary(name: string): Column<Uint8Array, false, string, 'binary'> {
   const schema = z.instanceof(Uint8Array);
   return column(name, 'binary', schema, schema, false);
 }
@@ -174,18 +182,18 @@ export interface TableOptions {
   readonly database?: string;
 }
 
-export function bindColumn<T, R extends boolean, N extends string>(
-  value: Column<T, R>,
+export function bindColumn<T, R extends boolean, N extends string, D extends DataType>(
+  value: Column<T, R, string, D>,
   ref: SourceReference,
-): Column<T, R, N> {
+): Column<T, R, N, D> {
   return Object.freeze({
     ...value,
     phase: 'scalar',
     expression: Object.freeze({ kind: 'reference', source: ref, column: value.node }),
     refs: Object.freeze([ref]),
     nullRefs: Object.freeze([ref]),
-    notNull: () => bindColumn<T, true, N>(value.notNull(), ref),
-  }) as Column<T, R, N>;
+    notNull: () => bindColumn<T, true, N, D>(value.notNull(), ref),
+  }) as Column<T, R, N, D>;
 }
 export function bindTable<C extends ColumnMap, N extends string>(
   node: IdentifierNode,

@@ -1,12 +1,21 @@
 import {
   type CompiledQuery,
   compileAst,
+  type ExpressionNode,
   identifier,
   type JoinNode,
+  quoteIdentifier,
   type SelectNode,
   type SourceReference,
 } from './ast.js';
-import type { AnyExpression, Expression, Ordering, Predicate } from './expressions.js';
+import {
+  type AnyExpression,
+  assertPredicate,
+  type Expression,
+  type ExpressionDataType,
+  type Ordering,
+  type Predicate,
+} from './expressions.js';
 import {
   type AnyColumn,
   bindTable,
@@ -21,7 +30,7 @@ export type ScopedSelection<S extends string> = Readonly<
   Record<string, Expression<unknown, S, string>>
 >;
 export type DerivedColumns<S extends Selection, N extends string, Nullable extends string> = {
-  [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N>;
+  [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N, ExpressionDataType<S[K]>>;
 };
 export interface SelectQuery<
   S extends Selection,
@@ -108,6 +117,85 @@ function validateSelection(selection: Selection, tables: readonly Table[]): void
     tables.map((table) => table.ref),
   );
 }
+function children(node: ExpressionNode): readonly ExpressionNode[] {
+  switch (node.kind) {
+    case 'identifier':
+    case 'reference':
+    case 'parameter':
+      return [];
+    case 'binary':
+      return [node.left, node.right];
+    case 'logical':
+      return node.operands;
+    case 'unary':
+      return [node.operand];
+    case 'function':
+      return node.args;
+    case 'in':
+      return [node.operand, ...node.values];
+    case 'window':
+      // OVER's own function is not a group aggregate; only its inputs must be grouped values.
+      return [
+        ...node.value.args,
+        ...node.partitionBy,
+        ...node.orderBy.map((item) => item.expression),
+      ];
+    case 'json-path':
+    case 'cast':
+      return [node.value];
+    default:
+      throw new TypeError('Unsupported expression AST node.');
+  }
+}
+function isAggregate(node: ExpressionNode): boolean {
+  return node.kind === 'function' && node.role === 'aggregate';
+}
+function containsAggregate(node: ExpressionNode): boolean {
+  return isAggregate(node) || children(node).some(containsAggregate);
+}
+function containsWindow(node: ExpressionNode): boolean {
+  return node.kind === 'window' || children(node).some(containsWindow);
+}
+function sameNode(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left !== 'object' || typeof right !== 'object' || !left || !right) return false;
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) =>
+      sameNode((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]),
+    )
+  );
+}
+function assertGrouped(node: ExpressionNode, keys: readonly ExpressionNode[]): void {
+  if (keys.some((key) => sameNode(key, node))) return;
+  if (node.kind === 'reference' || node.kind === 'identifier') {
+    const name =
+      node.kind === 'reference'
+        ? `${quoteIdentifier(node.source.qualifier)}.${quoteIdentifier(node.column)}`
+        : quoteIdentifier(node);
+    throw new TypeError(`${name} must appear in GROUP BY or inside an aggregate function.`);
+  }
+  if (isAggregate(node)) {
+    if (children(node).some(containsAggregate))
+      throw new TypeError('Aggregate functions cannot be nested without OVER.');
+    return;
+  }
+  for (const child of children(node)) assertGrouped(child, keys);
+}
+/** Snowflake groups a query with GROUP BY or any aggregate outside a window function's own call. */
+function assertGrouping(ast: SelectNode): void {
+  const values = [
+    ...ast.projections.map((item) => item.column),
+    ...(ast.having ? [ast.having] : []),
+    ...(ast.qualify ? [ast.qualify] : []),
+  ];
+  const orders = (ast.orderBy ?? []).map((item) => item.expression);
+  if (!ast.groupBy?.length && ![...values, ...orders].some(containsAggregate)) return;
+  if (orders.some(containsWindow))
+    throw new TypeError('Grouped queries cannot order by window functions; order a derived query.');
+  for (const value of [...values, ...orders]) assertGrouped(value, ast.groupBy ?? []);
+}
 function projections(selection: Selection) {
   return Object.freeze(
     Object.entries(selection).map(([alias, value]) =>
@@ -135,10 +223,12 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
     if (kind === 'LATERAL' && table.source.kind !== 'flatten')
       throw new TypeError('lateralJoin requires FLATTEN.');
     const available = [...refs, table.ref];
-    assertScope([...(on ? [on] : []), ...(match ? [match] : [])], available);
+    const predicates = [...(on ? [on] : []), ...(match ? [match] : [])];
+    assertScope(predicates, available);
+    for (const value of predicates) assertPredicate(value, 'JOIN');
     if (table.dependencies.some((ref) => !refs.some((availableRef) => availableRef.id === ref.id)))
       throw new TypeError('Lateral input must refer to a preceding source.');
-    if (on?.phase !== undefined && on.phase !== 'scalar')
+    if (predicates.some((value) => value.phase !== 'scalar'))
       throw new TypeError('Join predicates must be scalar.');
     if (
       match &&
@@ -170,6 +260,7 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
   }
   function predicateClause(key: 'where' | 'having' | 'qualify', value: Predicate) {
     assertScope([value], refs);
+    assertPredicate(value, key.toUpperCase());
     if (key === 'where' && value.phase !== 'scalar')
       throw new TypeError('WHERE requires scalar expressions; use HAVING or QUALIFY.');
     if (key === 'having' && value.phase === 'window')
@@ -190,7 +281,6 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
         const col: AnyColumn = Object.freeze({
           ...value,
           node: identifier(key),
-          dataType: 'text',
           required: true,
           readSchema: read,
           valueSchema: value.nullRefs.some((ref) => state.nullable.has(ref.id))
@@ -217,6 +307,7 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
   function checkedAst(): SelectNode {
     if (state.ast.qualify && !state.hasWindow && !state.qualifyWindow)
       throw new TypeError('QUALIFY requires a window function.');
+    assertGrouping(state.ast);
     return state.ast;
   }
   return Object.freeze({

@@ -80,8 +80,9 @@
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:package": "vitest run --config vitest.tooling.config.ts tests/tooling/package.test.ts",
+    "test:type-performance": "vitest run --config vitest.tooling.config.ts tests/tooling/type-performance.test.ts",
     "check:package": "publint && attw --pack .",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build && pnpm check:package && pnpm test:package",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:type-performance && pnpm test:coverage && pnpm build && pnpm check:package && pnpm test:package",
     "prepack": "pnpm build",
     "snowflake:setup": "node scripts/snowflake-setup.mjs"
   },

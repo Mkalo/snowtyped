@@ -6,7 +6,15 @@ import {
   type StatementNode,
   type UpdateNode,
 } from './ast.js';
-import { type Expression, isExpression, type Predicate } from './expressions.js';
+import {
+  assertPredicate,
+  type ComparableType,
+  comparable,
+  type Expression,
+  type ExpressionDataType,
+  isExpression,
+  type Predicate,
+} from './expressions.js';
 import { assertScope } from './query.js';
 import type { AnyColumn, ColumnMap, InferColumn, Table } from './schema.js';
 
@@ -16,8 +24,14 @@ type RequiredKeys<C extends ColumnMap> = {
 export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferColumn<C[K]> } & {
   [K in Exclude<keyof C, RequiredKeys<C>>]?: InferColumn<C[K]>;
 };
+type Assignment<C extends AnyColumn, Scope extends string> = Expression<
+  InferColumn<C>,
+  Scope,
+  string,
+  ComparableType<ExpressionDataType<C>>
+>;
 export type UpdateValues<C extends ColumnMap, Scope extends string = string> = {
-  [K in keyof C]?: InferColumn<C[K]> | Expression<InferColumn<C[K]>, Scope>;
+  [K in keyof C]?: InferColumn<C[K]> | Assignment<C[K], Scope>;
 };
 export interface MutationQuery {
   readonly kind: 'mutation';
@@ -32,7 +46,7 @@ export interface MergeQuery<C extends ColumnMap, Scope extends string> extends M
   whenMatchedDelete(): MergeQuery<C, Scope>;
   whenNotMatchedInsert(
     values: {
-      [K in keyof InsertValues<C>]: InsertValues<C>[K] | Expression<InsertValues<C>[K], Scope>;
+      [K in keyof InsertValues<C>]: InsertValues<C>[K] | Assignment<C[K & keyof C], Scope>;
     },
   ): MergeQuery<C, Scope>;
 }
@@ -51,7 +65,15 @@ function entries(table: Table, values: Readonly<Record<string, unknown>>, refs =
       if (!Object.hasOwn(table.columns, key))
         throw new TypeError(`Unknown mutation column: ${key}`);
       const column = table.columns[key] as AnyColumn;
-      if (isExpression(value)) assertScope([value], refs);
+      if (isExpression(value)) {
+        assertScope([value], refs);
+        if (value.phase !== 'scalar')
+          throw new TypeError('Mutation values cannot contain aggregate or window functions.');
+        if (!comparable(column.dataType, value.dataType))
+          throw new TypeError(
+            `Cannot assign a ${value.dataType.toUpperCase()} expression to ${column.dataType.toUpperCase()} column ${key}.`,
+          );
+      }
       return Object.freeze({
         column: column.node,
         value: isExpression(value) ? value.expression : column.encode(value),
@@ -97,6 +119,7 @@ function filtered<N extends string>(
     ...mutation(ast),
     where(predicate: Predicate<N>) {
       assertScope([predicate], [table.ref]);
+      assertPredicate(predicate, 'WHERE');
       if (predicate.phase !== 'scalar') throw new TypeError('Mutation filters must be scalar.');
       return filtered(table, Object.freeze({ ...ast, where: predicate.expression }));
     },
@@ -129,6 +152,7 @@ export function mergeInto<
   if (target.ref.name === source.ref.name)
     throw new TypeError('MERGE sources need distinct names.');
   assertScope([on], [target.ref, source.ref]);
+  assertPredicate(on, 'MERGE');
   if (on.phase !== 'scalar') throw new TypeError('MERGE requires a scalar match predicate.');
   const base: MergeNode = Object.freeze({
     kind: 'merge',
