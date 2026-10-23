@@ -47,7 +47,7 @@ export async function createPool(
       lease.then(
         (connection) => {
           signal.removeEventListener('abort', abort);
-          if (signal.aborted) void release(connection);
+          if (signal.aborted) release(connection).catch(() => {});
           else resolve(connection);
         },
         (error: unknown) => {

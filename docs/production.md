@@ -26,6 +26,12 @@ Set `SNOWTYPED_SOAK_SECONDS` to lengthen the sustained run (default 15).
   request. That request rejects and its connection is destroyed; the pool does not retry it.
   With `testOnBorrow: true` the pool heartbeats each connection before lending it and
   replaces a terminated one first, at the cost of one round trip per acquire.
+- **Deadlines at submission.** A `signal` or `timeoutMs` that fires just as a statement is
+  submitted can reach Snowflake before the statement is executing. The cancel is then refused,
+  the request rejects with `AggregateError: Query cancellation failed.`, and the statement may
+  still complete (#67). A pooled deadline also covers the connection wait, so on a cold pool a
+  short deadline can land in this window after login. Treat that rejection as an unknown
+  outcome for mutations.
 - **Retries.** Snowtyped never resubmits a statement. snowflake-sdk's transport retries reuse
   the statement's request ID.
 - **Streaming memory.** Memory is bounded by snowflake-sdk's chunk prefetch, not by the row

@@ -231,6 +231,28 @@ describe('pool acquisition waits', () => {
     await db.close();
   });
 
+  it('swallows a failed release of a late lease nobody is waiting for', async () => {
+    const { fake, db } = await poolWith({ max: 1 }, { deferred: true });
+    const release = fake.release.getMockImplementation() as (c: FakeConnection) => Promise<void>;
+    fake.release.mockImplementation(async (connection) => {
+      const call = fake.release.mock.calls.length;
+      await release(connection);
+      if (call === 2) throw new Error('pool cleared');
+    });
+    const running = db.execute(query);
+    await tick();
+    const controller = new AbortController();
+    const waiting = db.execute(query, { signal: controller.signal });
+    controller.abort(new Error('caller gave up'));
+    await expect(waiting).rejects.toThrow('caller gave up');
+    fake.all[0]?.finish();
+    await running;
+    await tick();
+    expect(fake.release).toHaveBeenCalledTimes(2);
+    expect(fake.borrowed.size).toBe(0);
+    await db.close();
+  });
+
   it('keeps one deadline across the wait and the statement', async () => {
     const { fake, db } = await poolWith({ max: 1 }, { deferred: true });
     const controller = new AbortController();
