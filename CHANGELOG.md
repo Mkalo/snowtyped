@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.1
+
+### Patch Changes
+
+- 38bfb9e: License Snowtyped under MIT, include the license in installed packages, and
+  prepare public alpha/beta releases with reviewed npm staging and provenance.
+
 ## 0.1.0-alpha.0 — 2026-10-22
 
 - Added schema-derived TypeScript inference and compiled Zod 4 validation.
