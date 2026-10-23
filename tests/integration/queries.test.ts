@@ -697,10 +697,11 @@ describe('query semantics against Snowflake', () => {
     ]);
   });
 
-  it('reads AT and BEFORE snapshots by statement, offset, and UTC timestamp', async () => {
+  it('reads AT and BEFORE snapshots by statement, offset, and timestamp', async () => {
     await db.execute(insert(history, { id: 1n, label: 'first' }));
-    const [moment] = await db.queryRaw<[{ AT: string }]>`
-      SELECT TO_VARCHAR(SYSDATE(), 'YYYY-MM-DD HH24:MI:SS.FF9') AS AT`;
+    const [moment] = await db.queryRaw<[{ OFFSET: string; LOCAL: string }]>`
+      SELECT TO_VARCHAR(CURRENT_TIMESTAMP(), 'YYYY-MM-DD"T"HH24:MI:SS.FF9TZH:TZM') AS OFFSET,
+        TO_VARCHAR(CURRENT_TIMESTAMP(), 'YYYY-MM-DD HH24:MI:SS.FF9') AS LOCAL`;
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     const second = await db.execute(insert(history, { id: 2n, label: 'second' }));
     const snapshot = async (table: typeof history) =>
@@ -709,7 +710,8 @@ describe('query semantics against Snowflake', () => {
     expect(await snapshot(timeTravel(history, { statement: second.queryId }, 'BEFORE'))).toEqual([
       1n,
     ]);
-    expect(await snapshot(timeTravel(history, { timestamp: moment.AT }))).toEqual([1n]);
+    expect(await snapshot(timeTravel(history, { timestamp: moment.OFFSET }))).toEqual([1n]);
+    expect(await snapshot(timeTravel(history, { timestamp: moment.LOCAL }))).toEqual([1n]);
     expect(await snapshot(timeTravel(history, { offset: 0 }))).toEqual([1n, 2n]);
     const before = alias(timeTravel(history, { statement: second.queryId }, 'BEFORE'), 'before');
     expect(

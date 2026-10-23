@@ -26,12 +26,15 @@ describe('live coverage document', () => {
     const source = api.alias(table, 'S');
     sdk.createPool.mockReturnValue({});
     const names = [
-      ...Object.keys(api),
+      ...Object.entries(api).flatMap(([name, value]) =>
+        typeof value === 'object' && value !== null ? methods(value, `${name}.`) : [name],
+      ),
       ...Object.keys(driver),
       ...methods(api.select(table)),
       ...methods(api.update(table, { id: 1n })),
       ...methods(api.mergeInto(table, source, api.eq(table.columns.id, source.columns.id))),
       ...methods(api.sql, 'sql.'),
+      ...methods(api.text('X')),
       ...methods(driver.createClient({ execute: vi.fn() })),
       ...methods(await driver.createPool({ account: 'test' })),
     ];

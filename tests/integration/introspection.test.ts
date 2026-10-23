@@ -125,23 +125,18 @@ describe('introspection and generated declarations against Snowflake', () => {
     ).toEqual(tables.map((table) => table.name));
   });
 
-  it('fails explicitly for unsupported column types', () => {
-    expect(() => generateSchema(tables.filter((table) => table.name === 'GEO'))).toThrow(
-      'Unsupported Snowflake type for code generation: GEOGRAPHY',
-    );
-  });
-
   it('generates declarations that compile with the expected inferred types', async () => {
-    const code = generateSchema(tables.filter((table) => table.name !== 'GEO'));
+    const code = generateSchema(tables);
     const file = join(directory, 'checked.ts');
     await writeFile(
       file,
       `${code.replace("from 'snowtyped'", `from ${JSON.stringify(SOURCE)}`)}
-import type { InferSelection } from ${JSON.stringify(SOURCE)};
+import type { GeoJsonGeometry, InferSelection } from ${JSON.stringify(SOURCE)};
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type Expect<T extends true> = T;
 type Row = InferSelection<typeof table0.columns>;
-type Mixed = InferSelection<typeof table2.columns>;
+type Geo = InferSelection<typeof table2.columns>;
+type Mixed = InferSelection<typeof table3.columns>;
 export type Checks = [
   Expect<Equal<Row['ID'], bigint>>,
   Expect<Equal<Row['SMALL'], bigint | null>>,
@@ -150,8 +145,11 @@ export type Checks = [
   Expect<Equal<Row['NAME'], string>>,
   Expect<Equal<Row['ACTIVE'], boolean | null>>,
   Expect<Equal<Row['TZ'], string | null>>,
-  Expect<Equal<Row['MAP'], unknown>>,
+  Expect<Equal<Row['LIST'], unknown[] | null>>,
+  Expect<Equal<Row['MAP'], Record<string, unknown> | null>>,
+  Expect<Equal<Row['DOC'], unknown>>,
   Expect<Equal<Row['BYTES'], Uint8Array | null>>,
+  Expect<Equal<Geo['PLACE'], GeoJsonGeometry | null>>,
   Expect<Equal<Mixed['id'], bigint>>,
   Expect<Equal<Mixed['Display "Name"'], string | null>>,
 ];
@@ -161,13 +159,16 @@ export type Checks = [
   }, 60_000);
 
   it('queries and writes the live schema through the generated declarations', async () => {
-    const code = generateSchema(tables.filter((table) => table.name !== 'GEO'));
+    const code = generateSchema(tables);
     const file = join(directory, 'runtime.ts');
     await writeFile(file, code.replace("from 'snowtyped'", `from ${JSON.stringify(SOURCE)}`));
     const generated = (await import(file)) as Record<string, Table>;
-    const [allTypes, customers, mixedTable] = ['table0', 'table1', 'table2'].map(
-      (key) => generated[key] as Table,
-    );
+    const [allTypes, customers, geoTable, mixedTable] = [
+      'table0',
+      'table1',
+      'table2',
+      'table3',
+    ].map((key) => generated[key] as Table);
     const row = {
       ID: 1n,
       SMALL: -5n,
@@ -205,5 +206,8 @@ export type Checks = [
     expect((await db.execute(select(mixedTable as Table))).rows).toEqual([
       { id: 7n, 'Display "Name"': 'quoted' },
     ]);
+    const place = { type: 'Point', coordinates: [-122.35, 37.55] };
+    await db.execute(insert(geoTable as Table, { ID: 1n, PLACE: place } as never));
+    expect((await db.execute(select(geoTable as Table))).rows).toEqual([{ ID: 1n, PLACE: place }]);
   });
 });
