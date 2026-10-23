@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getReleasePlan } from '@changesets/get-release-plan';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const pnpm = process.env.npm_execpath;
@@ -82,6 +83,8 @@ function check(cwd, expected = 0, env = {}) {
 }
 
 async function version(cwd, expected, summary) {
+  const plan = await getReleasePlan(cwd);
+  assert.equal(plan.releases.find((release) => release.name === 'snowtyped')?.newVersion, expected);
   pm(cwd, 'version:packages');
   const manifest = await json(cwd, 'package.json');
   assert.equal(manifest.version, expected);
@@ -121,6 +124,7 @@ try {
   assert.equal(repeat.status, 0);
   assert.equal((await json(pre, 'package.json')).version, '0.1.0-alpha.1');
   assert.equal(git(pre, 'status', '--porcelain'), '');
+  assert.equal((await getReleasePlan(pre)).releases.length, 0);
   await changeset(pre, 'feature', 'minor', 'Add alpha capability.');
   commit(pre);
   await version(pre, '0.1.0-alpha.2', 'Add alpha capability.');
@@ -178,6 +182,9 @@ try {
   await changeset(tooling, 'no-release', undefined, 'CI-only exemption.');
   commit(tooling);
   check(tooling);
+  assert.equal((await getReleasePlan(tooling)).releases.length, 0);
+  await writeFile(join(tooling, '.changeset/invalid.md'), 'Invalid frontmatter.\n');
+  assert.match(check(tooling, 1, { CHANGESETS_BASE: 'HEAD' }), /missing or invalid frontmatter/);
   console.log(
     'Missing changeset fails; docs/CI exemptions and restricted version PR checks passed.',
   );
