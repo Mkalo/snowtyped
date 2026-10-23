@@ -6,6 +6,7 @@ description: Declare Snowflake tables once and get result types and runtime vali
 import Snippet from '../../../components/Snippet.astro';
 import constraints from '../../../snippets/constraints.ts?raw';
 import schema from '../../../snippets/schema.ts?raw';
+import semiStructured from '../../../snippets/semi-structured.ts?raw';
 import variantShape from '../../../snippets/variant-shape.ts?raw';
 
 A table declaration is the single source of truth for a structured query. It determines the
@@ -24,18 +25,20 @@ interfaces or decoders.
 
 ## Column types
 
-| Declaration                             | Non-null output | Notes                                       |
-| --------------------------------------- | --------------- | ------------------------------------------- |
-| `text('NAME')`                          | `string`        | Text                                        |
-| `integer('ID')`                         | `bigint`        | Exact integral NUMBER                       |
-| `decimal('BALANCE')`                    | `string`        | Exact fixed-point decimal text              |
-| `float('VALUE')`                        | `number`        | Finite floating-point values                |
-| `boolean('ACTIVE')`                     | `boolean`       | No truthiness coercion                      |
-| `date('DAY')`                           | `string`        | Calendar date                               |
-| `time('CLOCK')`                         | `string`        | Time with up to nine fractional digits      |
-| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`        | Nanoseconds retained; LTZ/TZ include offset |
-| `binary('DATA')`                        | `Uint8Array`    | SDK Buffers are accepted                    |
-| `variant('PAYLOAD')`                    | `unknown`       | JSON without an assumed shape               |
+| Declaration                             | Non-null output           | Notes                                       |
+| --------------------------------------- | ------------------------- | ------------------------------------------- |
+| `text('NAME')`                          | `string`                  | Text                                        |
+| `integer('ID')`                         | `bigint`                  | Exact integral NUMBER                       |
+| `decimal('BALANCE')`                    | `string`                  | Exact fixed-point decimal text              |
+| `float('VALUE')`                        | `number`                  | Finite floating-point values                |
+| `boolean('ACTIVE')`                     | `boolean`                 | No truthiness coercion                      |
+| `date('DAY')`                           | `string`                  | Calendar date                               |
+| `time('CLOCK')`                         | `string`                  | Time with up to nine fractional digits      |
+| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`                  | Nanoseconds retained; LTZ/TZ include offset |
+| `binary('DATA')`                        | `Uint8Array`              | SDK Buffers are accepted                    |
+| `variant('PAYLOAD')`                    | `unknown`                 | JSON without an assumed shape               |
+| `array('TAGS')`                         | `unknown[]`               | Semi-structured ARRAY                       |
+| `object('META')`                        | `Record<string, unknown>` | Semi-structured OBJECT                      |
 
 See [validation and representations](/guides/validation/) for why numbers and temporal values use
 these representations.
@@ -57,6 +60,13 @@ Give `variant` a Zod schema to declare a JSON shape. The schema is checked at ru
 write types are inferred from it. A type parameter alone cannot establish a VARIANT shape.
 
 <Snippet code={variantShape} />
+
+`array` takes an element schema and `object` takes an OBJECT schema in the same way. JSON numbers
+that a JavaScript number cannot hold exactly reject the result instead of being rounded. Structured
+`ARRAY(type)`, `OBJECT(...)`, and `MAP` columns are not supported yet, and code generation rejects
+them.
+
+<Snippet code={semiStructured} />
 
 ## Aliases
 

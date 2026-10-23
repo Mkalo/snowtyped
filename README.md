@@ -51,20 +51,22 @@ Schema declarations determine both result types and runtime validation. Users do
 
 The compiler serializes exact numeric and temporal outputs after the native query's joins, grouping, window filtering, DISTINCT, ordering, and pagination. Nested sources retain their native SQL types; numeric sorting remains numeric. SDK NULL sentinels are normalized using result-column metadata, preserving a text value that happens to equal `NULL`.
 
-| Declaration                             | Non-null output | Notes                                       |
-| --------------------------------------- | --------------- | ------------------------------------------- |
-| `text('NAME')`                          | `string`        | Text                                        |
-| `integer('ID')`                         | `bigint`        | Exact integral NUMBER                       |
-| `decimal('BALANCE')`                    | `string`        | Exact fixed-point decimal text              |
-| `float('VALUE')`                        | `number`        | Finite floating-point values                |
-| `boolean('ACTIVE')`                     | `boolean`       | No truthiness coercion                      |
-| `date('DAY')`                           | `string`        | Calendar date                               |
-| `time('CLOCK')`                         | `string`        | Time with up to nine fractional digits      |
-| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`        | Nanoseconds retained; LTZ/TZ include offset |
-| `binary('DATA')`                        | `Uint8Array`    | SDK Buffers are accepted                    |
-| `variant('PAYLOAD')`                    | `unknown`       | JSON without an assumed shape               |
+| Declaration                             | Non-null output           | Notes                                       |
+| --------------------------------------- | ------------------------- | ------------------------------------------- |
+| `text('NAME')`                          | `string`                  | Text                                        |
+| `integer('ID')`                         | `bigint`                  | Exact integral NUMBER                       |
+| `decimal('BALANCE')`                    | `string`                  | Exact fixed-point decimal text              |
+| `float('VALUE')`                        | `number`                  | Finite floating-point values                |
+| `boolean('ACTIVE')`                     | `boolean`                 | No truthiness coercion                      |
+| `date('DAY')`                           | `string`                  | Calendar date                               |
+| `time('CLOCK')`                         | `string`                  | Time with up to nine fractional digits      |
+| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`                  | Nanoseconds retained; LTZ/TZ include offset |
+| `binary('DATA')`                        | `Uint8Array`              | SDK Buffers are accepted                    |
+| `variant('PAYLOAD')`                    | `unknown`                 | JSON without an assumed shape               |
+| `array('TAGS')`                         | `unknown[]`               | Semi-structured ARRAY                       |
+| `object('META')`                        | `Record<string, unknown>` | Semi-structured OBJECT                      |
 
-Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. A type parameter alone cannot establish a VARIANT shape. The declaration is checked at runtime, and read/write types are inferred from it.
+Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. Likewise `array('TAGS', z.string())` declares element values and `object('META', z.object({ ok: z.boolean() }))` declares an OBJECT shape. A type parameter alone cannot establish a JSON shape. The declaration is checked at runtime, and read/write types are inferred from it. JSON numbers that a JavaScript number cannot hold exactly, such as integers beyond 2^53, reject the result instead of being rounded. Structured `ARRAY(type)`, `OBJECT(...)`, and `MAP` columns are not supported yet, and code generation rejects them.
 
 Declare physical constraints with `integer('QTY', { precision: 9 })`, `decimal('BALANCE', { precision: 12, scale: 2 })`, `text('CODE', { length: 3 })`, `binary('HASH', { length: 32 })`, `time('CLOCK', { precision: 3 })`, or `timestamp('AT', 'ltz', { precision: 6 })`. INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including extra scale or fractional seconds that Snowflake would silently round or truncate; zeros that do not change the value are accepted. VARCHAR length counts code points and BINARY length counts bytes. Predicate literals are not constrained. Other database constraints remain database-enforced; declarations should match the physical schema.
 
