@@ -39,19 +39,26 @@ import {
   type ColumnMap,
   type DataType,
   type InferSelection,
+  isLeaf,
+  type Projection,
+  projectionLeaves,
   type Selection,
   type Table,
 } from './schema.js';
 
-export type ScopedSelection<S extends string> = Readonly<
-  Record<string, Expression<unknown, S, string>>
->;
-export type DerivedColumns<S extends Selection, N extends string, Nullable extends string> = {
+export type ScopedSelection<S extends string> = {
+  readonly [key: string]: Expression<unknown, S, string> | ScopedSelection<S>;
+};
+export type DerivedColumns<S extends Projection, N extends string, Nullable extends string> = {
   [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N, 'none', ExpressionDataType<S[K]>>;
 };
 type TableName<T> = T extends Table<ColumnMap, infer N> ? N : never;
 interface Uncorrelated {
   readonly outerScopeType?: never;
+}
+/** Only flat projections compose into SQL; nested objects are rebuilt when rows are decoded. */
+interface Flat {
+  readonly selection: Selection;
 }
 type Present<T> = unknown extends T ? T : Exclude<T, null>;
 type SetMismatch<L, R> =
@@ -73,14 +80,14 @@ type TypeMismatch<L, R> = {
         : K
       : K;
 }[keyof L & keyof R];
-export interface SetOperand {
+export interface SetOperand extends Flat {
   readonly kind: 'select' | 'set';
   readonly rowType?: object;
   readonly sqlTypes?: object;
 }
 export type OperandRow<Q> = Q extends { readonly rowType?: infer R } ? R : never;
 export type OperandTypes<Q> = Q extends { readonly sqlTypes?: infer T } ? T : never;
-export type SelectionTypes<S extends Selection> = { [K in keyof S]: ExpressionDataType<S[K]> };
+export type SelectionTypes<S extends Projection> = { [K in keyof S]: ExpressionDataType<S[K]> };
 type ColumnType<T, K> = K extends keyof T ? (T[K] extends DataType ? T[K] : DataType) : DataType;
 /** Branches match by projection alias; each alias needs the same SQL type in both branches. */
 export type CompatibleOperand<L, R, LT = object, RT = object> = [
@@ -127,15 +134,19 @@ export type SetColumns<Row, N extends string = SetScope, Types = object> = {
 };
 interface SetOperations<Row, Types> {
   union<Q extends SetOperand>(
+    this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<UnionRow<Row, OperandRow<Q>>, Types>;
   unionAll<Q extends SetOperand>(
+    this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<UnionRow<Row, OperandRow<Q>>, Types>;
   intersect<Q extends SetOperand>(
+    this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<IntersectRow<Row, OperandRow<Q>>, Types>;
   except<Q extends SetOperand>(
+    this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<Row, Types>;
 }
@@ -156,7 +167,7 @@ export interface SetQuery<Row, Types = object> extends SetOperations<Row, Types>
 }
 /** Outer names the enclosing sources a correlated subquery may reference. */
 export interface SelectQuery<
-  S extends Selection,
+  S extends Projection,
   Scope extends string = string,
   Nullable extends string = never,
   Outer extends string = never,
@@ -214,9 +225,12 @@ export interface SelectQuery<
   distinct(): SelectQuery<S, Scope, Nullable, Outer>;
   limit(value: number): SelectQuery<S, Scope, Nullable, Outer>;
   offset(value: number): SelectQuery<S, Scope, Nullable, Outer>;
-  as<const N extends string>(this: Uncorrelated, name: N): Table<DerivedColumns<S, N, Nullable>, N>;
+  as<const N extends string>(
+    this: Uncorrelated & Flat,
+    name: N,
+  ): Table<DerivedColumns<S, N, Nullable>, N>;
   asCte<const N extends string>(
-    this: Uncorrelated,
+    this: Uncorrelated & Flat,
     name: N,
   ): Table<DerivedColumns<S, N, Nullable>, N>;
   compile(this: Uncorrelated): CompiledQuery;
@@ -224,7 +238,9 @@ export interface SelectQuery<
 
 interface State {
   readonly ast: SelectNode;
+  /** Projected leaves; nested entries are aliased by their dotted path. */
   readonly selection: Selection;
+  readonly projection?: Projection;
   readonly tables: readonly Table[];
   readonly outer: readonly Table[];
   readonly nullable: ReadonlySet<symbol>;
@@ -254,14 +270,53 @@ function correlations(node: unknown): SourceReference[] {
 export function derivedServerValue(): never {
   throw new TypeError('Server values can only be declared on base table columns.');
 }
-function validateSelection(selection: Selection): readonly AnyExpression[] {
-  const entries = Object.entries(selection);
-  if (!entries.length) throw new TypeError('A query needs at least one projected column.');
-  for (const [key] of entries) {
+function validateProjection(projection: Projection, nested = false): void {
+  const entries = Object.entries(projection);
+  if (!entries.length)
+    throw new TypeError(
+      nested
+        ? 'A nested projection needs at least one entry.'
+        : 'A query needs at least one projected column.',
+    );
+  for (const [key, value] of entries) {
     identifier(key);
     if (key === '__proto__') throw new TypeError('Reserved projection alias.');
+    if (typeof value !== 'object' || value === null)
+      throw new TypeError('Projection entries must be expressions or nested objects.');
+    if (!isLeaf(value)) validateProjection(value, true);
   }
-  return Object.values(selection);
+}
+/** Flattens nested entries to dotted aliases, keeping flat projections unchanged. */
+function snapshot(projection: Projection): Projection {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(projection).map(([key, value]) => [
+        key,
+        isLeaf(value) ? value : snapshot(value),
+      ]),
+    ),
+  );
+}
+function shape(input: Projection): Pick<State, 'selection' | 'projection'> {
+  validateProjection(input);
+  const projection = snapshot(input);
+  const leaves = projectionLeaves(projection);
+  if (leaves.every(([path]) => path.length === 1)) return { selection: projection as Selection };
+  const selection: Record<string, AnyExpression> = {};
+  for (const [path, value] of leaves) {
+    const alias = path.join('.');
+    identifier(alias);
+    if (Object.hasOwn(selection, alias))
+      throw new TypeError(`Nested projection path ${alias} repeats another projection alias.`);
+    selection[alias] = value;
+  }
+  return { selection: Object.freeze(selection), projection };
+}
+function assertFlat(state: State): void {
+  if (state.projection)
+    throw new TypeError(
+      'Nested projections are only decoded from results; a derived table, set operand, or subquery needs flat columns.',
+    );
 }
 function children(node: ExpressionNode): readonly ExpressionNode[] {
   switch (node.kind) {
@@ -681,29 +736,30 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
       [key]: value.expression,
     });
   }
-  const operand = (): Operand => ({
-    ast: uncorrelated(),
-    outputs: outputs(state.selection, state.nullable),
-  });
+  const operand = (): Operand => {
+    assertFlat(state);
+    return { ast: uncorrelated(), outputs: outputs(state.selection, state.nullable) };
+  };
   const query = Object.freeze({
     kind: 'select',
     ast: state.ast,
-    selection: state.selection,
+    selection: state.projection ?? state.selection,
     nullableSources: state.nullable,
     outerSources: Object.freeze(outerRefs),
     where: (value: Predicate) => predicateClause('where', value),
     having: (value: Predicate) => predicateClause('having', value),
     qualify: (value: Predicate) => predicateClause('qualify', value),
-    select(selection: Selection) {
-      scoped(validateSelection(selection));
-      const snapshot = Object.freeze({ ...selection });
-      return next(
-        {
-          selection: snapshot,
-          hasWindow: Object.values(snapshot).some((value) => value.phase === 'window'),
-        },
-        { projections: projections(snapshot) },
-      );
+    select(projection: Projection) {
+      const { selection, projection: nested } = shape(projection);
+      scoped(Object.values(selection));
+      const { projection: _, ...rest } = state;
+      return build({
+        ...rest,
+        selection,
+        ...(nested ? { projection: nested } : {}),
+        hasWindow: Object.values(selection).some((value) => value.phase === 'window'),
+        ast: Object.freeze({ ...state.ast, projections: projections(selection) }),
+      });
     },
     correlate(...tables: Table[]) {
       if (!tables.length) throw new TypeError('correlate requires at least one source.');
@@ -756,20 +812,24 @@ export function select<
   N extends string,
   const S extends ScopedSelection<NoInfer<N>>,
 >(table: Table<C, N>, selection: S): SelectQuery<S, N>;
-export function select(table: Table, selection: Selection = table.columns): SelectQuery<Selection> {
-  assertScope(validateSelection(selection), [table.ref]);
-  const snapshot = Object.freeze({ ...selection });
+export function select(
+  table: Table,
+  projection: Projection = table.columns,
+): SelectQuery<Selection> {
+  const { selection, projection: nested } = shape(projection);
+  assertScope(Object.values(selection), [table.ref]);
   return build({
-    selection: snapshot,
+    selection,
+    ...(nested ? { projection: nested } : {}),
     tables: Object.freeze([table]),
     outer: Object.freeze([]),
     nullable: new Set(),
-    hasWindow: Object.values(snapshot).some((value) => value.phase === 'window'),
+    hasWindow: Object.values(selection).some((value) => value.phase === 'window'),
     qualifyWindow: false,
     ast: Object.freeze({
       kind: 'select',
       from: table.source,
-      projections: projections(snapshot),
+      projections: projections(selection),
       ...(table.source.kind === 'cte' ? { with: Object.freeze([table.source]) } : {}),
     }),
   });
@@ -931,6 +991,7 @@ interface Subquery {
 function subquery(query: Subquery, single: boolean) {
   const state = states.get(query);
   if (!state) throw new TypeError('Subqueries require a query built by select().');
+  assertFlat(state);
   const ast = checkedAst(state);
   if (single && ast.projections.length !== 1)
     throw new TypeError('Scalar and IN subqueries must project exactly one column.');

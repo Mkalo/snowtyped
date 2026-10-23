@@ -23,7 +23,7 @@ CI runs the library checks on Linux and Windows with Node 22 and 24.
   VARIANT, semi-structured and structured ARRAY, OBJECT, and MAP, GEOGRAPHY, GEOMETRY, and VECTOR
   columns, with precision, scale, and length constraints. See
   [schema declarations](/guides/schemas/).
-- SELECT with projections, joins, aliases, grouping, aggregates, ordering, DISTINCT, pagination,
+- SELECT with flat and nested object projections, joins, aliases, grouping, aggregates, ordering, DISTINCT, pagination,
   derived tables, CTEs, recursive CTEs, set operations, and scalar, EXISTS, IN, and correlated
   subqueries. See [queries](/guides/queries/).
 - SQL type checks for comparisons, functions, predicates, and assignments, and grouping and
@@ -47,7 +47,6 @@ CI runs the library checks on Linux and Windows with Node 22 and 24.
 
 ## Not first-class in this alpha
 
-Complex nested relation projections, DDL for objects other than schemas and tables, and ORM
-relation loading are not modeled. A public third-party AST registration protocol is not implemented.
+DDL for objects other than schemas and tables, and ORM relation loading are not modeled. A public third-party AST registration protocol is not implemented.
 
 [Raw SQL](/guides/raw-sql/) can execute Snowflake syntax beyond the modeled builder surface.

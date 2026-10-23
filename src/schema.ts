@@ -84,10 +84,46 @@ export type InferColumn<C> =
   C extends Column<infer T, infer R, string, ServerValueKind> ? ColumnValue<T, R> : never;
 export type ColumnMap = Readonly<Record<string, AnyColumn>>;
 export type Selection = Readonly<Record<string, AnyExpression>>;
-export type InferSelection<S extends Selection, Nullable extends string = never> = {
-  [K in keyof S]:
-    | InferExpression<S[K]>
-    | (Extract<ExpressionNullScope<S[K]>, Nullable> extends never ? never : null);
+/** A selection whose entries may be nested objects of further entries. */
+export type Projection = { readonly [key: string]: AnyExpression | Projection };
+type Leaf = { readonly dataType: DataType };
+/**
+ * A nested object's keys are its direct NOT NULL entries: 'always' when no outer join can null
+ * them, otherwise the outer-joined sources a non-NULL key proves present. Only a column proves its
+ * source; an expression such as COALESCE can be non-NULL with some of its sources absent.
+ */
+type PresenceKeys<P, Nullable extends string> = {
+  [K in keyof P]: P[K] extends Leaf
+    ? null extends InferExpression<P[K]>
+      ? never
+      : [Extract<ExpressionNullScope<P[K]>, Nullable>] extends [never]
+        ? 'always'
+        : [
+            P[K] extends { readonly required: boolean }
+              ? Extract<ExpressionNullScope<P[K]>, Nullable>
+              : never,
+          ]
+    : never;
+}[keyof P];
+type KeyScopes<K> = K extends readonly [infer N] ? N : never;
+type MissingScopes<K, All> = K extends readonly [infer N] ? Exclude<All, N> : never;
+/** A present object proves the sources shared by every key; one non-NULL key suffices. */
+type ProvenScopes<K> = Exclude<KeyScopes<K>, MissingScopes<K, KeyScopes<K>>>;
+type InferNested<P extends Projection, Nullable extends string> = [
+  PresenceKeys<P, Nullable>,
+] extends [never]
+  ? InferSelection<P, Nullable>
+  : 'always' extends PresenceKeys<P, Nullable>
+    ? InferSelection<P, Nullable>
+    : InferSelection<P, Exclude<Nullable, ProvenScopes<PresenceKeys<P, Nullable>>>> | null;
+export type InferSelection<S extends Projection, Nullable extends string = never> = {
+  [K in keyof S]: S[K] extends Leaf
+    ?
+        | InferExpression<S[K]>
+        | (Extract<ExpressionNullScope<S[K]>, Nullable> extends never ? never : null)
+    : S[K] extends Projection
+      ? InferNested<S[K], Nullable>
+      : never;
 };
 export type BoundColumns<C extends ColumnMap, Name extends string> = {
   [K in keyof C]: C[K] extends Column<infer T, infer R, string, infer S, infer D>
@@ -624,18 +660,87 @@ export function timeTravel<C extends ColumnMap, N extends string>(
   });
   return bindTable(table.node, table.columns, source, table.ref.name as N);
 }
+export function isLeaf(value: AnyExpression | Projection): value is AnyExpression {
+  return typeof value.dataType === 'string' && 'expression' in value;
+}
+/** Leaves in projection order, depth first, with their paths. */
+export function projectionLeaves(
+  projection: Projection,
+  path: readonly string[] = [],
+): [path: readonly string[], value: AnyExpression][] {
+  return Object.entries(projection).flatMap(([key, value]) =>
+    isLeaf(value) ? [[[...path, key], value]] : projectionLeaves(value, [...path, key]),
+  );
+}
+/** Rebuilds the projection's shape from a row of leaf values in projection order. */
+export function projectionRow(projection: Projection): (values: readonly unknown[]) => unknown {
+  let index = 0;
+  const shape = (value: Projection): (readonly [string, number | object])[] =>
+    Object.entries(value).map(([key, item]) => [key, isLeaf(item) ? index++ : shape(item)]);
+  const tree = shape(projection);
+  const build = (nodes: typeof tree, values: readonly unknown[]): Record<string, unknown> =>
+    Object.fromEntries(
+      nodes.map(([key, node]) => [
+        key,
+        typeof node === 'number' ? values[node] : build(node as typeof tree, values),
+      ]),
+    );
+  return (values) => build(tree, values);
+}
+/**
+ * A nested object is NULL when every NOT NULL entry it holds directly reads NULL, and each of
+ * those keys can only be NULL through an outer join. A present object proves the sources proven
+ * by every key, and only a column key proves its source.
+ */
+function presence(projection: Projection, nullable: ReadonlySet<symbol>) {
+  const keys = Object.entries(projection).filter(
+    (entry): entry is [string, AnyExpression] =>
+      isLeaf(entry[1]) && !entry[1].valueSchema.safeParse(null).success,
+  );
+  const scopes = keys.map(([, value]) =>
+    value.nullRefs.map((ref) => ref.id).filter((id) => nullable.has(id)),
+  );
+  if (!keys.length || scopes.some((scope) => !scope.length)) return undefined;
+  const proofs = keys.map(([, value], index) =>
+    'required' in value ? (scopes[index] as symbol[]) : [],
+  );
+  const proven = new Set(proofs.reduce((all, scope) => all.filter((id) => scope.includes(id))));
+  return {
+    keys: keys.map(([key]) => key),
+    nullable: new Set([...nullable].filter((id) => !proven.has(id))),
+  };
+}
+function projectionSchema(projection: Projection, nullable: ReadonlySet<symbol>): z.ZodType {
+  return z.strictObject(
+    Object.fromEntries(
+      Object.entries(projection).map(([key, value]) => {
+        if (isLeaf(value))
+          return [
+            key,
+            value.nullRefs.some((ref) => nullable.has(ref.id))
+              ? value.readSchema.nullable()
+              : value.readSchema,
+          ];
+        const object = presence(value, nullable);
+        if (!object) return [key, projectionSchema(value, nullable)];
+        return [
+          key,
+          z.preprocess(
+            (raw) =>
+              object.keys.every((name) => (raw as Record<string, unknown>)[name] === null)
+                ? null
+                : raw,
+            projectionSchema(value, object.nullable).nullable(),
+          ),
+        ];
+      }),
+    ),
+  );
+}
 /** Derives a compiled parser from the projection, including nullable join sources. */
-export function resultSchema<S extends Selection>(
+export function resultSchema<S extends Projection>(
   selection: S,
   nullable: ReadonlySet<symbol> = new Set(),
 ): z.ZodType<InferSelection<S>> {
-  const shape = Object.fromEntries(
-    Object.entries(selection).map(([key, value]) => [
-      key,
-      value.nullRefs.some((ref) => nullable.has(ref.id))
-        ? value.readSchema.nullable()
-        : value.readSchema,
-    ]),
-  );
-  return z.compile(z.strictObject(shape)) as z.ZodType<InferSelection<S>>;
+  return z.compile(projectionSchema(selection, nullable)) as z.ZodType<InferSelection<S>>;
 }
