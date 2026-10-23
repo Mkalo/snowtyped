@@ -1,5 +1,6 @@
 import { type IdentifierNode, identifier } from '../ast.js';
-import type { ColumnMap, Table } from '../schema.js';
+import type { ColumnMap, ServerValue, Table } from '../schema.js';
+import { serverClause } from './statements.js';
 import { type PhysicalType, physicalType } from './types.js';
 
 export interface ColumnDefinition {
@@ -9,6 +10,8 @@ export interface ColumnDefinition {
   readonly notNull: boolean;
   /** Omitted comments are not managed; null requires no comment. */
   readonly comment?: string | null;
+  /** DEFAULT, AUTOINCREMENT, or a virtual AS expression; omitted server values are not managed. */
+  readonly serverValue?: ServerValue;
 }
 export interface TableDefinition {
   readonly kind: 'table-definition';
@@ -51,15 +54,18 @@ export function defineTable<C extends ColumnMap>(
     kind: 'table-definition',
     name: table.node,
     columns: Object.freeze(
-      Object.entries(table.columns).map(([key, value]) =>
-        Object.freeze({
+      Object.entries(table.columns).map(([key, value]) => {
+        const name = value.node.parts[0] as string;
+        const type = physicalType(value.dataType, value.constraints, types[key]);
+        return Object.freeze({
           key,
-          name: value.node.parts[0] as string,
-          type: physicalType(value.dataType, types[key]),
+          name,
+          type,
           notNull: value.required,
           ...(comments[key] === undefined ? {} : { comment: comments[key] }),
-        }),
-      ),
+          ...serverClause(name, type, value.required, value.serverValue ?? undefined),
+        });
+      }),
     ),
     ...(options.comment === undefined ? {} : { comment: options.comment }),
   });
@@ -67,7 +73,11 @@ export function defineTable<C extends ColumnMap>(
 
 /** The desired state of one schema. Unqualified tables are placed in it. */
 export function defineSchema(
-  target: { readonly database: string; readonly schema: string; readonly comment?: string | null },
+  target: {
+    readonly database: string;
+    readonly schema: string;
+    readonly comment?: string | null;
+  },
   tables: readonly (TableDefinition | Table)[],
 ): SchemaDefinition {
   const definitions = tables.map((entry) => {

@@ -1,14 +1,32 @@
-import type { DataType } from '../schema.js';
+import type { ColumnConstraints, DataType } from '../schema.js';
 
 export type PhysicalType =
-  | { readonly kind: 'NUMBER'; readonly precision: number; readonly scale: number }
+  | {
+      readonly kind: 'NUMBER';
+      readonly precision: number;
+      readonly scale: number;
+    }
   | { readonly kind: 'VARCHAR' | 'BINARY'; readonly length?: number }
   | {
       readonly kind: 'TIME' | 'TIMESTAMP_NTZ' | 'TIMESTAMP_LTZ' | 'TIMESTAMP_TZ';
       readonly precision: number;
     }
-  | { readonly kind: 'FLOAT' | 'BOOLEAN' | 'DATE' | 'VARIANT' | 'ARRAY' | 'OBJECT' };
-/** A type the DDL module cannot model, such as GEOGRAPHY or VECTOR, kept by its metadata name. */
+  | {
+      readonly kind: 'VECTOR';
+      readonly element: 'INT' | 'FLOAT';
+      readonly dimension: number;
+    }
+  | { readonly kind: PlainKind };
+type PlainKind =
+  | 'FLOAT'
+  | 'BOOLEAN'
+  | 'DATE'
+  | 'VARIANT'
+  | 'ARRAY'
+  | 'OBJECT'
+  | 'GEOGRAPHY'
+  | 'GEOMETRY';
+/** A type the DDL module cannot model, such as a structured ARRAY, kept by its metadata name. */
 export interface UnmodeledType {
   readonly kind: 'OTHER';
   readonly name: string;
@@ -29,10 +47,12 @@ function fractional(
   kind: 'TIME' | 'TIMESTAMP_NTZ' | 'TIMESTAMP_LTZ' | 'TIMESTAMP_TZ',
   precision: number,
 ): PhysicalType {
-  return Object.freeze({ kind, precision: checked(precision, 0, 9, `${kind} precision`) });
+  return Object.freeze({
+    kind,
+    precision: checked(precision, 0, 9, `${kind} precision`),
+  });
 }
-const plain = (kind: 'FLOAT' | 'BOOLEAN' | 'DATE' | 'VARIANT' | 'ARRAY' | 'OBJECT') => () =>
-  Object.freeze({ kind }) as PhysicalType;
+const plain = (kind: PlainKind) => () => Object.freeze({ kind }) as PhysicalType;
 
 /** Physical Snowflake column types. VARCHAR and BINARY without a length use the server default. */
 export const sqlType = /* @__PURE__ */ Object.freeze({
@@ -55,6 +75,17 @@ export const sqlType = /* @__PURE__ */ Object.freeze({
   variant: plain('VARIANT'),
   array: plain('ARRAY'),
   object: plain('OBJECT'),
+  geography: plain('GEOGRAPHY'),
+  geometry: plain('GEOMETRY'),
+  vector(element: 'int' | 'float', dimension: number): PhysicalType {
+    if (element !== 'int' && element !== 'float')
+      throw new RangeError("VECTOR elements must be 'int' or 'float'.");
+    return Object.freeze({
+      kind: 'VECTOR',
+      element: element === 'int' ? 'INT' : 'FLOAT',
+      dimension: checked(dimension, 1, 4096, 'VECTOR dimension'),
+    });
+  },
 });
 
 export function renderType(type: PhysicalType): string {
@@ -69,6 +100,8 @@ export function renderType(type: PhysicalType): string {
     case 'TIMESTAMP_LTZ':
     case 'TIMESTAMP_TZ':
       return `${type.kind}(${type.precision})`;
+    case 'VECTOR':
+      return `VECTOR(${type.element}, ${type.dimension})`;
     default:
       return type.kind;
   }
@@ -86,14 +119,56 @@ const compatible: Record<DataType, readonly PhysicalType['kind'][]> = {
   timestamp_ltz: ['TIMESTAMP_LTZ'],
   timestamp_tz: ['TIMESTAMP_TZ'],
   variant: ['VARIANT', 'ARRAY', 'OBJECT'],
+  array: ['ARRAY'],
+  object: ['OBJECT'],
   binary: ['BINARY'],
+  geography: ['GEOGRAPHY'],
+  geometry: ['GEOMETRY'],
+  vector: ['VECTOR'],
 };
 
+/** The type a column's declared size constraints imply. GEOMETRY SRIDs are checked per value. */
+function declaredType(
+  dataType: DataType,
+  constraints: ColumnConstraints,
+): PhysicalType | undefined {
+  const { length, precision, scale, dimension, element } = constraints;
+  switch (dataType) {
+    case 'text':
+      return length === undefined ? undefined : sqlType.varchar(length);
+    case 'binary':
+      return length === undefined ? undefined : sqlType.binary(length);
+    case 'integer':
+    case 'decimal':
+      return precision === undefined ? undefined : sqlType.number(precision, scale ?? 0);
+    case 'time':
+      return precision === undefined ? undefined : sqlType.time(precision);
+    case 'timestamp_ntz':
+    case 'timestamp_ltz':
+    case 'timestamp_tz':
+      return precision === undefined
+        ? undefined
+        : sqlType.timestamp(dataType.slice(10) as 'ntz' | 'ltz' | 'tz', precision);
+    case 'vector':
+      return sqlType.vector(element as 'int' | 'float', dimension as number);
+    default:
+      return undefined;
+  }
+}
+
 /** The declared codec must be able to read and write the physical type. */
-export function physicalType(dataType: DataType, type: PhysicalType | undefined): PhysicalType {
+export function physicalType(
+  dataType: DataType,
+  constraints: ColumnConstraints,
+  type: PhysicalType | undefined,
+): PhysicalType {
+  const declared = declaredType(dataType, constraints);
   if (!type) {
+    if (declared) return declared;
     if (dataType === 'decimal')
-      throw new TypeError('decimal() columns need an explicit sqlType.number(precision, scale).');
+      throw new TypeError(
+        'decimal() columns need a declared precision or an explicit sqlType.number(precision, scale).',
+      );
     const defaults: Partial<Record<DataType, PhysicalType>> = {
       text: sqlType.varchar(),
       integer: sqlType.number(),
@@ -110,6 +185,10 @@ export function physicalType(dataType: DataType, type: PhysicalType | undefined)
     (dataType === 'integer' && type.kind === 'NUMBER' && type.scale !== 0)
   )
     throw new TypeError(`A ${dataType} column cannot be stored as ${renderType(type)}.`);
+  if (declared && renderType(declared) !== renderType(type))
+    throw new TypeError(
+      `${renderType(type)} conflicts with the column's declared ${renderType(declared)}.`,
+    );
   return type;
 }
 
@@ -141,6 +220,8 @@ export function sameType(desired: PhysicalType, observed: ObservedType): boolean
     case 'TIMESTAMP_LTZ':
     case 'TIMESTAMP_TZ':
       return desired.precision === (observed as { precision: number }).precision;
+    case 'VECTOR':
+      return renderType(desired) === renderType(observed as PhysicalType);
     default:
       return true;
   }

@@ -1,12 +1,15 @@
 ---
 title: Snowflake syntax
-description: Window functions, QUALIFY, FLATTEN, ASOF JOIN, and time travel.
+description: Window functions, QUALIFY, FLATTEN, ASOF JOIN, PIVOT, UNPIVOT, and time travel.
 ---
 
 import Snippet from '../../../components/Snippet.astro';
 import asof from '../../../snippets/asof.ts?raw';
 import flatten from '../../../snippets/flatten.ts?raw';
+import offsetWindows from '../../../snippets/offset-windows.ts?raw';
+import pivot from '../../../snippets/pivot.ts?raw';
 import timeTravel from '../../../snippets/time-travel.ts?raw';
+import windowFrames from '../../../snippets/window-frames.ts?raw';
 import windows from '../../../snippets/windows.ts?raw';
 
 ## Windows and QUALIFY
@@ -16,6 +19,25 @@ into a window. Both accept `partitionBy` and `orderBy`. QUALIFY requires a windo
 or in its predicate.
 
 <Snippet code={windows} />
+
+`rank` and `denseRank` take the same options with a required `orderBy`. `lag(value, options)` and
+`lead` also accept `offset` and a `default` in the value's domain. They are nullable unless both the
+value and the default are non-null.
+
+<Snippet code={offsetWindows} />
+
+### Window frames
+
+Pass `frame: rowsBetween(start, end)` or `frame: rangeBetween(start, end)` to `over()`. A frame
+requires ORDER BY and an aggregate; ranking functions such as `rowNumber` reject frames.
+
+<Snippet code={windowFrames} />
+
+Boundaries are `'UNBOUNDED PRECEDING'`, `'CURRENT ROW'`, `'UNBOUNDED FOLLOWING'`, `{ preceding: n }`,
+or `{ following: n }`, and the start cannot follow the end. ROWS offsets are nonnegative integers.
+RANGE offsets need exactly one ORDER BY expression: numeric offsets for a numeric or date key, or
+intervals such as `{ preceding: 1, unit: 'DAY' }` for a date or timestamp key. Empty frames yield
+NULL aggregates and zero counts. Snowflake still enforces its own frame-size limits.
 
 ## FLATTEN
 
@@ -32,11 +54,34 @@ from the right side are nullable.
 
 <Snippet code={asof} />
 
+## PIVOT and UNPIVOT
+
+`pivot(source, name, options)` turns declared values of the `for` column into columns named by the
+keys of `in`, aggregated with `sum`, `min`, `max`, or `count`. Every other source column groups the
+rows, so narrow the source with `select(...).as()` first. Pivoted columns are nullable unless the
+aggregate is `count` or a `default` is given. Snowflake does not accept binds in the `in` list, so
+values are validated against the `for` column and rendered as escaped literals.
+
+`unpivot(source, name, options)` rotates the `in` columns into rows. The `value` column takes their
+shared type, and the `for` column holds the source key, typed as the union of the `in` keys. Rows
+with null values are dropped unless `includeNulls` is set. The columns must have the same Snowflake
+type, including NUMBER scale and timestamp precision.
+
+Both return a table you can select from, join, filter, and turn into a derived table or CTE.
+`dynamicPivot` compiles `IN (ANY)` to a raw query. Its columns are only known at execution, so its
+rows are `unknown` and are not validated.
+
+<Snippet code={pivot} />
+
 ## Time travel
 
 `timeTravel(table, selector)` adds a bound AT clause. The selector is exactly one of
 `{ offset }` in seconds, `{ timestamp }`, or `{ statement }` with a query ID. Pass `'BEFORE'` as
 the third argument for BEFORE semantics. Time travel applies only to base tables, and the
 database's retention period and selector rules still apply.
+
+Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset such as
+`2026-10-22T15:00:00-07:00` selects that instant. A timestamp without an offset is read in the
+session `TIMEZONE`, which defaults to `America/Los_Angeles`; append `Z` or `+00:00` for UTC.
 
 <Snippet code={timeTravel} />

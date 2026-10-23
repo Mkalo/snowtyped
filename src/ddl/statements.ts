@@ -1,5 +1,5 @@
 import { type CompiledQuery, type IdentifierNode, identifier, quoteIdentifier } from '../ast.js';
-import type { Table } from '../schema.js';
+import type { ServerValue, Table } from '../schema.js';
 import type { TableDefinition } from './definition.js';
 import { type PhysicalType, renderType } from './types.js';
 
@@ -8,6 +8,7 @@ export interface ColumnDefinitionNode {
   readonly type: PhysicalType;
   readonly notNull: boolean;
   readonly comment?: string;
+  readonly serverValue?: ServerValue;
 }
 export type DdlNode =
   | {
@@ -35,8 +36,16 @@ export type DdlNode =
       readonly orReplace: boolean;
       readonly comment?: string;
     }
-  | { readonly kind: 'drop-table'; readonly name: IdentifierNode; readonly ifExists: boolean }
-  | { readonly kind: 'rename-table'; readonly name: IdentifierNode; readonly to: IdentifierNode }
+  | {
+      readonly kind: 'drop-table';
+      readonly name: IdentifierNode;
+      readonly ifExists: boolean;
+    }
+  | {
+      readonly kind: 'rename-table';
+      readonly name: IdentifierNode;
+      readonly to: IdentifierNode;
+    }
   | {
       readonly kind: 'set-table-comment';
       readonly name: IdentifierNode;
@@ -47,7 +56,11 @@ export type DdlNode =
       readonly name: IdentifierNode;
       readonly column: ColumnDefinitionNode;
     }
-  | { readonly kind: 'drop-column'; readonly name: IdentifierNode; readonly column: IdentifierNode }
+  | {
+      readonly kind: 'drop-column';
+      readonly name: IdentifierNode;
+      readonly column: IdentifierNode;
+    }
   | {
       readonly kind: 'rename-column';
       readonly name: IdentifierNode;
@@ -67,6 +80,11 @@ export type DdlNode =
       readonly notNull: boolean;
     }
   | {
+      readonly kind: 'drop-column-default';
+      readonly name: IdentifierNode;
+      readonly column: IdentifierNode;
+    }
+  | {
       readonly kind: 'set-column-comment';
       readonly name: IdentifierNode;
       readonly column: IdentifierNode;
@@ -82,14 +100,44 @@ export interface DdlStatement {
 export interface ColumnOptions {
   readonly notNull?: boolean;
   readonly comment?: string;
+  /** Expressions are trusted SQL text, as written in the column declaration. */
+  readonly serverValue?: ServerValue;
 }
 
 /** DDL cannot bind parameters, so comments compile to escaped string literals. */
 export function literal(value: string): string {
   return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "''")}'`;
 }
+/** Rejects server values Snowflake DDL cannot express for the column. */
+export function serverClause(
+  name: string,
+  type: PhysicalType,
+  notNull: boolean,
+  value: ServerValue | undefined,
+): { readonly serverValue?: ServerValue } {
+  if (!value) return {};
+  if (value.kind !== 'identity' && value.expression === undefined)
+    throw new TypeError(
+      `Column ${name} needs a ${value.kind === 'default' ? 'serverDefault' : 'virtual'} expression for DDL.`,
+    );
+  if (value.kind === 'identity' && type.kind !== 'NUMBER' && type.kind !== 'FLOAT')
+    throw new TypeError(`Identity column ${name} cannot be stored as ${renderType(type)}.`);
+  if (value.kind === 'virtual' && notNull)
+    throw new TypeError(`Virtual column ${name} cannot be NOT NULL.`);
+  return { serverValue: value };
+}
+function server(value: ServerValue | undefined): string {
+  if (!value) return '';
+  if (value.kind === 'default') return ` DEFAULT ${value.expression}`;
+  if (value.kind === 'virtual') return ` AS (${value.expression})`;
+  const steps =
+    value.start === undefined && value.increment === undefined
+      ? ''
+      : ` START ${value.start ?? 1} INCREMENT ${value.increment ?? 1}`;
+  return ` AUTOINCREMENT${steps}${value.order === undefined ? '' : value.order ? ' ORDER' : ' NOORDER'}`;
+}
 function column(node: ColumnDefinitionNode): string {
-  return `${quoteIdentifier(node.name)} ${renderType(node.type)}${node.notNull ? ' NOT NULL' : ''}${node.comment === undefined ? '' : ` COMMENT ${literal(node.comment)}`}`;
+  return `${quoteIdentifier(node.name)} ${renderType(node.type)}${server(node.serverValue)}${node.notNull ? ' NOT NULL' : ''}${node.comment === undefined ? '' : ` COMMENT ${literal(node.comment)}`}`;
 }
 function comment(value: string | null): string {
   return value === null ? 'UNSET COMMENT' : `SET COMMENT = ${literal(value)}`;
@@ -122,6 +170,8 @@ export function compileDdl(node: DdlNode): string {
       return `ALTER TABLE ${name} ALTER COLUMN ${quoteIdentifier(node.column)} SET DATA TYPE ${renderType(node.type)}`;
     case 'set-column-not-null':
       return `ALTER TABLE ${name} ALTER COLUMN ${quoteIdentifier(node.column)} ${node.notNull ? 'SET' : 'DROP'} NOT NULL`;
+    case 'drop-column-default':
+      return `ALTER TABLE ${name} ALTER COLUMN ${quoteIdentifier(node.column)} DROP DEFAULT`;
     case 'set-column-comment':
       return `ALTER TABLE ${name} ALTER COLUMN ${quoteIdentifier(node.column)} ${node.comment === null ? 'UNSET COMMENT' : `COMMENT ${literal(node.comment)}`}`;
     default:
@@ -153,11 +203,13 @@ export function columnNode(
   type: PhysicalType,
   options: ColumnOptions = {},
 ): ColumnDefinitionNode {
+  const notNull = options.notNull ?? false;
   return Object.freeze({
     name: identifier(name),
     type,
-    notNull: options.notNull ?? false,
+    notNull,
     ...(options.comment === undefined ? {} : { comment: options.comment }),
+    ...serverClause(name, type, notNull, options.serverValue),
   });
 }
 
@@ -188,7 +240,10 @@ export function setSchemaComment(name: IdentifierNode, value: string | null): Dd
 }
 export function createTable(
   definition: TableDefinition,
-  options: { readonly ifNotExists?: boolean; readonly orReplace?: boolean } = {},
+  options: {
+    readonly ifNotExists?: boolean;
+    readonly orReplace?: boolean;
+  } = {},
 ): DdlStatement {
   if (options.ifNotExists && options.orReplace)
     throw new TypeError('CREATE TABLE cannot combine OR REPLACE with IF NOT EXISTS.');
@@ -200,6 +255,7 @@ export function createTable(
         columnNode(entry.name, entry.type, {
           notNull: entry.notNull,
           ...(typeof entry.comment === 'string' ? { comment: entry.comment } : {}),
+          ...(entry.serverValue ? { serverValue: entry.serverValue } : {}),
         }),
       ),
     ),
@@ -230,6 +286,7 @@ export interface AlterTable {
   setNotNull(name: string): DdlStatement;
   dropNotNull(name: string): DdlStatement;
   setColumnComment(name: string, comment: string | null): DdlStatement;
+  dropDefault(name: string): DdlStatement;
 }
 export function alterTable(target: Table | IdentifierNode): AlterTable {
   const name = nameOf(target);
@@ -243,18 +300,53 @@ export function alterTable(target: Table | IdentifierNode): AlterTable {
     setComment: (value: string | null) =>
       statement({ kind: 'set-table-comment', name, comment: value }),
     addColumn: (column: string, type: PhysicalType, options?: ColumnOptions) =>
-      statement({ kind: 'add-column', name, column: columnNode(column, type, options) }),
+      statement({
+        kind: 'add-column',
+        name,
+        column: columnNode(column, type, options),
+      }),
     dropColumn: (column: string) =>
       statement({ kind: 'drop-column', name, column: identifier(column) }),
     renameColumn: (column: string, to: string) =>
-      statement({ kind: 'rename-column', name, column: identifier(column), to: identifier(to) }),
+      statement({
+        kind: 'rename-column',
+        name,
+        column: identifier(column),
+        to: identifier(to),
+      }),
     setColumnType: (column: string, type: PhysicalType) =>
-      statement({ kind: 'set-column-type', name, column: identifier(column), type }),
+      statement({
+        kind: 'set-column-type',
+        name,
+        column: identifier(column),
+        type,
+      }),
     setNotNull: (column: string) =>
-      statement({ kind: 'set-column-not-null', name, column: identifier(column), notNull: true }),
+      statement({
+        kind: 'set-column-not-null',
+        name,
+        column: identifier(column),
+        notNull: true,
+      }),
     dropNotNull: (column: string) =>
-      statement({ kind: 'set-column-not-null', name, column: identifier(column), notNull: false }),
+      statement({
+        kind: 'set-column-not-null',
+        name,
+        column: identifier(column),
+        notNull: false,
+      }),
+    dropDefault: (column: string) =>
+      statement({
+        kind: 'drop-column-default',
+        name,
+        column: identifier(column),
+      }),
     setColumnComment: (column: string, value: string | null) =>
-      statement({ kind: 'set-column-comment', name, column: identifier(column), comment: value }),
+      statement({
+        kind: 'set-column-comment',
+        name,
+        column: identifier(column),
+        comment: value,
+      }),
   });
 }

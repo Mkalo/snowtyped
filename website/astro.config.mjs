@@ -54,6 +54,7 @@ export default defineConfig({
             'guides/raw-sql',
             'guides/validation',
             'guides/execution',
+            'guides/production',
             'guides/introspection',
             'guides/migrations',
             'guides/testing',

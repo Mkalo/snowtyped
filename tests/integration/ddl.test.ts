@@ -15,14 +15,18 @@ import {
   sqlType,
 } from '../../src/ddl/index.js';
 import {
+  array,
   binary,
   boolean,
   date,
   decimal,
   eq,
   float,
+  geography,
+  geometry,
   insert,
   integer,
+  object,
   select,
   snowflakeTable,
   sql,
@@ -30,6 +34,7 @@ import {
   time,
   timestamp,
   variant,
+  vector,
 } from '../../src/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
 
@@ -41,6 +46,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   // Derived from the fixture's unique name, so cleanup only targets schemas this file created.
   const migrated = { database, schema: `${fixture.schemaName}_MIGRATED` };
   const pushed = { database, schema: `${fixture.schemaName}_PUSHED` };
+  const typed = { database, schema: `${fixture.schemaName}_TYPED` };
   const accounts = snowflakeTable(
     'ACCOUNTS',
     {
@@ -63,7 +69,7 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
   });
   afterAll(async () => {
     try {
-      for (const target of [migrated, pushed])
+      for (const target of [migrated, pushed, typed])
         await db.queryRaw(
           sql`DROP SCHEMA IF EXISTS ${sql.identifier(target.database, target.schema)} CASCADE`,
         );
@@ -341,5 +347,117 @@ describe('DDL builders, schema diffs, and migrations against Snowflake', () => {
       sql.unsafe(dropTable(snowflakeTable('STRAY', { id: integer('ID') }, pushed)).compile().sql),
     );
     expect((await checkDrift(db, v2)).changes).toHaveLength(1);
+  });
+
+  it('round-trips declared types and server values, and adds only what Snowflake can add', async () => {
+    const columns = {
+      id: integer('ID').notNull().identity({ start: 5, increment: 2, order: true }),
+      seq: integer('SEQ', { precision: 9 }).identity(),
+      kind: text('KIND', { length: 10 }).notNull().serverDefault("'click'"),
+      at: timestamp('AT', 'ltz').serverDefault('CURRENT_TIMESTAMP()'),
+      label: text('LABEL').virtual('UPPER("KIND")'),
+      note: text('NOTE'),
+      amount: decimal('AMOUNT', { precision: 12, scale: 4 }),
+      code: binary('CODE', { length: 8 }),
+      clock: time('CLOCK', { precision: 0 }),
+      seen: timestamp('SEEN', 'tz', { precision: 3 }),
+      tags: array('TAGS'),
+      attrs: object('ATTRS'),
+      place: geography('PLACE'),
+      shape: geometry('SHAPE', { srid: 4326 }),
+      embedding: vector('EMBEDDING', 'float', 3),
+      counts: vector('COUNTS', 'int', 2),
+    };
+    const events = snowflakeTable('EVENTS', columns, typed);
+    const v1 = defineSchema(typed, [events]);
+    expect((await pushSchema(db, v1)).changes).toHaveLength(2);
+    expect(await checkDrift(db, v1)).toEqual({ changes: [], unsupported: [] });
+    const table = sql.identifier(database, typed.schema, 'EVENTS');
+    await db.queryRaw(sql`INSERT INTO ${table} (NOTE) VALUES ('first')`);
+    expect(
+      await db.queryRaw(sql`SELECT ID, SEQ, KIND, LABEL, AT IS NOT NULL AS STAMPED FROM ${table}`),
+    ).toEqual([{ ID: '5', SEQ: '1', KIND: 'click', LABEL: 'CLICK', STAMPED: true }]);
+    expect(await checkDrift(db, v1)).toEqual({ changes: [], unsupported: [] });
+
+    const observed = (await inspectSchema(db, typed)).tables[0]?.columns;
+    expect(observed?.map((column) => [column.name, column.type])).toEqual([
+      ['ID', sqlType.number()],
+      ['SEQ', sqlType.number(9, 0)],
+      ['KIND', sqlType.varchar(10)],
+      ['AT', sqlType.timestamp('ltz')],
+      ['LABEL', sqlType.varchar(16_777_216)],
+      ['NOTE', sqlType.varchar(16_777_216)],
+      ['AMOUNT', sqlType.number(12, 4)],
+      ['CODE', sqlType.binary()],
+      ['CLOCK', sqlType.time(0)],
+      ['SEEN', sqlType.timestamp('tz', 3)],
+      ['TAGS', sqlType.array()],
+      ['ATTRS', sqlType.object()],
+      ['PLACE', sqlType.geography()],
+      ['SHAPE', sqlType.geometry()],
+      ['EMBEDDING', sqlType.vector('float', 3)],
+      ['COUNTS', sqlType.vector('int', 2)],
+    ]);
+    expect(observed?.slice(0, 6).map((column) => column.serverValue)).toEqual([
+      { kind: 'identity', start: 5, increment: 2, order: true },
+      expect.objectContaining({ kind: 'identity', start: 1, increment: 1 }),
+      { kind: 'default', expression: "'click'" },
+      { kind: 'default', expression: 'CURRENT_TIMESTAMP()' },
+      { kind: 'virtual', expression: expect.stringContaining('UPPER') },
+      null,
+    ]);
+
+    const added = defineSchema(typed, [
+      snowflakeTable(
+        'EVENTS',
+        {
+          ...columns,
+          source: text('SOURCE').notNull().serverDefault("'web'"),
+          shout: text('SHOUT').virtual('UPPER("SOURCE")'),
+        },
+        typed,
+      ),
+    ]);
+    expect((await pushSchema(db, added)).changes.map((change) => change.description)).toEqual([
+      'Add column EVENTS.SOURCE',
+      'Add column EVENTS.SHOUT',
+    ]);
+    expect(await checkDrift(db, added)).toEqual({ changes: [], unsupported: [] });
+    expect(await db.queryRaw(sql`SELECT SOURCE, SHOUT FROM ${table}`)).toEqual([
+      { SOURCE: 'web', SHOUT: 'WEB' },
+    ]);
+
+    const refused = defineSchema(typed, [
+      snowflakeTable(
+        'EVENTS',
+        {
+          ...columns,
+          kind: text('KIND', { length: 10 }).virtual("'click'"),
+          note: text('NOTE').serverDefault("'n'"),
+          started: timestamp('STARTED', 'ltz').serverDefault('CURRENT_TIMESTAMP()'),
+          serial: integer('SERIAL').identity(),
+        },
+        typed,
+      ),
+    ]);
+    expect((await checkDrift(db, refused)).unsupported).toEqual([
+      expect.objectContaining({ column: 'KIND', reason: expect.stringContaining('DEFAULT') }),
+      expect.objectContaining({
+        column: 'NOTE',
+        reason: expect.stringContaining('no server value'),
+      }),
+      expect.objectContaining({ column: 'STARTED', reason: expect.stringContaining('constant') }),
+      expect.objectContaining({ column: 'SERIAL', reason: expect.stringContaining('identity') }),
+    ]);
+    const alter = alterTable(events);
+    for (const statement of [
+      alter.addColumn('STARTED', sqlType.timestamp('ltz'), {
+        serverValue: { kind: 'default', expression: 'CURRENT_TIMESTAMP()' },
+      }),
+      alter.addColumn('SERIAL', sqlType.number(), { serverValue: { kind: 'identity' } }),
+    ])
+      await expect(db.queryRaw(sql.unsafe(statement.compile().sql))).rejects.toThrow();
+    await db.queryRaw(sql.unsafe(alter.dropDefault('KIND').compile().sql));
+    expect((await inspectSchema(db, typed)).tables[0]?.columns[2]?.serverValue).toBeNull();
   });
 });

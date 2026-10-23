@@ -19,14 +19,18 @@ import {
 import { alterableType, physicalType, renderType, sameType } from '../../src/ddl/types.js';
 import {
   alias,
+  array,
   binary,
   boolean,
   date,
   decimal,
   flatten,
   float,
+  geography,
+  geometry,
   identifier,
   integer,
+  object,
   type RawQuery,
   snowflakeTable,
   text,
@@ -34,6 +38,7 @@ import {
   timestamp,
   timeTravel,
   variant,
+  vector,
 } from '../../src/index.js';
 import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
@@ -60,6 +65,10 @@ describe('physical types', () => {
         sqlType.variant(),
         sqlType.array(),
         sqlType.object(),
+        sqlType.geography(),
+        sqlType.geometry(),
+        sqlType.vector('int', 3),
+        sqlType.vector('float', 4096),
       ].map(renderType),
     ).toEqual([
       'NUMBER(38, 0)',
@@ -78,8 +87,15 @@ describe('physical types', () => {
       'VARIANT',
       'ARRAY',
       'OBJECT',
+      'GEOGRAPHY',
+      'GEOMETRY',
+      'VECTOR(INT, 3)',
+      'VECTOR(FLOAT, 4096)',
     ]);
     expect(Object.isFrozen(sqlType.number())).toBe(true);
+    expect(() => sqlType.vector('int', 0)).toThrow('VECTOR dimension');
+    expect(() => sqlType.vector('int', 4097)).toThrow('VECTOR dimension');
+    expect(() => sqlType.vector('double' as never, 3)).toThrow("'int' or 'float'");
     expect(() => sqlType.number(0)).toThrow('NUMBER precision');
     expect(() => sqlType.number(39)).toThrow('NUMBER precision');
     expect(() => sqlType.number(10, 11)).toThrow('NUMBER scale');
@@ -93,24 +109,74 @@ describe('physical types', () => {
   });
 
   it('maps declared codecs to compatible physical types', () => {
-    expect(physicalType('text', undefined)).toEqual(sqlType.varchar());
-    expect(physicalType('integer', undefined)).toEqual(sqlType.number());
-    expect(physicalType('float', undefined)).toEqual(sqlType.float());
-    expect(physicalType('boolean', undefined)).toEqual(sqlType.boolean());
-    expect(physicalType('date', undefined)).toEqual(sqlType.date());
-    expect(physicalType('time', undefined)).toEqual(sqlType.time());
-    expect(physicalType('timestamp_ntz', undefined)).toEqual(sqlType.timestamp('ntz'));
-    expect(physicalType('timestamp_ltz', undefined)).toEqual(sqlType.timestamp('ltz'));
-    expect(physicalType('timestamp_tz', undefined)).toEqual(sqlType.timestamp('tz'));
-    expect(physicalType('variant', undefined)).toEqual(sqlType.variant());
-    expect(physicalType('binary', undefined)).toEqual(sqlType.binary());
-    expect(() => physicalType('decimal', undefined)).toThrow('explicit sqlType.number');
-    expect(physicalType('decimal', sqlType.number(10, 2))).toEqual(sqlType.number(10, 2));
-    expect(physicalType('variant', sqlType.object())).toEqual(sqlType.object());
-    expect(() => physicalType('integer', sqlType.number(10, 2))).toThrow(
+    expect(physicalType('text', {}, undefined)).toEqual(sqlType.varchar());
+    expect(physicalType('integer', {}, undefined)).toEqual(sqlType.number());
+    expect(physicalType('float', {}, undefined)).toEqual(sqlType.float());
+    expect(physicalType('boolean', {}, undefined)).toEqual(sqlType.boolean());
+    expect(physicalType('date', {}, undefined)).toEqual(sqlType.date());
+    expect(physicalType('time', {}, undefined)).toEqual(sqlType.time());
+    expect(physicalType('timestamp_ntz', {}, undefined)).toEqual(sqlType.timestamp('ntz'));
+    expect(physicalType('timestamp_ltz', {}, undefined)).toEqual(sqlType.timestamp('ltz'));
+    expect(physicalType('timestamp_tz', {}, undefined)).toEqual(sqlType.timestamp('tz'));
+    expect(physicalType('variant', {}, undefined)).toEqual(sqlType.variant());
+    expect(physicalType('binary', {}, undefined)).toEqual(sqlType.binary());
+    expect(() => physicalType('decimal', {}, undefined)).toThrow('explicit sqlType.number');
+    expect(physicalType('decimal', {}, sqlType.number(10, 2))).toEqual(sqlType.number(10, 2));
+    expect(physicalType('variant', {}, sqlType.object())).toEqual(sqlType.object());
+    expect(() => physicalType('integer', {}, sqlType.number(10, 2))).toThrow(
       'A integer column cannot be stored as NUMBER(10, 2).',
     );
-    expect(() => physicalType('text', sqlType.number())).toThrow('cannot be stored');
+    expect(() => physicalType('text', {}, sqlType.number())).toThrow('cannot be stored');
+    expect(physicalType('array', {}, undefined)).toEqual(sqlType.array());
+    expect(physicalType('object', {}, undefined)).toEqual(sqlType.object());
+    expect(physicalType('geography', {}, undefined)).toEqual(sqlType.geography());
+    expect(physicalType('geometry', { srid: 4326 }, undefined)).toEqual(sqlType.geometry());
+    expect(() => physicalType('array', {}, sqlType.variant())).toThrow('cannot be stored');
+  });
+
+  it('derives physical types from declared column constraints', () => {
+    const derived = (column: { dataType: never; constraints: never }) =>
+      renderType(physicalType(column.dataType, column.constraints, undefined));
+    expect(
+      [
+        text('A', { length: 20 }),
+        binary('A', { length: 8 }),
+        integer('A', { precision: 9 }),
+        decimal('A', { precision: 12, scale: 4 }),
+        decimal('A', { scale: 2 }),
+        time('A', { precision: 3 }),
+        timestamp('A', 'ntz', { precision: 0 }),
+        timestamp('A', 'ltz', { precision: 6 }),
+        timestamp('A', 'tz', { precision: 3 }),
+        vector('A', 'int', 3),
+        vector('A', 'float', 256),
+        geometry('A', { srid: 4326 }),
+      ].map((column) => derived(column as never)),
+    ).toEqual([
+      'VARCHAR(20)',
+      'BINARY(8)',
+      'NUMBER(9, 0)',
+      'NUMBER(12, 4)',
+      'NUMBER(38, 2)',
+      'TIME(3)',
+      'TIMESTAMP_NTZ(0)',
+      'TIMESTAMP_LTZ(6)',
+      'TIMESTAMP_TZ(3)',
+      'VECTOR(INT, 3)',
+      'VECTOR(FLOAT, 256)',
+      'GEOMETRY',
+    ]);
+    expect(physicalType('text', { length: 20 }, sqlType.varchar(20))).toEqual(sqlType.varchar(20));
+    expect(physicalType('integer', { precision: 5 }, undefined)).toEqual(sqlType.number(5, 0));
+    expect(() => physicalType('text', { length: 20 }, sqlType.varchar(30))).toThrow(
+      "VARCHAR(30) conflicts with the column's declared VARCHAR(20).",
+    );
+    expect(() =>
+      physicalType('decimal', { precision: 12, scale: 4 }, sqlType.number(12, 2)),
+    ).toThrow('conflicts');
+    expect(() =>
+      physicalType('vector', { element: 'int', dimension: 3 }, sqlType.vector('float', 3)),
+    ).toThrow('VECTOR(FLOAT, 3) conflicts');
   });
 
   it('compares desired and observed types without inventing unreported metadata', () => {
@@ -134,6 +200,11 @@ describe('physical types', () => {
     expect(sameType(sqlType.timestamp('ltz'), sqlType.timestamp('ltz'))).toBe(true);
     expect(sameType(sqlType.timestamp('tz'), sqlType.timestamp('tz'))).toBe(true);
     expect(sameType(sqlType.variant(), sqlType.variant())).toBe(true);
+    expect(sameType(sqlType.geography(), sqlType.geography())).toBe(true);
+    expect(sameType(sqlType.vector('int', 3), sqlType.vector('int', 3))).toBe(true);
+    expect(sameType(sqlType.vector('int', 3), sqlType.vector('float', 3))).toBe(false);
+    expect(sameType(sqlType.vector('int', 3), sqlType.vector('int', 4))).toBe(false);
+    expect(alterableType(sqlType.vector('int', 3), sqlType.vector('int', 4))).toBe(false);
     expect(alterableType(sqlType.varchar(10), sqlType.varchar(20))).toBe(true);
     expect(alterableType(sqlType.varchar(10), sqlType.varchar())).toBe(true);
     expect(alterableType(sqlType.varchar(20), sqlType.varchar(10))).toBe(false);
@@ -167,7 +238,10 @@ describe('DDL statements', () => {
     );
     expect(sqlOf(setSchemaComment(schema, null))).toBe('ALTER SCHEMA "My DB"."S""1" UNSET COMMENT');
 
-    const definition = defineTable(customers, { comment: 'People', comments: { name: 'Shown' } });
+    const definition = defineTable(customers, {
+      comment: 'People',
+      comments: { name: 'Shown' },
+    });
     expect(sqlOf(createTable(definition))).toBe(
       `CREATE TABLE "DB"."APP"."CUSTOMERS" ("ID" NUMBER(38, 0) NOT NULL, "NAME" VARCHAR COMMENT 'Shown') COMMENT = 'People'`,
     );
@@ -204,7 +278,10 @@ describe('DDL statements', () => {
         alter.setComment('c'),
         alter.setComment(null),
         alter.addColumn('AGE', sqlType.number(3, 0)),
-        alter.addColumn('CODE', sqlType.varchar(4), { notNull: true, comment: 'k' }),
+        alter.addColumn('CODE', sqlType.varchar(4), {
+          notNull: true,
+          comment: 'k',
+        }),
         alter.dropColumn('NAME'),
         alter.renameColumn('NAME', 'FULL_NAME'),
         alter.setColumnType('NAME', sqlType.varchar(50)),
@@ -232,7 +309,10 @@ describe('DDL statements', () => {
     expect(alter.renameColumn('NAME', 'X').destructive).toBe(false);
     expect(() => alter.addColumn('', sqlType.varchar())).toThrow(TypeError);
     expect(() =>
-      compileDdl({ kind: 'unknown', name: identifier('T') } as unknown as DdlNode),
+      compileDdl({
+        kind: 'unknown',
+        name: identifier('T'),
+      } as unknown as DdlNode),
     ).toThrow('Unsupported DDL AST node.');
   });
 });
@@ -252,7 +332,13 @@ describe('desired schema definitions', () => {
       kind: 'table-definition',
       name: identifier('T'),
       columns: [
-        { key: 'id', name: 'ID', type: sqlType.number(), notNull: true, comment: 'key' },
+        {
+          key: 'id',
+          name: 'ID',
+          type: sqlType.number(),
+          notNull: true,
+          comment: 'key',
+        },
         {
           key: 'amount',
           name: 'AMOUNT',
@@ -260,13 +346,21 @@ describe('desired schema definitions', () => {
           notNull: false,
           comment: null,
         },
-        { key: 'payload', name: 'PAYLOAD', type: sqlType.array(), notNull: false },
+        {
+          key: 'payload',
+          name: 'PAYLOAD',
+          type: sqlType.array(),
+          notNull: false,
+        },
       ],
     });
     expect(() => defineTable(table)).toThrow('decimal()');
     expect(() =>
       defineTable(table, {
-        types: { amount: sqlType.number(1, 0), missing: sqlType.date() } as never,
+        types: {
+          amount: sqlType.number(1, 0),
+          missing: sqlType.date(),
+        } as never,
       }),
     ).toThrow('Unknown column key in types: missing.');
     expect(() =>
@@ -326,8 +420,7 @@ const column = (
   type,
   notNull,
   comment,
-  default: null,
-  identity: false,
+  serverValue: null,
 });
 function observed(tables: ObservedTable[], extra: Partial<ObservedSchema> = {}): ObservedSchema {
   return { ...target, exists: true, comment: null, tables, ...extra };
@@ -347,7 +440,11 @@ describe('schema diffs', () => {
     target,
   );
   const definition = defineTable(users, {
-    types: { name: sqlType.varchar(100), score: sqlType.number(10, 2), tag: sqlType.varchar(5) },
+    types: {
+      name: sqlType.varchar(100),
+      score: sqlType.number(10, 2),
+      tag: sqlType.varchar(5),
+    },
     comments: { email: 'mail', note: null },
     comment: 'users',
   });
@@ -366,10 +463,16 @@ describe('schema diffs', () => {
         ?.description,
     ).toBe('Create schema APP');
     expect(() =>
-      diffSchema(defineSchema(target, []), { ...observed([]), schema: 'OTHER' }),
+      diffSchema(defineSchema(target, []), {
+        ...observed([]),
+        schema: 'OTHER',
+      }),
     ).toThrow('not the desired schema');
     expect(() =>
-      diffSchema(defineSchema(target, []), { ...observed([]), database: 'OTHER' }),
+      diffSchema(defineSchema(target, []), {
+        ...observed([]),
+        database: 'OTHER',
+      }),
     ).toThrow('not the desired schema');
   });
 
@@ -389,9 +492,21 @@ describe('schema diffs', () => {
             column('LEGACY', sqlType.boolean()),
           ],
         },
-        { name: 'ZED', comment: null, columns: [column('ID', sqlType.number())] },
-        { name: 'IGNORED', comment: null, columns: [column('ID', sqlType.number())] },
-        { name: 'ALPHA', comment: null, columns: [column('ID', sqlType.number())] },
+        {
+          name: 'ZED',
+          comment: null,
+          columns: [column('ID', sqlType.number())],
+        },
+        {
+          name: 'IGNORED',
+          comment: null,
+          columns: [column('ID', sqlType.number())],
+        },
+        {
+          name: 'ALPHA',
+          comment: null,
+          columns: [column('ID', sqlType.number())],
+        },
       ],
       { comment: 'schema' },
     );
@@ -442,12 +557,18 @@ describe('schema diffs', () => {
         column: 'SCORE',
         reason: 'Cannot change NUMBER(10, 4) to NUMBER(10, 2) in place.',
       },
-      { table: 'USERS', column: 'NOTE', reason: 'Cannot change GEOGRAPHY to VARCHAR in place.' },
+      {
+        table: 'USERS',
+        column: 'NOTE',
+        reason: 'Cannot change GEOGRAPHY to VARCHAR in place.',
+      },
     ]);
   });
 
   it('reports a NOT NULL column missing from an existing table as unsupported', () => {
-    const plain = defineTable(users, { types: { score: sqlType.number(10, 2) } });
+    const plain = defineTable(users, {
+      types: { score: sqlType.number(10, 2) },
+    });
     const current = observed([
       {
         name: 'USERS',
@@ -474,7 +595,9 @@ describe('schema diffs', () => {
   });
 
   it('adds missing columns and leaves matching or unmanaged state alone', () => {
-    const plain = defineTable(users, { types: { score: sqlType.number(10, 2) } });
+    const plain = defineTable(users, {
+      types: { score: sqlType.number(10, 2) },
+    });
     const current = observed(
       [
         {
@@ -527,6 +650,12 @@ describe('schema inspection', () => {
     COLUMN_DEFAULT: null,
     IS_IDENTITY: 'NO',
     COMMENT: null,
+    DATA_TYPE_ALIAS: null,
+    IDENTITY_START: null,
+    IDENTITY_INCREMENT: null,
+    IDENTITY_ORDERED: null,
+    KIND: 'COLUMN',
+    EXPRESSION: null,
     ...values,
   });
 
@@ -538,7 +667,11 @@ describe('schema inspection', () => {
         { TABLE_NAME: 'EMPTY', COMMENT: null },
       ],
       [
-        row('N', 'NUMBER', { NUMERIC_PRECISION: '10', NUMERIC_SCALE: '2', IS_NULLABLE: 'NO' }),
+        row('N', 'NUMBER', {
+          NUMERIC_PRECISION: '10',
+          NUMERIC_SCALE: '2',
+          IS_NULLABLE: 'NO',
+        }),
         row('N0', 'NUMBER'),
         row('S', 'TEXT', { CHARACTER_MAXIMUM_LENGTH: '20', COMMENT: 'c' }),
         row('S0', 'TEXT'),
@@ -553,7 +686,24 @@ describe('schema inspection', () => {
         row('V', 'VARIANT'),
         row('A', 'ARRAY'),
         row('O', 'OBJECT'),
-        row('G', 'GEOGRAPHY', { COLUMN_DEFAULT: "'x'", IS_IDENTITY: 'YES' }),
+        row('G', 'GEOGRAPHY', { COLUMN_DEFAULT: "'x'" }),
+        row('GM', 'GEOMETRY'),
+        row('VE', 'VECTOR', { DATA_TYPE_ALIAS: 'VECTOR(INT, 3)' }),
+        row('VF', 'VECTOR', { DATA_TYPE_ALIAS: 'VECTOR(FLOAT, 256)' }),
+        row('VX', 'VECTOR'),
+        row('SA', 'ARRAY', { DATA_TYPE_ALIAS: 'ARRAY(NUMBER(38, 0))' }),
+        row('PA', 'ARRAY', { DATA_TYPE_ALIAS: 'ARRAY' }),
+        row('DF', 'DECFLOAT', { DATA_TYPE_ALIAS: 'DECFLOAT' }),
+        row('UK', 'UNKNOWN'),
+        row('ID', 'NUMBER', {
+          IS_IDENTITY: 'YES',
+          IDENTITY_START: '5',
+          IDENTITY_INCREMENT: '-2',
+          IDENTITY_ORDERED: 'NO',
+        }),
+        row('ID0', 'NUMBER', { IS_IDENTITY: 'YES' }),
+        row('VC', 'NUMBER', { KIND: 'VIRTUAL_COLUMN', EXPRESSION: 'N * 2' }),
+        row('VC0', 'NUMBER', { KIND: 'VIRTUAL_COLUMN' }),
         { ...row('X', 'NUMBER'), TABLE_NAME: 'VIEW_ONLY' },
       ],
     ];
@@ -570,10 +720,14 @@ describe('schema inspection', () => {
     expect(queryRaw.mock.calls[2]?.[0].compile().sql).toContain(
       '"Odd""DB"."INFORMATION_SCHEMA"."COLUMNS"',
     );
-    expect(schema).toMatchObject({ database: 'Odd"DB', exists: true, comment: 'schema' });
+    expect(schema).toMatchObject({
+      database: 'Odd"DB',
+      exists: true,
+      comment: 'schema',
+    });
     expect(schema.tables.map((table) => [table.name, table.comment, table.columns.length])).toEqual(
       [
-        ['T', 'table', 16],
+        ['T', 'table', 28],
         ['EMPTY', null, 0],
       ],
     );
@@ -593,11 +747,41 @@ describe('schema inspection', () => {
       sqlType.variant(),
       sqlType.array(),
       sqlType.object(),
-      { kind: 'OTHER', name: 'GEOGRAPHY' },
+      sqlType.geography(),
+      sqlType.geometry(),
+      sqlType.vector('int', 3),
+      sqlType.vector('float', 256),
+      { kind: 'OTHER', name: 'VECTOR' },
+      { kind: 'OTHER', name: 'ARRAY(NUMBER(38, 0))' },
+      sqlType.array(),
+      { kind: 'OTHER', name: 'DECFLOAT' },
+      { kind: 'OTHER', name: 'UNKNOWN' },
+      sqlType.number(),
+      sqlType.number(),
+      sqlType.number(),
+      sqlType.number(),
     ]);
-    expect(schema.tables[0]?.columns[0]).toMatchObject({ notNull: true, comment: null });
-    expect(schema.tables[0]?.columns[2]).toMatchObject({ notNull: false, comment: 'c' });
-    expect(schema.tables[0]?.columns[15]).toMatchObject({ default: "'x'", identity: true });
+    expect(schema.tables[0]?.columns[0]).toMatchObject({
+      notNull: true,
+      comment: null,
+    });
+    expect(schema.tables[0]?.columns[2]).toMatchObject({
+      notNull: false,
+      comment: 'c',
+    });
+    expect(schema.tables[0]?.columns.map((entry) => entry.serverValue)).toEqual([
+      ...Array(15).fill(null),
+      { kind: 'default', expression: "'x'" },
+      ...Array(8).fill(null),
+      { kind: 'identity', start: 5, increment: -2, order: false },
+      { kind: 'identity' },
+      { kind: 'virtual', expression: 'N * 2' },
+      { kind: 'virtual' },
+    ]);
+    expect(Object.isFrozen(schema.tables[0]?.columns[15]?.serverValue)).toBe(true);
+    expect(queryRaw.mock.calls[2]?.[0].compile().sql).toContain(
+      'IDENTITY_ORDERED, KIND, EXPRESSION',
+    );
   });
 
   it('reports a missing schema and rejects malformed metadata', async () => {
@@ -609,8 +793,176 @@ describe('schema inspection', () => {
       tables: [],
     });
     const results: unknown[] = [[], [], [row('N', 'NUMBER', { NUMERIC_PRECISION: '1.5' })]];
-    const malformed = { queryRaw: async () => results.shift() } as unknown as SnowflakeClient;
+    const malformed = {
+      queryRaw: async () => results.shift(),
+    } as unknown as SnowflakeClient;
     await expect(inspectSchema(malformed, target)).rejects.toThrow();
+  });
+});
+
+describe('server values', () => {
+  const events = snowflakeTable(
+    'EVENTS',
+    {
+      id: integer('ID').notNull().identity({ start: 5, increment: 2, order: true }),
+      seq: integer('SEQ').identity(),
+      kind: text('KIND', { length: 10 }).notNull().serverDefault("'click'"),
+      at: timestamp('AT').serverDefault('CURRENT_TIMESTAMP()'),
+      label: text('LABEL').virtual('UPPER("KIND")'),
+      note: text('NOTE'),
+    },
+    target,
+  );
+  const definition = defineTable(events);
+  const table = (columns: ObservedTable['columns']) =>
+    observed([{ name: 'EVENTS', comment: null, columns }]);
+  const unsupportedOf = (current: ObservedSchema, entry = definition) =>
+    diffSchema(defineSchema(target, [entry]), current).unsupported.map(
+      (change) => `${change.column}: ${change.reason}`,
+    );
+  const sqlChanges = (current: ObservedSchema, entry = definition) =>
+    diffSchema(defineSchema(target, [entry]), current).changes.map((change) =>
+      sqlOf(change.statement),
+    );
+
+  it('renders DEFAULT, AUTOINCREMENT, and AS clauses', () => {
+    expect(definition.columns.map((entry) => entry.serverValue)).toEqual([
+      { kind: 'identity', start: 5, increment: 2, order: true },
+      { kind: 'identity' },
+      { kind: 'default', expression: "'click'" },
+      { kind: 'default', expression: 'CURRENT_TIMESTAMP()' },
+      { kind: 'virtual', expression: 'UPPER("KIND")' },
+      undefined,
+    ]);
+    expect(sqlOf(createTable(definition))).toBe(
+      `CREATE TABLE "DB"."APP"."EVENTS" ("ID" NUMBER(38, 0) AUTOINCREMENT START 5 INCREMENT 2 ORDER NOT NULL, "SEQ" NUMBER(38, 0) AUTOINCREMENT, "KIND" VARCHAR(10) DEFAULT 'click' NOT NULL, "AT" TIMESTAMP_NTZ(9) DEFAULT CURRENT_TIMESTAMP(), "LABEL" VARCHAR AS (UPPER("KIND")), "NOTE" VARCHAR)`,
+    );
+    const alter = alterTable(events);
+    expect(
+      [
+        alter.addColumn('N', sqlType.float(), { serverValue: { kind: 'identity', increment: -1 } }),
+        alter.addColumn('M', sqlType.number(), {
+          serverValue: { kind: 'identity', start: 3, order: false },
+        }),
+        alter.addColumn('C', sqlType.varchar(), {
+          notNull: true,
+          comment: 'c',
+          serverValue: { kind: 'default', expression: "'x'" },
+        }),
+        alter.dropDefault('KIND'),
+      ].map(sqlOf),
+    ).toEqual([
+      'ALTER TABLE "DB"."APP"."EVENTS" ADD COLUMN "N" FLOAT AUTOINCREMENT START 1 INCREMENT -1',
+      'ALTER TABLE "DB"."APP"."EVENTS" ADD COLUMN "M" NUMBER(38, 0) AUTOINCREMENT START 3 INCREMENT 1 NOORDER',
+      `ALTER TABLE "DB"."APP"."EVENTS" ADD COLUMN "C" VARCHAR DEFAULT 'x' NOT NULL COMMENT 'c'`,
+      'ALTER TABLE "DB"."APP"."EVENTS" ALTER COLUMN "KIND" DROP DEFAULT',
+    ]);
+    expect(alter.dropDefault('KIND').destructive).toBe(false);
+  });
+
+  it('rejects server values Snowflake DDL cannot express', () => {
+    expect(() => defineTable(snowflakeTable('T', { a: text('A').serverDefault() }))).toThrow(
+      'Column A needs a serverDefault expression for DDL.',
+    );
+    expect(() => defineTable(snowflakeTable('T', { a: text('A').virtual() }))).toThrow(
+      'Column A needs a virtual expression for DDL.',
+    );
+    expect(() => defineTable(snowflakeTable('T', { a: text('A').identity() }))).toThrow(
+      'Identity column A cannot be stored as VARCHAR.',
+    );
+    expect(() => defineTable(snowflakeTable('T', { a: text('A').notNull().virtual('1') }))).toThrow(
+      'Virtual column A cannot be NOT NULL.',
+    );
+    expect(() =>
+      alterTable(identifier('T')).addColumn('A', sqlType.date(), {
+        serverValue: { kind: 'identity' },
+      }),
+    ).toThrow('Identity column A cannot be stored as DATE.');
+  });
+
+  it('adds constant-default and virtual columns, and reports other additions as unsupported', () => {
+    const current = table([column('NOTE', sqlType.varchar())]);
+    expect(sqlChanges(current)).toEqual([
+      `ALTER TABLE "DB"."APP"."EVENTS" ADD COLUMN "KIND" VARCHAR(10) DEFAULT 'click' NOT NULL`,
+      'ALTER TABLE "DB"."APP"."EVENTS" ADD COLUMN "LABEL" VARCHAR AS (UPPER("KIND"))',
+    ]);
+    expect(unsupportedOf(current)).toEqual([
+      'ID: Adding an identity column to an existing table needs a rebuild.',
+      'SEQ: Adding an identity column to an existing table needs a rebuild.',
+      'AT: Snowflake only accepts constant defaults when adding a column.',
+    ]);
+    const constants = ['0', '-1.5e3', '+2', "'it''s'", 'TRUE', 'false', 'NULL', " 'x' "];
+    for (const expression of constants) {
+      const entry = defineTable(
+        snowflakeTable('EVENTS', { c: text('C').serverDefault(expression) }, target),
+      );
+      expect(sqlChanges(table([]), entry)).toHaveLength(1);
+    }
+    for (const expression of ['1 + 1', "'a' || 'b'", 'CURRENT_DATE()', "'unterminated"]) {
+      const entry = defineTable(
+        snowflakeTable('EVENTS', { c: text('C').serverDefault(expression) }, target),
+      );
+      expect(unsupportedOf(table([]), entry)).toEqual([
+        'C: Snowflake only accepts constant defaults when adding a column.',
+      ]);
+    }
+  });
+
+  it('compares server value kinds and declared identity options, not expression text', () => {
+    const matching = table([
+      {
+        ...column('ID', sqlType.number(), true),
+        serverValue: { kind: 'identity', start: 5, increment: 2, order: true },
+      },
+      {
+        ...column('SEQ', sqlType.number()),
+        serverValue: { kind: 'identity', start: 9, increment: 3, order: false },
+      },
+      {
+        ...column('KIND', sqlType.varchar(10), true),
+        serverValue: { kind: 'default', expression: "'click'" },
+      },
+      {
+        ...column('AT', sqlType.timestamp()),
+        serverValue: { kind: 'default', expression: 'CURRENT_TIMESTAMP()' },
+      },
+      {
+        ...column('LABEL', sqlType.varchar(16_777_216)),
+        serverValue: { kind: 'virtual', expression: 'UPPER(KIND)' },
+      },
+      {
+        ...column('NOTE', sqlType.varchar()),
+        serverValue: { kind: 'default', expression: "'unmanaged'" },
+      },
+    ]);
+    expect(diffSchema(defineSchema(target, [definition]), matching)).toEqual({
+      changes: [],
+      unsupported: [],
+    });
+    const drifted = table([
+      {
+        ...column('ID', sqlType.number(), true),
+        serverValue: { kind: 'identity', start: 1, increment: 1, order: false },
+      },
+      column('SEQ', sqlType.number()),
+      {
+        ...column('KIND', sqlType.varchar(10), true),
+        serverValue: { kind: 'virtual', expression: "'click'" },
+      },
+      column('AT', sqlType.timestamp()),
+      {
+        ...column('LABEL', sqlType.varchar()),
+        serverValue: { kind: 'default', expression: "'x'" },
+      },
+      column('NOTE', sqlType.varchar()),
+    ]);
+    expect(unsupportedOf(drifted)).toEqual([
+      'ID: Cannot change the AUTOINCREMENT start, increment, order in place.',
+      'SEQ: Cannot change no server value to AUTOINCREMENT in place.',
+      'KIND: Cannot change a virtual expression to a DEFAULT in place.',
+      'AT: Cannot change no server value to a DEFAULT in place.',
+      'LABEL: Cannot change a DEFAULT to a virtual expression in place.',
+    ]);
   });
 });
 
@@ -627,11 +979,16 @@ describe('DDL declarations keep column codecs usable', () => {
       h: timestamp('H', 'tz'),
       i: variant('I'),
       j: binary('J'),
+      k: array('K'),
+      l: object('L'),
+      m: geography('M'),
+      n: geometry('N', { srid: 4326 }),
+      o: vector('O', 'float', 8),
     });
     expect(
       createTable(defineTable(table, { types: { c: sqlType.number(5, 1) } })).compile().sql,
     ).toBe(
-      'CREATE TABLE "ALL" ("A" VARCHAR, "B" NUMBER(38, 0), "C" NUMBER(5, 1), "D" BOOLEAN, "E" FLOAT, "F" DATE, "G" TIME(9), "H" TIMESTAMP_TZ(9), "I" VARIANT, "J" BINARY)',
+      'CREATE TABLE "ALL" ("A" VARCHAR, "B" NUMBER(38, 0), "C" NUMBER(5, 1), "D" BOOLEAN, "E" FLOAT, "F" DATE, "G" TIME(9), "H" TIMESTAMP_TZ(9), "I" VARIANT, "J" BINARY, "K" ARRAY, "L" OBJECT, "M" GEOGRAPHY, "N" GEOMETRY, "O" VECTOR(FLOAT, 8))',
     );
   });
 });

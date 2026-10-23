@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import type { ServerValue } from '../schema.js';
 import type { SnowflakeClient } from '../snowflake/client.js';
 import { sql } from '../sql.js';
 import type { ObservedType } from './types.js';
@@ -8,8 +9,7 @@ export interface ObservedColumn {
   readonly type: ObservedType;
   readonly notNull: boolean;
   readonly comment: string | null;
-  readonly default: string | null;
-  readonly identity: boolean;
+  readonly serverValue: ServerValue | null;
 }
 export interface ObservedTable {
   readonly name: string;
@@ -25,6 +25,11 @@ export interface ObservedSchema {
 }
 
 const count = z.string().regex(/^\d+$/).transform(Number).nullable();
+const signed = z
+  .string()
+  .regex(/^-?\d+$/)
+  .transform(Number)
+  .nullable();
 const metadata = () => ({
   schemata: z.compile(z.array(z.object({ COMMENT: z.string().nullable() }))),
   tables: z.compile(z.array(z.object({ TABLE_NAME: z.string(), COMMENT: z.string().nullable() }))),
@@ -34,6 +39,7 @@ const metadata = () => ({
         TABLE_NAME: z.string(),
         COLUMN_NAME: z.string(),
         DATA_TYPE: z.string(),
+        DATA_TYPE_ALIAS: z.string().nullable(),
         IS_NULLABLE: z.enum(['YES', 'NO']),
         CHARACTER_MAXIMUM_LENGTH: count,
         NUMERIC_PRECISION: count,
@@ -41,6 +47,11 @@ const metadata = () => ({
         DATETIME_PRECISION: count,
         COLUMN_DEFAULT: z.string().nullable(),
         IS_IDENTITY: z.enum(['YES', 'NO']),
+        IDENTITY_START: signed,
+        IDENTITY_INCREMENT: signed,
+        IDENTITY_ORDERED: z.enum(['YES', 'NO']).nullable(),
+        KIND: z.string(),
+        EXPRESSION: z.string().nullable(),
         COMMENT: z.string().nullable(),
       }),
     ),
@@ -66,18 +77,50 @@ function observedType(row: ColumnRow): ObservedType {
     case 'TIMESTAMP_LTZ':
     case 'TIMESTAMP_TZ':
       return { kind: row.DATA_TYPE, precision };
+    case 'VECTOR': {
+      const match = /^VECTOR\((INT|FLOAT), (\d+)\)$/.exec(row.DATA_TYPE_ALIAS ?? '');
+      return match
+        ? {
+            kind: 'VECTOR',
+            element: match[1] as 'INT' | 'FLOAT',
+            dimension: Number(match[2]),
+          }
+        : { kind: 'OTHER', name: row.DATA_TYPE_ALIAS ?? row.DATA_TYPE };
+    }
+    case 'ARRAY':
+    case 'OBJECT':
+      // Structured ARRAY(...) and OBJECT(...) types are not modeled here.
+      return /^(?:ARRAY|OBJECT)\(/.test(row.DATA_TYPE_ALIAS ?? '')
+        ? { kind: 'OTHER', name: row.DATA_TYPE_ALIAS as string }
+        : { kind: row.DATA_TYPE };
     case 'BINARY':
     case 'FLOAT':
     case 'BOOLEAN':
     case 'DATE':
     case 'VARIANT':
-    case 'ARRAY':
-    case 'OBJECT':
+    case 'GEOGRAPHY':
+    case 'GEOMETRY':
       return { kind: row.DATA_TYPE };
     default:
-      return { kind: 'OTHER', name: row.DATA_TYPE };
+      return { kind: 'OTHER', name: row.DATA_TYPE_ALIAS ?? row.DATA_TYPE };
   }
 }
+function serverValue(row: ColumnRow): ServerValue | null {
+  if (row.KIND !== 'COLUMN')
+    return row.EXPRESSION === null
+      ? { kind: 'virtual' }
+      : { kind: 'virtual', expression: row.EXPRESSION };
+  if (row.IS_IDENTITY === 'YES')
+    return {
+      kind: 'identity',
+      ...(row.IDENTITY_START === null ? {} : { start: row.IDENTITY_START }),
+      ...(row.IDENTITY_INCREMENT === null ? {} : { increment: row.IDENTITY_INCREMENT }),
+      ...(row.IDENTITY_ORDERED === null ? {} : { order: row.IDENTITY_ORDERED === 'YES' }),
+    };
+  return row.COLUMN_DEFAULT === null ? null : { kind: 'default', expression: row.COLUMN_DEFAULT };
+}
+
+const freeze = <T>(value: T): T => (value === null ? value : Object.freeze(value));
 
 /** Reads base tables and columns of one schema through INFORMATION_SCHEMA, limited by the role. */
 export async function inspectSchema(
@@ -98,7 +141,8 @@ export async function inspectSchema(
   );
   const columns = parse.columns.parse(
     await client.queryRaw(
-      sql`SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, COLUMN_DEFAULT, IS_IDENTITY, COMMENT
+      sql`SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, COLUMN_DEFAULT, IS_IDENTITY, COMMENT,
+        DATA_TYPE_ALIAS, IDENTITY_START, IDENTITY_INCREMENT, IDENTITY_ORDERED, KIND, EXPRESSION
       FROM ${view('COLUMNS')} WHERE TABLE_SCHEMA = ${target.schema} ORDER BY TABLE_NAME, ORDINAL_POSITION`,
     ),
   );
@@ -121,8 +165,7 @@ export async function inspectSchema(
                   type: Object.freeze(observedType(row)),
                   notNull: row.IS_NULLABLE === 'NO',
                   comment: row.COMMENT,
-                  default: row.COLUMN_DEFAULT,
-                  identity: row.IS_IDENTITY === 'YES',
+                  serverValue: freeze(serverValue(row)),
                 }),
               ),
           ),

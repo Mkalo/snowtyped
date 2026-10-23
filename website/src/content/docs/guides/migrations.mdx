@@ -13,9 +13,12 @@ it. It works with any client from `snowtyped/snowflake`.
 
 ## Table definitions and DDL
 
-`defineTable(table, options)` derives physical columns from a declared table. Physical types come
-from `sqlType`; each declared codec must be able to read its type, so `integer()` needs a NUMBER with
-scale 0 and `decimal()` needs an explicit `sqlType.number(precision, scale)`. `types` and `comments`
+`defineTable(table, options)` derives physical columns from a declared table. Declared lengths,
+precisions, scales, and VECTOR element types and dimensions become the physical type, such as
+`VARCHAR(20)`, `NUMBER(12, 4)`, or `VECTOR(FLOAT, 256)`. `types` overrides a type with one from
+`sqlType`; each declared codec must be able to read it and it must match declared options, so
+`integer()` needs a NUMBER with scale 0 and `decimal()` without a precision needs an explicit
+`sqlType.number(precision, scale)`. GEOMETRY SRIDs are checked per value, not in DDL. `types` and `comments`
 are keyed by the declaration's column keys. An omitted comment is not managed; `null` requires no
 comment. `defineSchema(target, tables)` places the tables in one schema.
 
@@ -24,6 +27,12 @@ The builders return statements with a `destructive` flag and a `compile()` metho
 - `createSchema`, `dropSchema`, and `setSchemaComment`.
 - `createTable(definition)`, `dropTable(table)`.
 - `alterTable(table)`: rename, comments, add, drop, and rename columns, type changes, and NOT NULL.
+
+Server values render into column definitions: `.serverDefault(sql)` as `DEFAULT sql`, `.identity()` as
+`AUTOINCREMENT` with its start, increment, and order, and `.virtual(sql)` as `AS (sql)`. Expressions
+are trusted SQL text. Default and virtual columns need an expression, identity columns must be NUMBER
+or FLOAT, and virtual columns cannot be NOT NULL. `alterTable(table).dropDefault(column)` removes a
+default.
 
 `compileDdl` compiles the underlying DDL node. Names are quoted; comments compile to escaped
 literals because Snowflake DDL does not accept bind parameters.
@@ -57,11 +66,17 @@ applied, pending, and incomplete migrations without changing anything.
 `inspectSchema` reads base tables through `INFORMATION_SCHEMA`. `diffSchema` compares them with the
 desired schema in declaration order and only emits changes Snowflake makes in place: widening
 VARCHAR, changing NUMBER precision, toggling NOT NULL, adding nullable columns, dropping columns and
-tables, and setting comments. Narrowing NUMBER precision and setting NOT NULL fail when existing data
+tables, and setting comments. A missing column with a constant default (including NOT NULL) or a
+virtual expression is added. Narrowing NUMBER precision and setting NOT NULL fail when existing data
 does not fit. Other changes, such as a new NUMBER scale or a NOT NULL column on an existing table,
-are listed under `unsupported` for a hand-written migration. Renames are never inferred.
+are listed under `unsupported` for a hand-written migration. So are identity columns on an existing
+table, which Snowflake adds only to empty tables, non-constant defaults, which it accepts only at
+table creation, and any change between no server value, a default, identity, and a virtual
+expression. Identity start, increment,
+and order are compared when declared. Default and virtual expressions are not compared, because
+Snowflake stores them rewritten. Renames are never inferred.
 
 `checkDrift` runs the same comparison while ignoring the history tables. `pushSchema` applies a diff
 without history or locking and refuses unsupported or destructive changes unless `allowDestructive`
-is set; rerunning it continues a partial push. Column order, defaults, identity, clustering, and
-BINARY length are not compared.
+is set; rerunning it continues a partial push. Column order, clustering, BINARY length, structured
+ARRAY and OBJECT types, and server values of columns declared without one are not compared.

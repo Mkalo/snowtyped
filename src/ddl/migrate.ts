@@ -264,8 +264,9 @@ export async function migrate(
   if (!(await exists(client, options)))
     await client.queryRaw(
       sql.unsafe(
-        createSchema(identifier(options.database, options.schema), { ifNotExists: true }).compile()
-          .sql,
+        createSchema(identifier(options.database, options.schema), {
+          ifNotExists: true,
+        }).compile().sql,
       ),
     );
   const text = sqlType.varchar();

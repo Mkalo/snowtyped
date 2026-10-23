@@ -48,4 +48,9 @@ export {
   dropTable,
   setSchemaComment,
 } from './statements.js';
-export { type ObservedType, type PhysicalType, sqlType, type UnmodeledType } from './types.js';
+export {
+  type ObservedType,
+  type PhysicalType,
+  sqlType,
+  type UnmodeledType,
+} from './types.js';

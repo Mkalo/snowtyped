@@ -1,5 +1,6 @@
 import { identifier } from '../ast.js';
-import type { SchemaDefinition } from './definition.js';
+import type { ServerValue } from '../schema.js';
+import type { ColumnDefinition, SchemaDefinition } from './definition.js';
 import type { ObservedSchema } from './inspect.js';
 import {
   alterTable,
@@ -26,6 +27,46 @@ export interface SchemaDiff {
   readonly changes: readonly SchemaChange[];
   readonly unsupported: readonly UnsupportedChange[];
 }
+const constant = /^\s*(?:[+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?|'(?:[^']|'')*'|TRUE|FALSE|NULL)\s*$/i;
+
+/** Snowflake adds identity and non-constant default columns only to empty tables. */
+function additionBlocker(column: ColumnDefinition): string | undefined {
+  const value = column.serverValue;
+  if (value?.kind === 'identity')
+    return 'Adding an identity column to an existing table needs a rebuild.';
+  if (value?.kind === 'default' && !constant.test(value.expression as string))
+    return 'Snowflake only accepts constant defaults when adding a column.';
+  if (column.notNull && value?.kind !== 'default')
+    return 'Adding a NOT NULL column to an existing table needs a default or backfill.';
+  return undefined;
+}
+
+const serverLabel = (value: ServerValue | null) =>
+  value === null
+    ? 'no server value'
+    : {
+        default: 'a DEFAULT',
+        identity: 'AUTOINCREMENT',
+        virtual: 'a virtual expression',
+      }[value.kind];
+
+/** Expressions are not compared, since Snowflake stores them rewritten. */
+function serverValueBlocker(
+  desired: ServerValue | undefined,
+  observed: ServerValue | null,
+): string | undefined {
+  if (!desired) return undefined;
+  if (desired.kind !== observed?.kind)
+    return `Cannot change ${serverLabel(observed)} to ${serverLabel(desired)} in place.`;
+  if (desired.kind !== 'identity' || observed.kind !== 'identity') return undefined;
+  const changed = (['start', 'increment', 'order'] as const).filter(
+    (key) => desired[key] !== undefined && desired[key] !== observed[key],
+  );
+  return changed.length === 0
+    ? undefined
+    : `Cannot change the AUTOINCREMENT ${changed.join(', ')} in place.`;
+}
+
 export interface DiffOptions {
   /** Observed tables that are neither compared nor dropped. */
   readonly ignoreTables?: readonly string[];
@@ -42,7 +83,13 @@ export function diffSchema(
   const changes: SchemaChange[] = [];
   const unsupported: UnsupportedChange[] = [];
   const change = (statement: DdlStatement, description: string) =>
-    changes.push(Object.freeze({ statement, destructive: statement.destructive, description }));
+    changes.push(
+      Object.freeze({
+        statement,
+        destructive: statement.destructive,
+        description,
+      }),
+    );
   const managed = (value: string | null | undefined, current: string | null) =>
     value !== undefined && value !== current;
   if (!observed.exists)
@@ -71,25 +118,26 @@ export function diffSchema(
     const columns = new Map(current.columns.map((column) => [column.name, column]));
     for (const column of table.columns) {
       const existing = columns.get(column.name);
-      if (!existing && column.notNull) {
-        unsupported.push(
-          Object.freeze({
-            table: name,
-            column: column.name,
-            reason: 'Adding a NOT NULL column to an existing table needs a default or backfill.',
-          }),
-        );
-        continue;
-      }
+      const skip = (reason: string) =>
+        unsupported.push(Object.freeze({ table: name, column: column.name, reason }));
       if (!existing) {
+        const reason = additionBlocker(column);
+        if (reason) {
+          skip(reason);
+          continue;
+        }
         change(
           alter.addColumn(column.name, column.type, {
+            notNull: column.notNull,
             ...(typeof column.comment === 'string' ? { comment: column.comment } : {}),
+            ...(column.serverValue ? { serverValue: column.serverValue } : {}),
           }),
           `Add column ${name}.${column.name}`,
         );
         continue;
       }
+      const server = serverValueBlocker(column.serverValue, existing.serverValue);
+      if (server) skip(server);
       if (!sameType(column.type, existing.type)) {
         const from =
           existing.type.kind === 'OTHER' ? existing.type.name : renderType(existing.type);
@@ -98,14 +146,7 @@ export function diffSchema(
             alter.setColumnType(column.name, column.type),
             `Change ${name}.${column.name} from ${from} to ${renderType(column.type)}`,
           );
-        else
-          unsupported.push(
-            Object.freeze({
-              table: name,
-              column: column.name,
-              reason: `Cannot change ${from} to ${renderType(column.type)} in place.`,
-            }),
-          );
+        else skip(`Cannot change ${from} to ${renderType(column.type)} in place.`);
       }
       if (column.notNull !== existing.notNull)
         change(

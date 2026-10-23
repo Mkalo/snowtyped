@@ -371,6 +371,12 @@ describe('drift checks and schema pushes', () => {
     COLUMN_DEFAULT: null,
     IS_IDENTITY: 'NO',
     COMMENT: null,
+    DATA_TYPE_ALIAS: null,
+    IDENTITY_START: null,
+    IDENTITY_INCREMENT: null,
+    IDENTITY_ORDERED: null,
+    KIND: 'COLUMN',
+    EXPRESSION: null,
   });
   const tables = (...names: string[]) => names.map((name) => ({ TABLE_NAME: name, COMMENT: null }));
 
