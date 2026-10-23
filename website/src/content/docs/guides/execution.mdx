@@ -16,13 +16,18 @@ implicit query retries are performed.
 
 ## Cancellation and deadlines
 
-`execute`, `stream`, and `streamRaw` accept `{ signal, timeoutMs }`.
+`execute`, `queryRaw`, `stream`, and `streamRaw` accept `{ signal, timeoutMs }`. Pass them to
+`queryRaw` as the second argument after a `sql` fragment.
 
 <Snippet code={executeOptions} />
 
 Abort and deadline cancellation wait for the SDK's cancellation callback before releasing a request.
 Stopping consumption after a query has completed destroys the row stream; it does not cancel an
 already-completed server statement.
+
+Pooled calls reject an already-aborted signal before leasing a connection. Otherwise `signal` and
+`timeoutMs` apply once a connection is acquired, and the wait for a connection is bounded only by
+`acquireTimeoutMillis`.
 
 ## Streaming
 
