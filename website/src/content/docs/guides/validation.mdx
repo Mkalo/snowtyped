@@ -47,5 +47,7 @@ types, so numeric sorting remains numeric.
 SDK NULL sentinels are normalized using result column metadata, so a text value that happens to
 equal `NULL` is preserved.
 
-Raw queries fetch numbers as exact strings, but temporal and semi-structured values follow the SDK's
-defaults. Cast or format them explicitly in SQL when the representation matters.
+Raw queries return numbers, temporal values, and semi-structured values as strings. Temporal text
+follows the Snowflake session's output format parameters, which by default drop fractional seconds
+beyond milliseconds for timestamps and drop them entirely for TIME. Cast or use `TO_VARCHAR`
+explicitly when the exact form matters.

@@ -16,9 +16,11 @@ New Snowflake semantics need opt-in integration coverage using `tests/support/sn
 
 Package checks install the actual tarball in a temporary consumer and verify ESM/CJS loading, declaration resolution, and tree shaking. Keep these checks working when exports or dependencies change. Never commit environment files, private keys, generated bootstrap SQL, build artifacts, or coverage output.
 
-The documentation site lives in `website/` as a separate pnpm project (Node.js 22.23.4+).
-Its examples are type-checked snippets under `website/src/snippets/`; run `pnpm check` in
-`website/` after changing public APIs or docs.
+The documentation site in `website/` is the authoritative user documentation. Changes to
+public APIs, behavior, or feature boundaries update the matching pages in
+`website/src/content/docs/` along with the README. Its examples are type-checked snippets under
+`website/src/snippets/`, and its tests require every runtime export to appear in a guide or
+snippet. It is a separate pnpm project (Node.js 22.23.4+); run `pnpm check` in `website/`.
 
 See [CI and release checks](docs/ci.md) for required-check configuration, diagnostics,
 action updates, and the manual gate when hosted enforcement is unavailable.

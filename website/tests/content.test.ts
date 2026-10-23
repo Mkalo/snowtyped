@@ -1,4 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
+import * as library from 'snowtyped';
+import * as snowflake from 'snowtyped/snowflake';
 import { describe, expect, it } from 'vitest';
 
 const root = new URL('../', import.meta.url);
@@ -18,6 +20,15 @@ describe('documentation content', () => {
       ),
     );
     expect(snippets.filter((name) => !imported.has(name))).toEqual([]);
+  });
+
+  it('mentions every runtime export in a guide or snippet', () => {
+    const code = [
+      ...pages.flatMap(({ source }) => source.match(/`[^`\n]+`/g) ?? []),
+      ...snippets.map((name) => read(`src/snippets/${name}`)),
+    ].join('\n');
+    const exports = [...Object.keys(library), ...Object.keys(snowflake)];
+    expect(exports.filter((name) => !new RegExp(`(?<![.\\w])${name}\\b`).test(code))).toEqual([]);
   });
 
   it('keeps package examples in type-checked snippets', () => {

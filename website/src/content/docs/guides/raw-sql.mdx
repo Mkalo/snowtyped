@@ -42,7 +42,9 @@ helpers, `bigint`, or decimal text instead.
 
 ## Result shapes
 
-- Raw numeric values are fetched as exact strings by the SDK.
+- Numbers, temporal values, and semi-structured values are returned as strings.
+- Temporal text follows the session's output format parameters, which can drop fractional seconds.
+  Cast or use `TO_VARCHAR` explicitly when the exact form matters. See
+  [exact values](/guides/validation/#exact-numeric-and-temporal-values).
 - Field names follow SQL aliases and the SDK's object-row behavior. Alias duplicate column names
   explicitly to avoid key collisions.
-- Use explicit casts or formatting when raw temporal or semi-structured representations matter.
