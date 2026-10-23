@@ -17,6 +17,31 @@ defaults:
     shell: bash
 
 jobs:
+  changesets:
+    name: Changesets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check changesets and exemptions
+        env:
+          CHANGESETS_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          CHANGESETS_BASE_BRANCH: ${{ github.base_ref || 'main' }}
+          CHANGESETS_HEAD: ${{ github.head_ref }}
+          CHANGESETS_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: pnpm check:changesets
+      - name: Exercise disposable versioning flows
+        run: pnpm test:versioning
+
   check:
     name: Check (${{ matrix.os }}, Node ${{ matrix.node }})
     strategy:
@@ -56,16 +81,17 @@ jobs:
   required:
     name: CI required
     if: ${{ always() }}
-    needs: [check]
+    needs: [check, changesets]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Require every matrix job to pass
+      - name: Require the matrix and Changesets to pass
         env:
           CHECK_RESULT: ${{ needs.check.result }}
+          CHANGESETS_RESULT: ${{ needs.changesets.result }}
         run: |
-          if [ "$CHECK_RESULT" != "success" ]; then
-            echo "::error::CI matrix result: $CHECK_RESULT. Every check must succeed."
+          if [ "$CHECK_RESULT" != "success" ] || [ "$CHANGESETS_RESULT" != "success" ]; then
+            echo "::error::CI matrix: $CHECK_RESULT; Changesets: $CHANGESETS_RESULT. Every check must succeed."
             exit 1
           fi

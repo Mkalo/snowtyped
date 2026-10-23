@@ -1,7 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
   "files": {
-    "includes": ["**", "!dist", "!coverage", "!pnpm-lock.yaml", "!.secrets", "!.snowflake"]
+    "includes": [
+      "**",
+      "!dist",
+      "!coverage",
+      "!pnpm-lock.yaml",
+      "!.changeset/**/*.md",
+      "!.secrets",
+      "!.snowflake"
+    ]
   },
   "formatter": { "indentStyle": "space", "lineWidth": 100 },
   "javascript": { "formatter": { "quoteStyle": "single" } },

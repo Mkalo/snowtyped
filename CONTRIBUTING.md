@@ -19,4 +19,11 @@ Package checks install the actual tarball in a temporary consumer and verify ESM
 See [CI and release checks](docs/ci.md) for required-check configuration, diagnostics,
 action updates, and the manual gate when hosted enforcement is unavailable.
 
+Package changes need a reviewed `pnpm changeset` file. Docs, tests, and CI-only
+changes are exempt; manifest/lockfile tooling edits need an empty changeset and
+an exemption explanation. See [versioning policy](docs/versioning.md) for bump
+choices, alpha/beta/stable transitions, and version PRs. Do not hand-edit package
+versions or publish from contribution PRs. Run `pnpm test:versioning` when changing
+this tooling.
+
 Publishing remains disabled until the package name, license, repository metadata, and public API have been settled.

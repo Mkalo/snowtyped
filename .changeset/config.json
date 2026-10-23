@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [],
+  "linked": [],
+  "access": "restricted",
+  "baseBranch": "main",
+  "changedFilePatterns": ["src/**", "package.json", "pnpm-lock.yaml", "tsdown.config.ts"],
+  "format": false,
+  "privatePackages": { "version": true, "tag": false },
+  "updateInternalDependencies": "patch",
+  "ignore": []
+}

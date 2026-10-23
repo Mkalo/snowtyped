@@ -10,10 +10,12 @@ are unnecessary for these checks.
 
 Matrix checks have explicit names such as `Check (ubuntu-latest, Node 22)`.
 `CI required` is the fixed check to require on `main`. It runs even after a
-dependency fails and accepts only a successful matrix result; failure,
+dependency fails and accepts only successful matrix and Changesets results; failure,
 cancellation, and skipped jobs cannot satisfy the gate. Keep this name unique
-across workflows. Add future docs and Changesets jobs to its `needs` list and
-require each result to succeed when #21 and #19 land.
+across workflows. `Changesets` checks PR changeset policy and exercises disposable
+versioning/prerelease flows. Add future docs jobs to its `needs` list and require
+each result to succeed when #21 lands. See [versioning policy](versioning.md) for
+exemptions and the version bot's GitHub App setup.
 
 Pushes, pull requests, and merge queues run the workflow without path filters.
 A new commit cancels superseded runs for the same pull request. Push runs are
@@ -80,7 +82,7 @@ or visibility change makes enforcement unavailable.
 ## Action updates
 
 Actions are pinned to full commit SHAs with human-readable release comments in
-both workflows. Dependabot proposes grouped GitHub Actions updates weekly.
+all workflows. Dependabot proposes grouped GitHub Actions updates weekly.
 Before merging, review upstream release notes, confirm each SHA belongs to the
 intended upstream release, check action runtime/runner compatibility and changed
 permissions/inputs, and require the full matrix. Update the release comments
