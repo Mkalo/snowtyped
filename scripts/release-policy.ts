@@ -3,6 +3,34 @@ import semver from 'semver';
 
 export const repository = 'Mkalo/snowtyped';
 export const registry = 'https://registry.npmjs.org';
+export const bootstrapVersion = '0.0.0-bootstrap.0';
+
+export interface RegistryPackage {
+  versions?: Record<string, unknown>;
+  time?: { unpublished?: { time: string } };
+}
+
+export function registryState(metadata: RegistryPackage | undefined, now = Date.now()) {
+  const unpublished = metadata?.time?.unpublished;
+  if (unpublished) {
+    const removedAt = Date.parse(unpublished.time);
+    assert(Number.isFinite(removedAt), 'Invalid npm unpublish timestamp; stop and inspect it.');
+    const retryAt = removedAt + 24 * 60 * 60 * 1000;
+    assert(
+      now >= retryAt,
+      `npm name cooldown: no writes or authentication until ${new Date(retryAt).toISOString()}.`,
+    );
+  }
+  return Object.keys(metadata?.versions || {}).length > 0 ? 'ready' : 'missing';
+}
+
+export function requireRegistryPackage(metadata: RegistryPackage | undefined) {
+  assert.equal(
+    registryState(metadata),
+    'ready',
+    'Bootstrap the npm name first and keep its holding stage pending until the real release is public.',
+  );
+}
 
 export interface ReleaseManifest {
   name: string;
