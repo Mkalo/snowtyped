@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import * as z from 'zod';
+import { expression } from '../../src/expressions.js';
 import {
   add,
   asc,
@@ -429,6 +431,9 @@ describe('string and date helpers', () => {
     expect(() => dateTrunc('decade' as never, day)).toThrow('Unsupported date part: decade.');
     expect(() => dateTrunc('day', label)).toThrow('Date helpers require');
     expect(() => dateDiff('day', day, label)).toThrow('Date helpers require');
+    expect(() => dateDiff('hour', day, clock)).toThrow('dateDiff cannot mix time values');
+    expect(() => dateDiff('hour', clock, at)).toThrow('dateDiff cannot mix time values');
+    expect(dateDiff('hour', clock, clock).wireType).toBe('integer');
   });
 });
 
@@ -488,5 +493,38 @@ describe('ranking and offset windows', () => {
     for (const value of [-1, 1.5])
       expect(() => lead(id, { orderBy: [asc(id)], offset: value })).toThrow('LEAD offset');
     expect(() => lag(id, {} as never)).toThrow('LAG requires ORDER BY.');
+  });
+});
+
+describe('derived result codecs', () => {
+  it('decodes derived results with the unconstrained domain instead of the input schema', () => {
+    const short = expression(label.expression, z.string().max(2), {
+      refs: label.refs,
+      valueSchema: z.string(),
+    });
+    const stamp = expression(at.expression, z.string().regex(/^[^.]*$/), {
+      refs: at.refs,
+      valueSchema: z.string(),
+      wireType: 'timestamp_ntz',
+    });
+    const bytes = expression<Uint8Array>(
+      data.expression,
+      z.instanceof(Uint8Array).refine((v) => !v.length),
+      {
+        refs: data.refs,
+        valueSchema: z.instanceof(Uint8Array),
+      },
+    );
+    expect(coalesce(short, 'long').readSchema.parse('long')).toBe('long');
+    expect(caseWhen(eq(id, 1n), short).else(short).readSchema.parse('long')).toBe('long');
+    expect(lag(short, { orderBy: [asc(id)], default: 'long' }).readSchema.parse('long')).toBe(
+      'long',
+    );
+    expect(dateAdd('millisecond', 5n, stamp).readSchema.parse('2026-01-01 00:00:00.005')).toBe(
+      '2026-01-01 00:00:00.005',
+    );
+    expect(coalesce(bytes, data).readSchema.parse(new Uint8Array([1, 2]))).toEqual(
+      new Uint8Array([1, 2]),
+    );
   });
 });

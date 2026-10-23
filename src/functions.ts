@@ -200,6 +200,12 @@ function nullable(value: AnyExpression): boolean {
 function strip(schema: z.ZodType): z.ZodType {
   return schema instanceof z.ZodNullable ? strip(schema.unwrap() as z.ZodType) : schema;
 }
+function codec(output: AnyExpression): z.ZodType {
+  if (!output.wireType) return output.valueSchema;
+  return output.wireType in domains
+    ? domain(output.wireType as CastType).readSchema
+    : output.readSchema;
+}
 function same(type: AnyExpression, values: readonly AnyExpression[], name: string): void {
   if (values.some((value) => value.wireType !== type.wireType))
     throw new TypeError(`${name} values must share one SQL domain.`);
@@ -211,7 +217,7 @@ function derive(
   values: readonly AnyExpression[],
   options: { readonly nullRefs?: readonly SourceReference[]; readonly phase?: 'aggregate' } = {},
 ): AnyExpression {
-  const read = strip(output.readSchema);
+  const read = strip(codec(output));
   const value = strip(output.valueSchema);
   return expression(node, isNullable ? read.nullable() : read, {
     ...metadata(values),
@@ -584,7 +590,10 @@ export function dateDiff<S extends TextExpression, E extends string | TextExpres
   ExpressionNullScope<S> | ExpressionNullScope<E>
 > {
   const values = isExpression(end) ? [start, end] : [start];
-  const node = partNode(part, values.map(temporal), true);
+  const types = values.map(temporal);
+  if (types.includes('time') && types.some((type) => type !== 'time'))
+    throw new TypeError('dateDiff cannot mix time values with date or timestamp values.');
+  const node = partNode(part, types, true);
   return derive(
     call('DATEDIFF', [
       node,
