@@ -461,6 +461,14 @@ describe('complete query and execution paths against Snowflake', () => {
     expect((await db.execute(items)).rows).toEqual([
       { items: [1.5, 0.0025, 9007199254740991, 1e300] },
     ]);
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = ARRAY_CONSTRUCT(1, NULL, ${'undefined'}) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([{ items: [1, null, 'undefined'] }]);
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = ARRAY_CONSTRUCT(5e-324::DOUBLE, PARSE_JSON(${'1e-310'}), PI()) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([{ items: [5e-324, 1e-310, Math.PI] }]);
     for (const json of ['[12345678901234567890]', '[0.1234567890123456789]']) {
       await db.queryRaw(
         sql`UPDATE ${name(docs)} SET ITEMS = PARSE_JSON(${json}) WHERE ID = ${100}`,

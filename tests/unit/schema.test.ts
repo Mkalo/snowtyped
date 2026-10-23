@@ -271,14 +271,22 @@ describe('semi-structured ARRAY and OBJECT columns', () => {
 
   it('rejects JSON numbers that would lose precision instead of rounding them', () => {
     expect(
-      items.readSchema.parse('[1.50,-0,0.1,1e2,-2.5E-3,9007199254740991,0.0,1e21,1E+21]'),
-    ).toEqual([1.5, -0, 0.1, 100, -0.0025, 9007199254740991, 0, 1e21, 1e21]);
+      items.readSchema.parse(
+        '[1.50,-0,0.1,1e2,-2.5E-3,9007199254740991,0.0,1e21,1E+21,4.940656458412465e-324,9.999999999999969e-311,3.000000000000000e-01,9.007199254740992e+15,0.1000000000000000055511151231257827]',
+      ),
+    ).toEqual([
+      1.5, -0, 0.1, 100, -0.0025, 9007199254740991, 0, 1e21, 1e21, 5e-324, 1e-310, 0.3,
+      9007199254740992, 0.1,
+    ]);
     for (const input of [
       '[12345678901234567890]',
       '[0.1234567890123456789]',
       '[9007199254740993]',
       '[1e400]',
       '[1e-400]',
+      '[1.0000000000000001]',
+      '[1.797693134862316e+308]',
+      `[0.${'1'.repeat(120)}]`,
       '{"n":{"deep":[9007199254740993]}}',
     ]) {
       const result = variant('V').readSchema.safeParse(input);
@@ -290,6 +298,9 @@ describe('semi-structured ARRAY and OBJECT columns', () => {
       jsonPath(table.columns.meta, 'ok').readSchema.safeParse('9007199254740993').success,
     ).toBe(false);
     expect(variant('V').readSchema.safeParse('{').error?.issues[0]?.code).toBe('custom');
+    expect(
+      items.readSchema.parse('[1,undefined,"undefined",{"a":[undefined]},"\\"undefined\\\\"]'),
+    ).toEqual([1, null, 'undefined', { a: [null] }, '"undefined\\']);
   });
 
   it('casts JSON writes, including NULL, to the column type', () => {
