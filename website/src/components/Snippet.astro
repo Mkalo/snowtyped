@@ -1,0 +1,13 @@
+---
+import { Code } from '@astrojs/starlight/components';
+import { visibleSnippet } from '../snippet';
+
+interface Props {
+  code: string;
+  title?: string;
+}
+
+const { code, title } = Astro.props;
+---
+
+<Code code={visibleSnippet(code)} lang="ts" title={title} />

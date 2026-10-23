@@ -90,7 +90,8 @@ For each release:
 3. Review the CI stage's version, dist-tag, SHA-512, and provenance in npm's
    Staged Packages UI. Approve it with 2FA to publish the version.
 4. The same workflow waits up to one hour for approval, verifies the public bytes
-   and signatures, and creates `v<version>` and the matching GitHub release.
+   and signatures, creates `v<version>` and the matching GitHub release, then
+   deploys that tag's [documentation](docs-deployment.md).
 
 There are no routine workflow dispatches. If approval takes longer than an hour,
 approve the existing CI stage and rerun the original release workflow; identical
