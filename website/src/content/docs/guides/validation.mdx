@@ -32,7 +32,7 @@ zone offsets. Snowtyped therefore uses lossless representations:
 
 - `integer` columns decode as `bigint`, covering 38-digit values.
 - `decimal` columns decode as exact fixed-point text, such as `"12.50"`.
-- `float` columns decode as finite `number` values.
+- `float` columns decode as finite `number` values, exactly equal to the stored DOUBLE.
 - `date`, `time`, and `timestamp` columns decode as text. Time values keep up to nine fractional
   digits; timestamps keep nanoseconds, and LTZ/TZ timestamps include their offset.
 - `binary` columns decode as `Uint8Array`; SDK Buffers are accepted.

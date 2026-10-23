@@ -1,10 +1,10 @@
-import type { ConnectionOptions } from 'snowflake-sdk';
+import type { Connection, ConnectionOptions } from 'snowflake-sdk';
 import type { MutationQuery } from '../mutations.js';
 import type { SelectQuery } from '../query.js';
 import type { Selection } from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation } from '../sql.js';
-import { createClient, type SnowflakeClient } from './client.js';
-import type { ExecuteOptions } from './request.js';
+import { createClient, isUnusable, type SnowflakeClient } from './client.js';
+import { type ExecuteOptions, requestSignal } from './request.js';
 
 export interface PoolOptions {
   readonly min?: number;
@@ -12,6 +12,8 @@ export interface PoolOptions {
   readonly acquireTimeoutMillis?: number;
   readonly idleTimeoutMillis?: number;
   readonly evictionRunIntervalMillis?: number;
+  /** Heartbeat each connection before lending it; costs one round trip per acquire. */
+  readonly testOnBorrow?: boolean;
 }
 export interface PooledClient extends SnowflakeClient {
   close(): Promise<void>;
@@ -23,21 +25,48 @@ export async function createPool(
 ): Promise<PooledClient> {
   const sdk = (await import('snowflake-sdk')).default;
   const pool = sdk.createPool(connectionOptions, { min: 0, max: 5, ...options });
-  let closed = false;
-  function check(options?: ExecuteOptions) {
-    if (closed) throw new Error('This Snowflake pool is closed.');
-    options?.signal?.throwIfAborted();
+  let closing: Promise<void> | undefined;
+  function check() {
+    if (closing) throw new Error('This Snowflake pool is closed.');
+  }
+  /** A terminated session would fail every later lease, so it leaves the pool. */
+  async function release(connection: Connection) {
+    await (isUnusable(connection) || !connection.isUp()
+      ? pool.destroy(connection)
+      : pool.release(connection));
+  }
+  /** Stops waiting on abort; a connection granted after that goes straight back to the pool. */
+  function acquire(signal: AbortSignal | undefined): Promise<Connection> {
+    check();
+    signal?.throwIfAborted();
+    const lease = pool.acquire();
+    if (!signal) return lease;
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      lease.then(
+        (connection) => {
+          signal.removeEventListener('abort', abort);
+          if (signal.aborted) release(connection).catch(() => {});
+          else resolve(connection);
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', abort);
+          reject(error);
+        },
+      );
+    });
   }
   async function use<T>(
-    callback: (client: SnowflakeClient) => Promise<T>,
-    options?: ExecuteOptions,
+    callback: (client: SnowflakeClient, options: ExecuteOptions) => Promise<T>,
+    executeOptions: ExecuteOptions = {},
   ): Promise<T> {
-    check(options);
-    const connection = await pool.acquire();
+    const signal = requestSignal(executeOptions);
+    const connection = await acquire(signal);
     try {
-      return await callback(createClient(connection));
+      return await callback(createClient(connection), signal ? { signal } : {});
     } finally {
-      await pool.release(connection);
+      await release(connection);
     }
   }
   return Object.freeze({
@@ -46,10 +75,8 @@ export async function createPool(
       executeOptions?: ExecuteOptions,
     ) =>
       use<unknown>(
-        (client) =>
-          query.kind === 'select'
-            ? client.execute(query, executeOptions)
-            : client.execute(query, executeOptions),
+        (client, options) =>
+          query.kind === 'select' ? client.execute(query, options) : client.execute(query, options),
         executeOptions,
       ),
     queryRaw<T = unknown>(
@@ -58,38 +85,36 @@ export async function createPool(
     ) {
       const options = isRawQuery(input) ? (values[0] as ExecuteOptions | undefined) : undefined;
       return use(
-        (client) =>
+        (client, requestOptions) =>
           isRawQuery(input)
-            ? client.queryRaw<T>(input as RawQuery<T>, options)
+            ? client.queryRaw<T>(input as RawQuery<T>, requestOptions)
             : client.queryRaw<T>(input, ...(values as SqlInterpolation[])),
         options,
       );
     },
     async *stream(query: SelectQuery<Selection, string, string>, executeOptions?: ExecuteOptions) {
-      check(executeOptions);
-      const connection = await pool.acquire();
+      const signal = requestSignal(executeOptions ?? {});
+      const connection = await acquire(signal);
       try {
-        yield* createClient(connection).stream(query, executeOptions);
+        yield* createClient(connection).stream(query, signal ? { signal } : {});
       } finally {
-        await pool.release(connection);
+        await release(connection);
       }
     },
     async *streamRaw<T = unknown>(query: RawQuery, executeOptions?: ExecuteOptions) {
-      check(executeOptions);
-      const connection = await pool.acquire();
+      const signal = requestSignal(executeOptions ?? {});
+      const connection = await acquire(signal);
       try {
-        yield* createClient(connection).streamRaw<T>(query, executeOptions);
+        yield* createClient(connection).streamRaw<T>(query, signal ? { signal } : {});
       } finally {
-        await pool.release(connection);
+        await release(connection);
       }
     },
     transaction: <T>(callback: (client: SnowflakeClient) => Promise<T>) =>
       use((client) => client.transaction(callback)),
-    async close() {
-      if (closed) return;
-      closed = true;
-      await pool.drain();
-      await pool.clear();
+    close() {
+      closing ??= pool.drain().then(() => pool.clear());
+      return closing;
     },
   }) as PooledClient;
 }
