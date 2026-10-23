@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import {
   asc,
+  binary,
+  boolean,
   count,
   date,
   decimal,
@@ -161,6 +163,24 @@ describe('set operation composition', () => {
     expect(() =>
       select(a, { value: a.columns.name }).union(select(b, { value: b.columns.amount })),
     ).toThrow('different domains');
+    const flags = snowflakeTable('F', {
+      name: text('NAME'),
+      flag: boolean('FLAG'),
+      data: binary('DATA'),
+    });
+    for (const [l, r] of [
+      [flags.columns.name, flags.columns.flag],
+      [flags.columns.name, flags.columns.data],
+      [flags.columns.flag, flags.columns.data],
+    ] as const)
+      expect(() => select(flags, { value: l }).union(select(flags, { value: r }) as never)).toThrow(
+        'different domains',
+      );
+    expect(
+      select(flags, { value: flags.columns.name })
+        .union(select(a, { value: lower(a.columns.name) }))
+        .compile().sql,
+    ).toContain('UNION');
     expect(() =>
       select(a, { value: a.columns.amount }).except(
         // @ts-expect-error Exercise the runtime domain boundary.

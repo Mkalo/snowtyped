@@ -188,6 +188,17 @@ interface Output {
   readonly value: z.ZodType;
   readonly nullable: boolean;
 }
+const untypedDomains = [
+  ['boolean', true],
+  ['text', ''],
+  ['binary', new Uint8Array()],
+] as const;
+function domain(expression: AnyExpression): string | undefined {
+  return (
+    expression.wireType ??
+    untypedDomains.find(([, probe]) => expression.valueSchema.safeParse(probe).success)?.[0]
+  );
+}
 interface Operand {
   readonly ast: QueryNode;
   readonly outputs: Readonly<Record<string, Output>>;
@@ -304,7 +315,7 @@ function combine(
     keys.map((key) => {
       const l = left.outputs[key] as Output;
       const r = right.outputs[key] as Output;
-      if (l.source.wireType !== r.source.wireType)
+      if (domain(l.source) !== domain(r.source))
         throw new TypeError(`Set operation column ${key} combines different domains.`);
       return [
         key,
