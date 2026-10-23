@@ -18,6 +18,7 @@ export function requestSignal(options: ExecuteOptions): AbortSignal | undefined 
 
 /** Snowflake rejects a cancel that reaches it before the statement is registered. */
 const NOT_EXECUTING = '000605';
+const CANCELLED = '000604';
 const MAX_CANCEL_RETRY_MS = 1000;
 
 /**
@@ -73,7 +74,7 @@ export function request(
         complete(error, completed, rows) {
           if (settled) return;
           if (error) {
-            fail(cancelling ? signal?.reason : error);
+            fail(cancelling && String(error.code) === CANCELLED ? signal?.reason : error);
             return;
           }
           settled = true;

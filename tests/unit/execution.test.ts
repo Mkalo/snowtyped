@@ -7,6 +7,7 @@ import { normalizeWireRow } from '../../src/snowflake/wire.js';
 
 const table = snowflakeTable('T', { id: integer('ID').notNull(), name: text('NAME') });
 const query = select(table);
+const canceled = () => Object.assign(new Error('SQL execution canceled'), { code: '000604' });
 function driver(rows: unknown[] | undefined = [['1', 'Ada']], deferred = false) {
   const readable = Readable.from(rows ?? [], { objectMode: true });
   const statement = {
@@ -144,7 +145,7 @@ describe('execution, streaming, and cancellation', () => {
       }
       await rejected;
       expect(attempts).toBe(8);
-      fake.finish(new Error('000604 canceled'));
+      fake.finish(canceled());
       await vi.advanceTimersByTimeAsync(5000);
       expect(attempts).toBe(8);
     } finally {
@@ -154,7 +155,7 @@ describe('execution, streaming, and cancellation', () => {
 
   it.each([
     ['succeeds', undefined],
-    ['fails', new Error('000604 canceled')],
+    ['fails', canceled()],
   ])('stops retrying the cancel once the statement %s', async (_outcome, failure) => {
     vi.useFakeTimers();
     try {
@@ -188,9 +189,18 @@ describe('execution, streaming, and cancellation', () => {
     const error = new Error('stop');
     const rejected = createClient(failed.connection).execute(query, { signal: controller.signal });
     controller.abort(error);
-    failed.finish(new Error('000604 canceled'));
+    failed.finish(canceled());
     await expect(rejected).rejects.toBe(error);
     expect(failed.statement.cancel).toHaveBeenCalledOnce();
+
+    const compile = driver(undefined, true);
+    compile.statement.cancel.mockImplementation(() => {});
+    const own = new Error('SQL compilation error');
+    const aborted = new AbortController();
+    const failing = createClient(compile.connection).execute(query, { signal: aborted.signal });
+    aborted.abort(error);
+    compile.finish(own);
+    await expect(failing).rejects.toBe(own);
 
     const thrown = driver([['1', 'Ada']], true);
     thrown.statement.cancel.mockImplementation(() => {
