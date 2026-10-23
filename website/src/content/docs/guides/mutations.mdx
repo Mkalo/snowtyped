@@ -1,0 +1,40 @@
+---
+title: Mutations
+description: Typed INSERT, UPDATE, DELETE, and MERGE statements.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../../components/Snippet.astro';
+import merge from '../../../snippets/merge.ts?raw';
+import serverValues from '../../../snippets/server-values.ts?raw';
+import writes from '../../../snippets/writes.ts?raw';
+
+<Snippet code={writes} />
+
+- `insert(table, values)` accepts one row or an array of rows. Required columns must be present.
+  Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or
+  NULL; an explicit `null` stays NULL.
+- `update(table, values)` accepts typed literal values and expressions from its own table.
+- Statements resolve to `{ affectedRows, queryId }`. There is no emulated RETURNING clause.
+
+<Aside type="caution">
+  UPDATE and DELETE without `.where()` affect every row in the table.
+</Aside>
+
+## Defaults, identity, and virtual columns
+
+Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)`
+so they are optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)`
+column. It is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These
+modifiers are metadata only and do not emit DDL.
+
+<Snippet code={serverValues} />
+
+Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row.
+Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps.
+
+## MERGE
+
+`mergeInto(target, source, on)` supports matched update, matched delete, and unmatched insert.
+
+<Snippet code={merge} />

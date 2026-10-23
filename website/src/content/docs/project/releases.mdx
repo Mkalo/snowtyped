@@ -1,0 +1,38 @@
+---
+title: Releases
+description: Release channels, version labels, and how Snowtyped versions are published.
+---
+
+import { Badge } from '@astrojs/starlight/components';
+import { release } from '../../../release';
+
+This documentation was built from Snowtyped {release.version}, on the **{release.channel}** release
+channel.
+
+## Channels
+
+| Channel | npm dist-tag | Badge                                         | Meaning                                 |
+| ------- | ------------ | --------------------------------------------- | --------------------------------------- |
+| Alpha   | `alpha`      | <Badge text="alpha" variant="caution" />      | The public API may change in any release |
+| Beta    | `beta`       | <Badge text="beta" variant="caution" />       | Prerelease candidate for a stable line  |
+| Stable  | `latest`     | <Badge text="stable" variant="success" />     | Supported release                       |
+
+Prereleases never advance the `latest` dist-tag. The version badge next to the site title always
+shows the version these pages were built from.
+
+## Versioning
+
+[Changesets](https://github.com/changesets/changesets) manages versions and the changelog. Package
+changes include a changeset with a patch, minor, or major bump; breaking changes use `major` even
+during 0.x development. A separate version pull request applies pending changesets, and nothing
+publishes from contribution pull requests.
+
+Alpha, beta, and stable transitions, version pull requests, and the npm staged publishing flow are
+described in the
+[versioning policy](https://github.com/Mkalo/snowtyped/blob/main/docs/versioning.md). CI and the
+release gate are described in
+[CI and release checks](https://github.com/Mkalo/snowtyped/blob/main/docs/ci.md).
+
+## Changelog
+
+Every release is listed in the [changelog](/project/changelog/).

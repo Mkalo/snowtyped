@@ -1,0 +1,19 @@
+---
+title: Introspection
+description: Generate table declarations from an existing Snowflake schema.
+---
+
+import Snippet from '../../../components/Snippet.astro';
+import introspect from '../../../snippets/introspect.ts?raw';
+
+`introspect(db, { database, schema })` reads the columns visible to the connection's role through
+`INFORMATION_SCHEMA`. `generateSchema(tables)` returns TypeScript source that declares each table
+with its exact physical names, exported as `table0`, `table1`, and so on in a stable order. Column
+defaults, identity settings, and virtual column expressions become `.serverDefault()`, `.identity()`,
+and `.virtual()` modifiers.
+
+<Snippet code={introspect} />
+
+Review generated declarations, rename the exports, and commit them to your project. Unsupported data
+types fail explicitly; Snowtyped does not invent codecs or schemas for them. Results are limited to
+what the connection's role can access.

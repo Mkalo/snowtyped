@@ -1,0 +1,53 @@
+---
+title: Validation and representations
+description: How declared-schema validation differs from raw assertions, and how exact values are represented.
+---
+
+import Snippet from '../../../components/Snippet.astro';
+import representations from '../../../snippets/representations.ts?raw';
+
+## Declared schemas versus raw assertions
+
+Snowtyped has two typing modes, and they give different guarantees.
+
+|                       | Structured queries                     | Raw tagged queries                        |
+| --------------------- | -------------------------------------- | ----------------------------------------- |
+| Result type comes from | Table declarations and the projection | A type argument you supply, or `unknown`  |
+| Runtime validation    | Every row, with a compiled Zod schema  | None                                      |
+| Invalid values        | Reject execution                       | Pass through with the asserted type       |
+| Decoders              | Never supplied by callers              | Never supplied by callers                 |
+
+For a structured query, the validator is compiled from the same declarations that produce the
+TypeScript type, so the two cannot drift apart. Invalid returned values reject the `execute` call or
+the stream.
+
+For a raw query, the type argument is a caller-supplied assertion, like a type cast. Snowtyped does
+not parse arbitrary SQL into a result schema. Prefer structured queries where the data shape
+matters, and validate raw results yourself when they cross a trust boundary.
+
+## Exact numeric and temporal values
+
+JavaScript numbers cannot hold every Snowflake NUMBER, and `Date` cannot hold nanoseconds or time
+zone offsets. Snowtyped therefore uses lossless representations:
+
+- `integer` columns decode as `bigint`, covering 38-digit values.
+- `decimal` columns decode as exact fixed-point text, such as `"12.50"`.
+- `float` columns decode as finite `number` values.
+- `date`, `time`, and `timestamp` columns decode as text. Time values keep up to nine fractional
+  digits; timestamps keep nanoseconds, and LTZ/TZ timestamps include their offset.
+- `binary` columns decode as `Uint8Array`; SDK Buffers are accepted.
+- `variant` columns decode as `unknown`, or as the type of the Zod schema you declare.
+
+<Snippet code={representations} />
+
+The compiler serializes exact numeric and temporal outputs after the native query's joins,
+grouping, window filtering, DISTINCT, ordering, and pagination. Nested sources keep their native SQL
+types, so numeric sorting remains numeric.
+
+SDK NULL sentinels are normalized using result column metadata, so a text value that happens to
+equal `NULL` is preserved.
+
+Raw queries return numbers, temporal values, and semi-structured values as strings. Temporal text
+follows the Snowflake session's output format parameters, which by default drop fractional seconds
+beyond milliseconds for timestamps and drop them entirely for TIME. Cast or use `TO_VARCHAR`
+explicitly when the exact form matters.
