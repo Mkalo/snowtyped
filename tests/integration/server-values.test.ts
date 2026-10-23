@@ -111,10 +111,20 @@ describe('server defaults, identity, and virtual columns against Snowflake', () 
         { name: 'both', status: 'done', note: 'kept', payload: null, doubled: expect.any(BigInt) },
       ]),
     );
-    const ids = (await db.execute(select(items, { id: items.columns.id }))).rows.map(
-      (row) => row.id,
-    );
-    expect(new Set(ids).size).toBe(5);
+    const ids = (
+      await db.execute(
+        select(items, { id: items.columns.id, name: items.columns.name }).orderBy(
+          asc(items.columns.id),
+        ),
+      )
+    ).rows;
+    expect(ids).toEqual([
+      { id: 10n, name: 'omitted' },
+      { id: 15n, name: 'explicit' },
+      { id: 20n, name: 'json' },
+      { id: 40n, name: 'status' },
+      { id: 60n, name: 'both' },
+    ]);
     expect(() =>
       insert(items, [
         { name: 'bad', status: 'x' },
