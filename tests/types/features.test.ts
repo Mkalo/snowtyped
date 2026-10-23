@@ -1,4 +1,5 @@
 import { expectTypeOf } from 'vitest';
+import * as z from 'zod';
 import {
   alias,
   count,
@@ -92,3 +93,7 @@ insert(users, { id: 1n, name: 'Ada', data: {}, missing: true });
 update(users, { missing: true });
 // @ts-expect-error Update expressions must refer to the mutation's table.
 update(users, { id: other.columns.id });
+const tagged = snowflakeTable('TAGGED', {
+  tag: variant('TAG', z.enum(['a', 'b'])).notNull(),
+});
+select(tagged).where(eq(tagged.columns.tag, 'a'));

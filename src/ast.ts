@@ -81,6 +81,23 @@ export interface CastNode {
     | 'TIMESTAMP_LTZ'
     | 'TIMESTAMP_TZ';
 }
+/** Navigation inside MATCH_RECOGNIZE; Snowflake requires constant offsets. */
+export interface NavigationNode {
+  readonly kind: 'navigation';
+  readonly name: 'PREV' | 'NEXT' | 'FIRST' | 'LAST' | 'LAG' | 'LEAD';
+  readonly value: ExpressionNode;
+  readonly offset?: number;
+  readonly default?: ExpressionNode;
+}
+export interface SemanticsNode {
+  readonly kind: 'semantics';
+  readonly mode: 'RUNNING' | 'FINAL';
+  readonly value: ExpressionNode;
+}
+export interface StarNode {
+  readonly kind: 'star';
+  readonly qualifier?: IdentifierNode;
+}
 export type ExpressionNode =
   | IdentifierNode
   | ReferenceNode
@@ -92,7 +109,10 @@ export type ExpressionNode =
   | InNode
   | WindowNode
   | JsonPathNode
-  | CastNode;
+  | CastNode
+  | NavigationNode
+  | SemanticsNode
+  | StarNode;
 export interface EqualityNode {
   readonly kind: 'equality';
   readonly column: IdentifierNode;
@@ -133,7 +153,44 @@ export interface CteNode {
   readonly name: IdentifierNode;
   readonly query: SelectNode;
 }
-export type RelationNode = IdentifierNode | TableNode | DerivedNode | FlattenNode | CteNode;
+export type PatternNode =
+  | { readonly kind: 'variable'; readonly name: string }
+  | { readonly kind: 'anchor'; readonly position: 'start' | 'end' }
+  | { readonly kind: 'sequence'; readonly items: readonly PatternNode[] }
+  | { readonly kind: 'alternation'; readonly items: readonly PatternNode[] }
+  | { readonly kind: 'permute'; readonly items: readonly PatternNode[] }
+  | { readonly kind: 'exclusion'; readonly pattern: PatternNode }
+  | {
+      readonly kind: 'quantifier';
+      readonly pattern: PatternNode;
+      readonly min: number;
+      readonly max?: number;
+      readonly reluctant: boolean;
+    };
+export interface MatchRecognizeNode {
+  readonly kind: 'match-recognize';
+  readonly source: SelectNode;
+  readonly partitionBy: readonly ExpressionNode[];
+  readonly orderBy: readonly OrderNode[];
+  readonly measures: readonly { readonly value: ExpressionNode; readonly alias: IdentifierNode }[];
+  readonly rowsPerMatch: 'one' | 'all' | 'all-omit-empty' | 'all-with-unmatched';
+  readonly afterMatch?:
+    | { readonly kind: 'past-last-row' | 'to-next-row' }
+    | { readonly kind: 'to-first' | 'to-last'; readonly variable: string };
+  readonly pattern: PatternNode;
+  /** Variable names are emitted uppercase because PATTERN folds even quoted names. */
+  readonly define: readonly { readonly variable: string; readonly predicate: ExpressionNode }[];
+  readonly alias: IdentifierNode;
+  /** Every output column; without it, quoted partition names come back with their quotes. */
+  readonly columns: readonly IdentifierNode[];
+}
+export type RelationNode =
+  | IdentifierNode
+  | TableNode
+  | DerivedNode
+  | FlattenNode
+  | CteNode
+  | MatchRecognizeNode;
 export interface JoinNode {
   readonly kind: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL' | 'CROSS' | 'ASOF' | 'LATERAL';
   readonly source: RelationNode;
@@ -261,6 +318,17 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         );
       case 'cast':
         return `CAST(${expression(node.value, qualify)} AS ${node.target})`;
+      case 'navigation': {
+        if (node.offset !== undefined && (!Number.isSafeInteger(node.offset) || node.offset < 0))
+          throw new TypeError('Navigation offsets must be nonnegative safe integers.');
+        const value = expression(node.value, qualify);
+        const offset = node.offset ?? (node.default ? 1 : undefined);
+        return `${node.name}(${value}${offset === undefined ? '' : `, ${offset}`}${node.default ? `, ${expression(node.default, qualify)}` : ''})`;
+      }
+      case 'semantics':
+        return `${node.mode} ${expression(node.value, qualify)}`;
+      case 'star':
+        return node.qualifier ? `${quoteIdentifier(node.qualifier)}.*` : '*';
       default:
         throw new TypeError('Unsupported expression AST node.');
     }
@@ -278,11 +346,82 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         return `(${selectStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
       case 'cte':
         return quoteIdentifier(node.name);
+      case 'match-recognize':
+        return matchRecognize(node);
       case 'flatten':
         return `FLATTEN(INPUT => ${expression(node.input, true)}, PATH => ${parameter(node.path)}, OUTER => ${node.outer ? 'TRUE' : 'FALSE'}, RECURSIVE => ${node.recursive ? 'TRUE' : 'FALSE'}, MODE => '${node.mode}') AS ${quoteIdentifier(node.alias)}`;
       default:
         throw new TypeError('Unsupported relation AST node.');
     }
+  }
+  function pattern(node: PatternNode): string {
+    switch (node.kind) {
+      case 'variable':
+        return quoteIdentifier(identifier(node.name.toUpperCase()));
+      case 'anchor':
+        return node.position === 'start' ? '^' : '$';
+      case 'sequence':
+        return node.items.map(pattern).join(' ');
+      case 'alternation':
+        return `(${node.items.map(pattern).join(' | ')})`;
+      case 'permute':
+        return `PERMUTE(${node.items.map(pattern).join(', ')})`;
+      case 'exclusion':
+        return `{- ${pattern(node.pattern)} -}`;
+      case 'quantifier': {
+        const { min, max, reluctant } = node;
+        let suffix: string;
+        if (max === undefined) suffix = min === 0 ? '*' : min === 1 ? '+' : `{${min},}`;
+        else if (min === max) suffix = `{${min}}`;
+        else suffix = min === 0 && max === 1 ? '?' : `{${min},${max}}`;
+        // Snowflake rejects a reluctant {n} and {n,} for n > 1; {n} is exact either way.
+        if (reluctant && max === undefined && min > 1)
+          throw new TypeError('Reluctant quantifiers need an upper bound beyond one or more.');
+        const inner = pattern(node.pattern);
+        return `${node.pattern.kind === 'variable' || node.pattern.kind === 'alternation' || node.pattern.kind === 'permute' ? inner : `(${inner})`}${suffix}${reluctant && min !== max ? '?' : ''}`;
+      }
+      default:
+        throw new TypeError('Unsupported pattern AST node.');
+    }
+  }
+  function matchRecognize(node: MatchRecognizeNode): string {
+    const rows = {
+      one: 'ONE ROW PER MATCH',
+      all: 'ALL ROWS PER MATCH SHOW EMPTY MATCHES',
+      'all-omit-empty': 'ALL ROWS PER MATCH OMIT EMPTY MATCHES',
+      'all-with-unmatched': 'ALL ROWS PER MATCH WITH UNMATCHED ROWS',
+    }[node.rowsPerMatch];
+    if (!rows) throw new TypeError('Unsupported rows-per-match mode.');
+    const parts = [`(${selectStatement(node.source)}) MATCH_RECOGNIZE (`];
+    const clauses: string[] = [];
+    if (node.partitionBy.length)
+      clauses.push(`PARTITION BY ${node.partitionBy.map((value) => expression(value)).join(', ')}`);
+    if (node.orderBy.length)
+      clauses.push(`ORDER BY ${node.orderBy.map((value) => order(value, false)).join(', ')}`);
+    if (node.measures.length)
+      clauses.push(
+        `MEASURES ${node.measures.map(({ value, alias }) => `${expression(value)} AS ${quoteIdentifier(alias)}`).join(', ')}`,
+      );
+    clauses.push(rows);
+    const skip = node.afterMatch;
+    if (skip)
+      clauses.push(
+        `AFTER MATCH SKIP ${
+          'variable' in skip
+            ? // SKIP TO keeps quotes as part of the name, so the target is emitted unquoted.
+              `TO ${skip.kind === 'to-first' ? 'FIRST' : 'LAST'} ${skip.variable.toUpperCase()}`
+            : skip.kind === 'past-last-row'
+              ? 'PAST LAST ROW'
+              : 'TO NEXT ROW'
+        }`,
+      );
+    clauses.push(`PATTERN (${pattern(node.pattern)})`);
+    if (!node.define.length) throw new TypeError('MATCH_RECOGNIZE requires a DEFINE entry.');
+    clauses.push(
+      `DEFINE ${node.define.map(({ variable, predicate }) => `${quoteIdentifier(identifier(variable.toUpperCase()))} AS ${expression(predicate)}`).join(', ')}`,
+    );
+    parts.push(clauses.join(' '));
+    return `${parts.join('')}) AS ${quoteIdentifier(node.alias)} (${node.columns.map(quoteIdentifier).join(', ')})`;
   }
   function wire(value: string, type?: WireType): string {
     if (!type) return value;
