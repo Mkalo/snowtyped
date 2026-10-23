@@ -26,6 +26,7 @@ import {
   desc,
   div,
   eq,
+  exists,
   float,
   geography,
   geometry,
@@ -33,6 +34,7 @@ import {
   gte,
   ilike,
   inArray,
+  inSubquery,
   insertFrom,
   integer,
   isNull,
@@ -58,6 +60,7 @@ import {
   recursiveCte,
   rowNumber,
   rowPattern,
+  scalar,
   select,
   snowflakeTable,
   sum,
@@ -649,5 +652,47 @@ describe('expression helpers', () => {
         measures: ({ count }) => ({ n: count() }),
       }),
     ).toThrow('PARTITION BY does not accept GEOGRAPHY expressions.');
+  });
+
+  it('keep SQL types through subqueries', () => {
+    const latest = scalar(select(t, { day: max(c.day) }));
+    expect(latest.dataType).toBe('date');
+    expect(lt(latest, c.tz).dataType).toBe('boolean');
+    expect(exists(select(u)).dataType).toBe('boolean');
+    expect(inSubquery(c.id, select(u, { id: u.columns.id })).dataType).toBe('boolean');
+    expect(() => inSubquery(c.day, loose(select(u, { name: u.columns.name })))).toThrow(
+      'Cannot compare DATE with TEXT expressions.',
+    );
+    const places = snowflakeTable('PLACES', { place: geography('PLACE') });
+    expect(() =>
+      inSubquery(
+        loose(places.columns.place),
+        loose(select(places, { place: places.columns.place })),
+      ),
+    ).toThrow('IN does not accept GEOGRAPHY expressions.');
+  });
+
+  it('treat outer columns as constants when grouping a correlated subquery', () => {
+    const correlated = select(u, { id: u.columns.id })
+      .correlate(t)
+      .where(eq(u.columns.id, c.id))
+      .groupBy(u.columns.id)
+      .having(eq(c.name, 'a'));
+    expect(select(t).where(exists(correlated)).compile().sql).toContain('HAVING ("T"."NAME" = ?)');
+    const ungrouped = select(u, { name: u.columns.name }).correlate(t).groupBy(u.columns.id);
+    expect(() => exists(ungrouped)).toThrow('"U"."NAME" must appear in GROUP BY');
+    const counted = scalar(select(u, { n: count() }).correlate(t).where(eq(u.columns.id, c.id)));
+    expect(select(t, { id: c.id, n: counted }).groupBy(c.id).compile().sql).toContain('GROUP BY');
+    const ids = select(u, { id: u.columns.id });
+    expect(
+      select(t, { found: inSubquery(c.id, ids) })
+        .groupBy(c.id)
+        .compile().sql,
+    ).toContain('GROUP BY "ID"');
+    expect(() =>
+      select(t, { found: inSubquery(c.id, ids) })
+        .groupBy(c.name)
+        .compile(),
+    ).toThrow('must appear in GROUP BY');
   });
 });

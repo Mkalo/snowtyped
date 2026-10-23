@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import {
+  alias,
   array,
   asc,
   avg,
@@ -12,6 +13,7 @@ import {
   decimal,
   desc,
   eq,
+  exists,
   float,
   gt,
   gte,
@@ -22,11 +24,13 @@ import {
   lower,
   lt,
   matchRecognize,
+  max,
   object,
   over,
   pivot,
   rowNumber,
   rowPattern,
+  scalar,
   select,
   snowflakeTable,
   sql,
@@ -253,6 +257,20 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
       gt(dateAdd('hour', 1n, rising.columns.lastDay), rising.columns.lastDay),
     );
     expect((await db.execute(query)).rows).toEqual([{ lastDay: '2024-01-03' }]);
+  });
+
+  it('keeps SQL types through subqueries and groups correlated ones', async () => {
+    const other = alias(facts, 'OTHER');
+    const latest = scalar(select(other, { day: max(other.columns.day) }));
+    const before = select(facts, { id: c.id }).where(lt(c.at, latest)).orderBy(asc(c.id));
+    expect((await db.execute(before)).rows).toEqual([{ id: 1n }, { id: 2n }]);
+    const sameGroup = select(other, { grp: other.columns.grp })
+      .correlate(facts)
+      .where(eq(lower(other.columns.grp), lower(c.grp)))
+      .groupBy(other.columns.grp)
+      .having(gt(c.amount, '2'));
+    const query = select(facts, { id: c.id }).where(exists(sameGroup)).orderBy(asc(c.id));
+    expect((await db.execute(query)).rows).toEqual([{ id: 2n }, { id: 3n }]);
   });
 
   it('assigns across compatible SQL types', async () => {

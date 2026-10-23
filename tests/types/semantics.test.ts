@@ -21,11 +21,13 @@ import {
   decimal,
   div,
   eq,
+  exists,
   float,
   geography,
   geometry,
   gt,
   inArray,
+  inSubquery,
   insertFrom,
   integer,
   jsonPath,
@@ -45,6 +47,7 @@ import {
   recursiveCte,
   rowNumber,
   rowPattern,
+  scalar,
   select,
   snowflakeTable,
   sum,
@@ -308,3 +311,13 @@ matchRecognize(ticks, 'P', {
   pattern: rise,
   measures: ({ count }) => ({ n: count() }),
 });
+
+const latestDay = scalar(select(u, { day: max(u.columns.day) }));
+expectTypeOf(latestDay.dataType).toEqualTypeOf<'date'>();
+lt(latestDay, c.tz);
+select(t).where(and(exists(select(u)), c.active));
+inSubquery(c.id, select(u, { id: u.columns.id }));
+// @ts-expect-error Scalar subqueries keep their SQL type.
+eq(latestDay, c.name);
+// @ts-expect-error IN subqueries need a comparable SQL type.
+inSubquery(c.name, select(u, { day: u.columns.day }));

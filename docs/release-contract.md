@@ -19,9 +19,10 @@ this section.
   `timestamp`, `binary`, `variant`), and `.notNull()`.
 - Query construction: `select` and the `SelectQuery` methods documented in the
   README, `flatten`, `pivot`, `unpivot`, `dynamicPivot`, `matchRecognize` with
-  `rowPattern`, the expression, aggregate, window, and ordering helpers,
-  `insert`, `insertFrom`, `update`, `updateFrom`, `deleteFrom`, `deleteUsing`,
-  and `mergeInto` with its conditional branches.
+  `rowPattern`, the expression, aggregate, window, and ordering helpers, the
+  subquery helpers (`exists`, `notExists`, `scalar`, `inSubquery`), `insert`,
+  `insertFrom`, `update`, `updateFrom`, `deleteFrom`, `deleteUsing`, and
+  `mergeInto` with its conditional branches.
 - `.compile()` results (`CompiledQuery`, `BindValue`); the bound values and SQL
   semantics are stable, the exact SQL text is not.
 - Raw SQL: `sql`, `sql.identifier`, `sql.join`, `sql.json`, `sql.unsafe`,
@@ -155,7 +156,6 @@ comment on #1. Missing, pending, skipped, or cancelled runs do not count.
 
 Not required for `1.0.0`; each can ship later as a minor release unless it
 changes stable behavior:
-- Scalar, EXISTS, and correlated subqueries (#9)
 - Stronger SQL semantic validation (#11)
 - A public AST extension protocol (#13)
 - Nested selections and relation loading (#14)

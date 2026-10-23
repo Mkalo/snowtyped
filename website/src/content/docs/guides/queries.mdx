@@ -12,6 +12,7 @@ import grouping from '../../../snippets/grouping.ts?raw';
 import joins from '../../../snippets/joins.ts?raw';
 import recursiveCtes from '../../../snippets/recursive-ctes.ts?raw';
 import setOperations from '../../../snippets/set-operations.ts?raw';
+import subqueries from '../../../snippets/subqueries.ts?raw';
 
 `select(table)` selects every declared column. `select(table, projection)` or `.select(projection)`
 selects specific columns and expressions. Projection keys become the exact output aliases.
@@ -136,3 +137,23 @@ definition.
 Recursion ends only when the recursive branch returns no rows. An outer join that keeps `self` on
 its preserved side returns a row for every `self` row, so filter out unmatched rows (for example
 with `isNotNull`), or the query runs until the statement timeout.
+
+## Subqueries
+
+`exists`, `notExists`, `scalar`, and `inSubquery` embed a query as an expression. Call
+`.correlate(outer)` on the inner query to let it reference a source of the enclosing query. A
+correlated query cannot be executed, compiled, or turned into a derived table on its own, and
+references to sources that are neither local nor correlated are rejected statically and at runtime.
+
+<Snippet code={subqueries} />
+
+A scalar or `inSubquery` subquery projects exactly one column. Scalar results are always nullable,
+because an empty result reads as NULL; an uncorrelated scalar subquery returning several rows fails
+at execution. Snowflake only evaluates correlated scalar subqueries that are ungrouped aggregates,
+rejects LIMIT and OFFSET in correlated subqueries, and resolves correlations only against the
+immediately enclosing query. The builder rejects those forms before execution.
+
+A scalar subquery keeps its column's SQL type, `exists` and `inSubquery` are BOOLEAN, and the
+`inSubquery` operand needs an SQL type comparable with the projected column. In a grouped
+correlated subquery, columns of the enclosing query count as constants, so they don't need to be
+grouping keys.
