@@ -22,10 +22,13 @@ export {
   type NavigationNode,
   type OrderNode,
   type PatternNode,
+  type QueryNode,
   quoteIdentifier,
   type RelationNode,
   type SelectNode,
   type SemanticsNode,
+  type SetOperationNode,
+  type SetOperator,
   type SourceReference,
   type StarNode,
   type StatementNode,
@@ -138,7 +141,18 @@ export {
   update,
   updateFrom,
 } from './mutations.js';
-export { type SelectQuery, select } from './query.js';
+export {
+  type CompatibleOperand,
+  type IntersectRow,
+  type OperandRow,
+  type SelectQuery,
+  type SetColumns,
+  type SetOperand,
+  type SetQuery,
+  type SetScope,
+  select,
+  type UnionRow,
+} from './query.js';
 export {
   type AnyColumn,
   alias,

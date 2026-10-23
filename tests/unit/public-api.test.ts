@@ -20,21 +20,23 @@ const expected = {
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
-      `AfterMatch AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType CastValue
-      Column ColumnMap ColumnValue CompiledQuery DataType DatePart DefineContext Expression
-      FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
-      GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
-      InsertValues IntervalUnit IntrospectedColumn IntrospectedTable MatchRecognizeColumns
-      MatchRecognizeOptions MatchRowScope MatchVariableScope MeasureContext MergeQuery
-      MutationQuery Navigation OffsetWindowOptions OrderedWindowOptions Ordering Predicate
+      `AfterMatch AnyColumn AnyExpression BindValue BoundColumns CaseExpression CastType
+      CastValue Column ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType
+      DatePart DefineContext Expression FilteredMutation FlattenOptions FrameBoundary
+      FramedWindowOptions GeoJsonGeometry GeoPosition IdentityOptions InferColumn
+      InferExpression InferSelection InsertSource InsertValues IntersectRow IntervalUnit
+      IntrospectedColumn IntrospectedTable MatchRecognizeColumns MatchRecognizeOptions
+      MatchRowScope MatchVariableScope MeasureContext MergeQuery MutationQuery Navigation
+      OffsetWindowOptions OperandRow OrderedWindowOptions Ordering Predicate
       QuantifiablePattern QuantifierOptions RangeBoundary RawQuery RowPattern RowsPerMatch
-      SelectQuery Selection ServerValue ServerValueKind ServerValues SqlInterpolation SqlParameter
-      Table TableOptions UpdateValues WindowFrame`,
-      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
-      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MatchRecognizeNode
-      MergeBranchNode MergeNode NavigationNode OrderNode PatternNode RelationNode SelectNode
-      SemanticsNode SourceReference StarNode StatementNode TableNode TemporalNode UpdateNode
-      WindowFrameNode WireType`,
+      Selection SelectQuery ServerValue ServerValueKind ServerValues SetColumns SetOperand
+      SetOperator SetQuery SetScope SqlInterpolation SqlParameter Table TableOptions
+      UnionRow UpdateValues WindowFrame`,
+      `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode
+      ExpressionNode FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode
+      MatchRecognizeNode MergeBranchNode MergeNode NavigationNode OrderNode PatternNode
+      QueryNode RelationNode SelectNode SemanticsNode SetOperationNode SourceReference
+      StarNode StatementNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {
