@@ -11,8 +11,8 @@ the Cloudflare project and token.
 on main only, requires the tag to point at a commit on main whose `package.json`
 version matches the tag, runs `pnpm check` in `website/` at that commit, and
 deploys only if every step passes. The version badge, API reference, and source
-links therefore describe exactly the released package. **Release package →
-finalize** calls it with `v<version>` after the Git tag exists; nothing deploys
+links therefore describe exactly the released package. **Release package**
+calls it with `v<version>` after the Git tag exists; nothing deploys
 from ordinary pushes to main.
 
 To restore an earlier site, or to deploy after a failed run, dispatch **Deploy
