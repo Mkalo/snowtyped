@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noUnusedLocals": false,
+    "paths": {
+      "snowtyped": ["../src/index.ts"],
+      "snowtyped/snowflake": ["../src/snowflake/index.ts"]
+    }
+  },
+  "include": ["src/snippets"]
+}

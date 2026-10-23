@@ -9,11 +9,22 @@
       "!pnpm-lock.yaml",
       "!.changeset/**/*.md",
       "!.secrets",
-      "!.snowflake"
+      "!.snowflake",
+      "!website/dist",
+      "!website/.astro",
+      "!website/src/content/docs/api"
     ]
   },
   "formatter": { "indentStyle": "space", "lineWidth": 100 },
   "javascript": { "formatter": { "quoteStyle": "single" } },
   "linter": { "rules": { "preset": "recommended" } },
+  "overrides": [
+    {
+      "includes": ["website/**/*.astro", "website/src/snippets/**"],
+      "linter": {
+        "rules": { "correctness": { "noUnusedImports": "off", "noUnusedVariables": "off" } }
+      }
+    }
+  ],
   "assist": { "actions": { "source": { "organizeImports": "on" } } }
 }
