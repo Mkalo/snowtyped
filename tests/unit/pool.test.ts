@@ -105,4 +105,48 @@ describe('SDK-backed pool leases', () => {
     expect(failed.release).toHaveBeenCalledTimes(2);
     await other.close();
   });
+
+  it('applies raw query options on a lease and releases only after cancellation completes', async () => {
+    const driver = fakePool();
+    const db = await createPool({});
+    const controller = new AbortController();
+    expect(
+      await db.queryRaw<{ ID: string }[]>(sql`SELECT 1`, {
+        signal: controller.signal,
+        timeoutMs: 1000,
+      }),
+    ).toEqual([{ ID: '1' }]);
+    expect(driver.release).toHaveBeenCalledOnce();
+    const reason = new Error('stop');
+    controller.abort(reason);
+    await expect(db.queryRaw(sql`SELECT 1`, { signal: controller.signal })).rejects.toBe(reason);
+    expect(driver.release).toHaveBeenCalledTimes(2);
+    let cancelled: ((error?: SnowflakeError) => void) | undefined;
+    let complete: StatementOption['complete'];
+    const statement = {
+      cancel: vi.fn((callback?: (error?: SnowflakeError) => void) => {
+        cancelled = callback;
+      }),
+    } as unknown as RowStatement;
+    const connection = await driver.acquire();
+    connection.execute.mockImplementation((options: StatementOption) => {
+      complete = options.complete;
+      return statement;
+    });
+    const pending = db.queryRaw(sql`SELECT SYSTEM$WAIT(10)`, { timeoutMs: 1 });
+    await vi.waitFor(() => expect(statement.cancel).toHaveBeenCalledOnce());
+    complete?.(undefined, statement, []);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(driver.release).toHaveBeenCalledTimes(2);
+    cancelled?.();
+    await expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(driver.release).toHaveBeenCalledTimes(3);
+    const failing = db.queryRaw(sql`SELECT SYSTEM$WAIT(10)`, { timeoutMs: 1 });
+    await vi.waitFor(() => expect(statement.cancel).toHaveBeenCalledTimes(2));
+    cancelled?.(new Error('cancel failed') as SnowflakeError);
+    await expect(failing).rejects.toBeInstanceOf(AggregateError);
+    expect(driver.release).toHaveBeenCalledTimes(4);
+    await db.close();
+    await expect(db.queryRaw(sql`SELECT 1`, { timeoutMs: 1000 })).rejects.toThrow('closed');
+  });
 });

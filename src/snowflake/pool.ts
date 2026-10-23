@@ -48,12 +48,12 @@ export async function createPool(
       ),
     queryRaw<T = unknown>(
       input: TemplateStringsArray | RawQuery<T>,
-      ...values: SqlInterpolation[]
+      ...values: SqlInterpolation[] | [ExecuteOptions?]
     ) {
       return use((client) =>
         isRawQuery(input)
-          ? client.queryRaw<T>(input as RawQuery<T>)
-          : client.queryRaw<T>(input, ...values),
+          ? client.queryRaw<T>(input as RawQuery<T>, values[0] as ExecuteOptions | undefined)
+          : client.queryRaw<T>(input, ...(values as SqlInterpolation[])),
       );
     },
     async *stream(query: SelectQuery<Selection, string, string>, executeOptions?: ExecuteOptions) {
