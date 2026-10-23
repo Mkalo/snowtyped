@@ -131,6 +131,19 @@ const prices = select(trades)
 
 `over(aggregate, options)` supports aggregate windows. An explicit `frame` (`rowsBetween(start, end)` or `rangeBetween(start, end)`) requires ORDER BY and an aggregate; ranking functions such as `rowNumber` reject frames. `rank` and `denseRank` take the same options with a required `orderBy`. `lag(value, options)` and `lead` also accept `offset` and a `default` in the value's domain; they are nullable unless both the value and the default are non-null. Boundaries are `'UNBOUNDED PRECEDING'`, `'CURRENT ROW'`, `'UNBOUNDED FOLLOWING'`, `{ preceding: n }`, or `{ following: n }`, and the start cannot follow the end. ROWS offsets are nonnegative integers. RANGE offsets need exactly one ORDER BY expression: numeric offsets for a numeric or date key, or `{ preceding: n, unit: 'DAY' }` intervals for a date or timestamp key. Empty frames yield NULL aggregates and zero counts. Snowflake's frame-size limits remain database-enforced. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
+```ts
+const quarterly = pivot(sales, 'quarterly', {
+  aggregate: 'sum',
+  value: 'amount',
+  for: 'quarter',
+  in: { q1: 'Q1', q2: 'Q2' },
+  default: '0',
+});
+const monthly = unpivot(budget, 'monthly', { value: 'amount', for: 'month', in: ['jan', 'feb'] });
+```
+
+`pivot` groups by every other source column; narrow the source with `.as()` first. Pivoted columns are nullable unless `aggregate` is `count` or a `default` is given, and `in` values are rendered as escaped literals because Snowflake does not accept binds there. `unpivot` requires same-typed columns (Snowflake also rejects differing NUMBER scale or timestamp precision), types `for` as the union of their keys, and drops nulls unless `includeNulls` is set. `dynamicPivot` compiles `IN (ANY)` to a raw query with `unknown` rows, since its columns are only known at execution.
+
 ### MATCH_RECOGNIZE
 
 ```ts
@@ -246,7 +259,7 @@ Await running operations and close cursors before starting a transaction on a si
 
 ## Scope and distribution
 
-The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. PIVOT/UNPIVOT, recursive CTEs, complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. Complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 

@@ -212,6 +212,8 @@ export interface CteNode {
   readonly kind: 'cte';
   readonly name: IdentifierNode;
   readonly query: QueryNode;
+  /** Present on recursive definitions; the recursive branch reads the CTE through it. */
+  readonly self?: SelfReferenceNode;
 }
 export type PatternNode =
   | { readonly kind: 'variable'; readonly name: string }
@@ -244,13 +246,47 @@ export interface MatchRecognizeNode {
   /** Every output column; without it, quoted partition names come back with their quotes. */
   readonly columns: readonly IdentifierNode[];
 }
+export type PivotLiteral = string | number | boolean;
+export interface PivotNode {
+  readonly kind: 'pivot';
+  readonly source: SelectNode;
+  readonly aggregate: 'SUM' | 'MIN' | 'MAX' | 'COUNT';
+  readonly value: IdentifierNode;
+  readonly for: IdentifierNode;
+  /** Snowflake names pivot columns from literal SQL text, so values cannot be bound. */
+  readonly values:
+    | readonly PivotLiteral[]
+    | { readonly kind: 'any'; readonly direction?: 'ASC' | 'DESC' };
+  readonly default?: ExpressionNode;
+  readonly alias: IdentifierNode;
+  /** Every output column; without it, explicit IN lists mangle quoted grouping names. */
+  readonly columns?: readonly IdentifierNode[];
+}
+export interface UnpivotNode {
+  readonly kind: 'unpivot';
+  readonly source: SelectNode;
+  readonly value: IdentifierNode;
+  readonly name: IdentifierNode;
+  readonly columns: readonly IdentifierNode[];
+  readonly includeNulls: boolean;
+  readonly alias: IdentifierNode;
+}
+/** Valid only while compiling the recursive branch of the CTE that owns it. */
+export interface SelfReferenceNode {
+  readonly kind: 'self-reference';
+  readonly name: IdentifierNode;
+  readonly columns: readonly string[];
+}
 export type RelationNode =
   | IdentifierNode
   | TableNode
   | DerivedNode
   | FlattenNode
   | CteNode
-  | MatchRecognizeNode;
+  | MatchRecognizeNode
+  | PivotNode
+  | UnpivotNode
+  | SelfReferenceNode;
 export interface JoinNode {
   readonly kind: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL' | 'CROSS' | 'ASOF' | 'LATERAL';
   readonly source: RelationNode;
@@ -374,6 +410,7 @@ export function quoteIdentifier(node: IdentifierNode): string {
 /** A new context per statement prevents binds leaking across reusable queries. */
 export function compileAst(statement: StatementNode): CompiledQuery {
   const binds: BindValue[] = [];
+  const active = new Set<SelfReferenceNode>();
   function parameter(value: BindValue): string {
     binds.push(value);
     return '?';
@@ -454,6 +491,22 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (node.offset === undefined) return node.bound;
     return `${node.unit ? `INTERVAL '${node.offset} ${node.unit}'` : node.offset} ${node.bound}`;
   }
+  function literal(value: PivotLiteral): string {
+    if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) throw new TypeError('PIVOT values must be finite numbers.');
+      return String(value);
+    }
+    if (value.includes('\0')) throw new TypeError('PIVOT values cannot contain NUL.');
+    return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "''")}'`;
+  }
+  function pivotValues(node: PivotNode): string {
+    if ('kind' in node.values) {
+      const { direction } = node.values;
+      return `ANY${direction ? ` ORDER BY ${quoteIdentifier(node.for)} ${direction}` : ''}`;
+    }
+    return node.values.map(literal).join(', ');
+  }
   function source(node: RelationNode): string {
     switch (node.kind) {
       case 'identifier':
@@ -466,6 +519,17 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         return quoteIdentifier(node.name);
       case 'match-recognize':
         return matchRecognize(node);
+      case 'pivot': {
+        if (!['SUM', 'MIN', 'MAX', 'COUNT'].includes(node.aggregate))
+          throw new TypeError('Unsupported PIVOT aggregate.');
+        return `(${selectStatement(node.source)}) PIVOT (${node.aggregate}(${quoteIdentifier(node.value)}) FOR ${quoteIdentifier(node.for)} IN (${pivotValues(node)})${node.default ? ` DEFAULT ON NULL (${expression(node.default)})` : ''}) AS ${quoteIdentifier(node.alias)}${node.columns ? ` (${node.columns.map(quoteIdentifier).join(', ')})` : ''}`;
+      }
+      case 'unpivot':
+        return `(${selectStatement(node.source)}) UNPIVOT${node.includeNulls ? ' INCLUDE NULLS' : ''} (${quoteIdentifier(node.value)} FOR ${quoteIdentifier(node.name)} IN (${node.columns.map(quoteIdentifier).join(', ')})) AS ${quoteIdentifier(node.alias)}`;
+      case 'self-reference':
+        if (!active.has(node))
+          throw new TypeError('A recursive CTE reference is only valid in its recursive branch.');
+        return quoteIdentifier(node.name);
       case 'flatten':
         return `FLATTEN(INPUT => ${expression(node.input, true)}, PATH => ${parameter(node.path)}, OUTER => ${node.outer ? 'TRUE' : 'FALSE'}, RECURSIVE => ${node.recursive ? 'TRUE' : 'FALSE'}, MODE => '${node.mode}') AS ${quoteIdentifier(node.alias)}`;
       default:
@@ -562,10 +626,27 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     const format = formats[type];
     return `TO_VARCHAR(${value}${format ? `, '${format}'` : ''})`;
   }
+  function definition(cte: CteNode): string {
+    if (!cte.self) return `${quoteIdentifier(cte.name)} AS (${queryStatement(cte.query)})`;
+    const { with: _, ...query } = cte.query;
+    active.add(cte.self);
+    const body = queryStatement(query as QueryNode);
+    active.delete(cte.self);
+    return `${quoteIdentifier(cte.name)} (${cte.self.columns.map((column) => quoteIdentifier(identifier(column))).join(', ')}) AS (${body})`;
+  }
   function withClause(ctes: readonly CteNode[] | undefined): string {
-    return ctes?.length
-      ? `WITH ${ctes.map((cte) => `${quoteIdentifier(cte.name)} AS (${queryStatement(cte.query)})`).join(', ')} `
-      : '';
+    if (!ctes?.length) return '';
+    const ordered: CteNode[] = [];
+    // Snowflake cannot see a WITH nested in a recursive definition, so its CTEs precede it.
+    const add = (cte: CteNode) => {
+      if (ordered.includes(cte)) return;
+      if (cte.self) cte.query.with?.forEach(add);
+      if (ordered.some((item) => quoteIdentifier(item.name) === quoteIdentifier(cte.name)))
+        throw new TypeError('One WITH clause cannot define different CTEs with the same name.');
+      ordered.push(cte);
+    };
+    ctes.forEach(add);
+    return `WITH ${ordered.some((cte) => cte.self) ? 'RECURSIVE ' : ''}${ordered.map(definition).join(', ')} `;
   }
   function queryStatement(node: QueryNode, wireOutput = false): string {
     return node.kind === 'select'
@@ -624,7 +705,15 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     const qualified =
       Boolean(node.joins?.length) || node.from.kind === 'derived' || node.from.kind === 'cte';
     let text = withClause(node.with);
-    text += `SELECT ${node.distinct ? 'DISTINCT ' : ''}${node.projections.map(({ column, alias, wireType }) => `${wire(expression(column, qualified), wireOutput ? wireType : undefined)} AS ${quoteIdentifier(identifier(alias))}`).join(', ')} FROM ${source(node.from)}`;
+    const projected = node.projections.length
+      ? node.projections
+          .map(
+            ({ column, alias, wireType }) =>
+              `${wire(expression(column, qualified), wireOutput ? wireType : undefined)} AS ${quoteIdentifier(identifier(alias))}`,
+          )
+          .join(', ')
+      : '*';
+    text += `SELECT ${node.distinct ? 'DISTINCT ' : ''}${projected} FROM ${source(node.from)}`;
     for (const join of node.joins ?? []) {
       text +=
         join.kind === 'LATERAL'
@@ -652,11 +741,19 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;
   }
-  // DML has no WITH clause of its own, so a CTE source is inlined as a derived query.
+  // DML has no WITH clause of its own, so a CTE source is inlined as a derived query. A
+  // recursive CTE cannot be inlined, so the derived query keeps its WITH RECURSIVE.
   function mutationSource(node: RelationNode): string {
-    return source(
-      node.kind === 'cte' ? { kind: 'derived', query: node.query, alias: node.name } : node,
-    );
+    if (node.kind !== 'cte') return source(node);
+    const query: QueryNode = node.self
+      ? {
+          kind: 'select',
+          from: node,
+          projections: node.self.columns.map((alias) => ({ column: identifier(alias), alias })),
+          with: [node],
+        }
+      : node.query;
+    return source({ kind: 'derived', query, alias: node.name });
   }
   function assignments(values: readonly AssignmentNode[], qualified: boolean): string {
     return values

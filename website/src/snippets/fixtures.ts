@@ -28,6 +28,11 @@ export const target = snowflakeTable('CUSTOMERS', {
   id: integer('ID').notNull(),
   name: text('NAME').notNull(),
 });
+export const employees = snowflakeTable('EMPLOYEES', {
+  id: integer('ID').notNull(),
+  managerId: integer('MANAGER_ID'),
+  name: text('NAME').notNull(),
+});
 export const staged = snowflakeTable('STAGED_CUSTOMERS', {
   id: integer('ID').notNull(),
   name: text('NAME').notNull(),
@@ -36,4 +41,14 @@ export const stocks = snowflakeTable('STOCKS', {
   company: text('COMPANY').notNull(),
   day: integer('DAY').notNull(),
   price: decimal('PRICE').notNull(),
+});
+export const sales = snowflakeTable('SALES', {
+  region: text('REGION'),
+  quarter: text('QUARTER').notNull(),
+  amount: decimal('AMOUNT'),
+});
+export const budgets = snowflakeTable('BUDGETS', {
+  id: integer('ID').notNull(),
+  jan: decimal('JAN').notNull(),
+  feb: decimal('FEB'),
 });
