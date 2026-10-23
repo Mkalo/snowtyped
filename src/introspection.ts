@@ -45,7 +45,7 @@ const shownColumns = () =>
   z.compile(z.array(z.object({ column_name: z.string(), data_type: z.string() })));
 const structureMetadata = () =>
   z.compile(z.looseObject({ type: z.string(), nullable: z.boolean() }));
-const structuredAlias = /^(?:ARRAY|OBJECT|MAP)\(/i;
+const containerType = /^(?:ARRAY|OBJECT|MAP)\b/i;
 
 export async function introspect(
   client: Pick<SnowflakeClient, 'queryRaw'>,
@@ -87,7 +87,8 @@ export async function introspect(
     );
   }
   for (const table of tables.values()) {
-    if (!table.columns.some((column) => structuredAlias.test(column.dataType))) continue;
+    // Views report no DATA_TYPE_ALIAS, so structured-ness comes from the SHOW COLUMNS type.
+    if (!table.columns.some((column) => containerType.test(column.dataType))) continue;
     const shown = shownColumns().parse(
       await client.queryRaw(
         sql`SHOW COLUMNS IN TABLE ${sql.identifier(table.database, table.schema, table.name)}`,
@@ -95,11 +96,10 @@ export async function introspect(
     );
     table.columns = table.columns.map((column) => {
       const match = shown.find((entry) => entry.column_name === column.name);
-      return structuredAlias.test(column.dataType) && match
-        ? Object.freeze({
-            ...column,
-            structure: structureMetadata().parse(JSON.parse(match.data_type)) as StructureMetadata,
-          })
+      if (!containerType.test(column.dataType) || !match) return column;
+      const structure = structureMetadata().parse(JSON.parse(match.data_type)) as StructureMetadata;
+      return 'elementType' in structure || 'fields' in structure || 'keyType' in structure
+        ? Object.freeze({ ...column, structure })
         : column;
     });
   }
@@ -139,7 +139,10 @@ function structureDeclaration(type: StructureMetadata, key = false): string {
       const fields = z
         .array(z.object({ fieldName: z.string(), fieldType: z.unknown() }))
         .parse(type.fields);
-      declaration = `structuredType.object({ ${fields.map((field) => `${JSON.stringify(field.fieldName)}: ${nested(field.fieldType)}`).join(', ')} })`;
+      const entries = fields.map(
+        (field) => `${JSON.stringify(field.fieldName)}: ${nested(field.fieldType)}`,
+      );
+      declaration = `structuredType.object(${entries.length ? `{ ${entries.join(', ')} }` : '{}'})`;
       break;
     }
     case 'MAP':
@@ -157,7 +160,12 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
     const columns = table.columns.map((column) => {
       let factoryName: string;
       const args = [JSON.stringify(column.name)];
-      switch (column.dataType.toUpperCase()) {
+      switch (column.structure ? 'STRUCTURED' : column.dataType.toUpperCase()) {
+        case 'STRUCTURED':
+          factoryName = 'structured';
+          imports.add('structuredType');
+          args.push(structureDeclaration(column.structure as StructureMetadata, true));
+          break;
         case 'NUMBER':
         case 'FIXED':
         case 'DECIMAL':
@@ -219,12 +227,6 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
           factoryName = 'geometry';
           break;
         default: {
-          if (column.structure) {
-            factoryName = 'structured';
-            imports.add('structuredType');
-            args.push(structureDeclaration(column.structure, true));
-            break;
-          }
           const vector = /^VECTOR\((INT|FLOAT), (\d+)\)$/i.exec(column.dataType);
           if (!vector)
             throw new TypeError(

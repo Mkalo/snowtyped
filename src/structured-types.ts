@@ -55,9 +55,16 @@ export function decimal(
     precision: options.precision ?? 38,
     scale: options.scale ?? 0,
   }).notNull();
+  const scale = column.constraints.scale as number;
   return structuredType(
-    `NUMBER(${column.constraints.precision},${column.constraints.scale})`,
-    number().pipe(column.readSchema as z.ZodType<string, string>),
+    `NUMBER(${column.constraints.precision},${scale})`,
+    // TO_JSON drops trailing zeros; pad to the declared scale like top-level decimal() reads.
+    number()
+      .pipe(column.readSchema as z.ZodType<string, string>)
+      .transform((value) => {
+        const [whole, fraction = ''] = value.split('.');
+        return scale ? `${whole}.${fraction.padEnd(scale, '0')}` : value;
+      }),
     writeSchema(column),
     (value) => value.replace(/^(-?)0+(?=\d)/, '$1'),
     false,
@@ -111,6 +118,8 @@ export function map<K extends MapKey, V extends AnyStructuredType>(
 ): StructuredType<Map<NonNullable<InferStructured<K>>, InferStructured<V>>> {
   type T = Map<NonNullable<InferStructured<K>>, InferStructured<V>>;
   const keys = key.notNull() as StructuredType<unknown, true>;
+  if (/^NUMBER\(\d+,(?!0\))/.test(keys.sql))
+    throw new TypeError('MAP keys must be VARCHAR or NUMBER with scale 0.');
   const decodeKey = keys.sql.startsWith('NUMBER')
     ? z
         .string()

@@ -526,6 +526,7 @@ describe('complete query and execution paths against Snowflake', () => {
           prices: new Map([
             ['abc', '99999999.99'],
             ['b', null],
+            ['c', '1.50'],
           ]),
           nested: [{ k: new Map([[-2n, ['x', null]]]) }, null],
         },
@@ -552,6 +553,7 @@ describe('complete query and execution paths against Snowflake', () => {
         prices: new Map([
           ['abc', '99999999.99'],
           ['b', null],
+          ['c', '1.50'],
         ]),
         nested: [{ k: new Map([[-2n, ['x', null]]]) }, null],
       },
@@ -586,8 +588,20 @@ describe('complete query and execution paths against Snowflake', () => {
     );
     await expect(db.execute(select(narrower))).rejects.toThrow();
 
+    const view = snowflakeTable('SHAPED_VIEW', shaped.columns, namespace);
+    await db.queryRaw(sql`CREATE VIEW ${name(view)} AS SELECT * FROM ${name(shaped)}`);
+    expect(
+      (
+        await db.execute(
+          select(view, { prices: view.columns.prices }).where(eq(view.columns.id, 1n)),
+        )
+      ).rows,
+    ).toEqual([{ prices: rows[0]?.prices }]);
     const tables = await introspect(db, namespace);
-    const code = generateSchema(tables.filter((table) => table.name === 'SHAPED'));
+    const code = generateSchema(
+      tables.filter((table) => table.name === 'SHAPED' || table.name === 'SHAPED_VIEW'),
+    );
+    expect(code.split('structuredType.object({ "city"').length).toBe(3);
     for (const declaration of [
       '"SCORES": structured("SCORES", structuredType.array(structuredType.integer())).notNull()',
       '"ADDRESS": structured("ADDRESS", structuredType.object({ "city": structuredType.text(), "Zip Code": structuredType.integer({ precision: 5 }), "CamelCase": structuredType.boolean() }))',

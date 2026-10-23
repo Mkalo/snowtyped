@@ -58,10 +58,13 @@ describe('structured ARRAY, OBJECT, and MAP columns', () => {
       address.readSchema.parse('{"Zip \\"Code\\"":null,"city":"undefined","ok":true}'),
     ).toEqual({ city: 'undefined', 'Zip "Code"': null, ok: true });
     expect(address.readSchema.parse(null)).toBeNull();
-    expect(prices.readSchema.parse('{"abc":12345678.91,"b":null}')).toEqual(
+    expect(prices.readSchema.parse('{"abc":12345678.91,"b":null,"c":1.5,"d":-0.1,"e":7}')).toEqual(
       new Map([
         ['abc', '12345678.91'],
         ['b', null],
+        ['c', '1.50'],
+        ['d', '-0.10'],
+        ['e', '7.00'],
       ]),
     );
     expect(tags.readSchema.parse('{"-2":["x"],"99999999999999999999":[]}')).toEqual(
@@ -148,6 +151,10 @@ describe('structured ARRAY, OBJECT, and MAP columns', () => {
     const column = structured('N', nested).notNull();
     expect(column.readSchema.parse(json)).toEqual(value);
     expect(t.object({}).sql).toBe('OBJECT()');
+    expect(() => t.map(t.decimal({ precision: 10, scale: 2 }), t.text())).toThrow(
+      'MAP keys must be VARCHAR or NUMBER with scale 0.',
+    );
+    expect(t.map(t.decimal({ precision: 10 }), t.text()).sql).toBe('MAP(NUMBER(10,0), VARCHAR)');
     expect(t.integer().notNull().notNull().required).toBe(true);
   });
 });

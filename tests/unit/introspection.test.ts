@@ -133,6 +133,8 @@ describe('schema introspection and code generation', () => {
             row('SM', 'MAP', 'MAP(VARCHAR, ARRAY(NUMBER(10,2)))'),
             row('SK', 'MAP', 'MAP(NUMBER, BOOLEAN)'),
             row('SF', 'ARRAY', 'ARRAY(FLOAT)'),
+            row('VQ', 'OBJECT', null),
+            row('VP', 'OBJECT', null),
           ];
         return [
           shown('A', { type: 'ARRAY', nullable: true }),
@@ -163,6 +165,8 @@ describe('schema introspection and code generation', () => {
             nullable: true,
             elementType: { type: 'REAL', nullable: true },
           }),
+          shown('VQ', { type: 'OBJECT', nullable: true, fields: [] }),
+          shown('VP', { type: 'OBJECT', nullable: true }),
         ];
       },
     } as unknown as SnowflakeClient;
@@ -177,6 +181,8 @@ describe('schema introspection and code generation', () => {
       'MAP(VARCHAR, ARRAY(NUMBER(10,2)))',
       'MAP(NUMBER, BOOLEAN)',
       'ARRAY(FLOAT)',
+      'OBJECT',
+      'OBJECT',
     ]);
     expect(table.columns[0]?.structure).toBeUndefined();
     expect(table.columns[2]?.structure).toEqual({
@@ -184,7 +190,10 @@ describe('schema introspection and code generation', () => {
       nullable: true,
       elementType: fixed(38, 0),
     });
-    const code = generateSchema([{ ...table, columns: table.columns.slice(0, 6) }]);
+    expect(table.columns[8]?.structure).toBeUndefined();
+    const code = generateSchema([
+      { ...table, columns: [...table.columns.slice(0, 6), ...table.columns.slice(7)] },
+    ]);
     expect(code).toContain(
       "import { array, object, snowflakeTable, structured, structuredType } from 'snowtyped';",
     );
@@ -195,6 +204,8 @@ describe('schema introspection and code generation', () => {
       '"SO": structured("SO", structuredType.object({ "Zip Code": structuredType.integer({ precision: 5 }), "city": structuredType.text(), "tag": structuredType.text({ length: 3 }).notNull() })),',
       '"SM": structured("SM", structuredType.map(structuredType.text(), structuredType.array(structuredType.decimal({ precision: 10, scale: 2 }).notNull()))).notNull(),',
       '"SK": structured("SK", structuredType.map(structuredType.integer({ precision: 9 }), structuredType.boolean())),',
+      '"VQ": structured("VQ", structuredType.object({})),',
+      '"VP": object("VP"),',
     ])
       expect(code).toContain(declaration);
     expect(() => generateSchema([{ ...table, columns: [table.columns[6] as never] }])).toThrow(

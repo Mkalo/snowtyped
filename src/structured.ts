@@ -1,4 +1,4 @@
-import * as z from 'zod';
+import type * as z from 'zod';
 import { jsonText, scalarParameter } from './expressions.js';
 import { type Column, type ColumnValue, column } from './schema.js';
 
@@ -20,23 +20,12 @@ export class JsonNumber {
   constructor(readonly source: string) {}
 }
 
-/** Snowflake prints SQL NULL elements as `undefined`, which is not JSON. */
-const structuredJson = () =>
-  z
-    .string()
-    .transform((input) =>
-      input.replace(/"(?:[^"\\]|\\.)*"|undefined/g, (token) =>
-        token === 'undefined' ? 'null' : token,
-      ),
-    )
-    .pipe(jsonText((_value, source) => new JsonNumber(source)));
-
 export function structured<T>(name: string, type: StructuredType<T, boolean>): Column<T> {
   const required = type.notNull();
   return column(
     name,
     'structured',
-    structuredJson().pipe(required.decode),
+    jsonText((_value, source) => new JsonNumber(source)).pipe(required.decode),
     required.value,
     false,
     undefined,
