@@ -106,6 +106,18 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const nullable = snowflakeTable(
+    'NULLABLE_TYPES',
+    {
+      id: integer('ID').notNull(),
+      data: binary('DATA'),
+      payload: variant('PAYLOAD', z.object({ ok: z.boolean() })),
+      at: timestamp('AT_VALUE'),
+      day: date('DAY'),
+    },
+    namespace,
+  );
+  const nullSource = snowflakeTable('NULL_SOURCE', { id: integer('ID').notNull() }, namespace);
   const doubles = snowflakeTable(
     'DOUBLES',
     { id: integer('ID').notNull(), value: float('VALUE').notNull() },
@@ -159,6 +171,10 @@ describe('complete query and execution paths against Snowflake', () => {
     await db.queryRaw(
       sql`CREATE TABLE ${name(constrained)} (ID NUMBER(3,0) NOT NULL, AMOUNT NUMBER(5,2), CODE VARCHAR(3), DATA BINARY(2), CLOCK TIME(3), AT_VALUE TIMESTAMP_LTZ(0))`,
     );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(nullable)} (ID NUMBER(38,0) NOT NULL, DATA BINARY, PAYLOAD VARIANT, AT_VALUE TIMESTAMP_NTZ(9), DAY DATE)`,
+    );
+    await db.queryRaw(sql`CREATE TABLE ${name(nullSource)} (ID NUMBER(38,0) NOT NULL)`);
   });
   afterAll(() => fixture.cleanup());
 
@@ -394,6 +410,59 @@ describe('complete query and execution paths against Snowflake', () => {
       '"AT_VALUE": timestamp("AT_VALUE", "ltz", { precision: 0 })',
     ])
       expect(code).toContain(declaration);
+  });
+
+  it('writes NULL to typed columns alone and mixed with values', async () => {
+    const empty = { data: null, payload: null, at: null, day: null };
+    await db.execute(insert(nullable, { id: 1n, ...empty }));
+    await db.execute(
+      insert(nullable, [
+        {
+          id: 2n,
+          data: new Uint8Array([1, 2]),
+          payload: { ok: true },
+          at: '2026-10-23 01:02:03.000000000',
+          day: '2026-10-23',
+        },
+        { id: 3n, ...empty },
+        { id: 4n },
+      ]),
+    );
+    await db.execute(insert(nullable, [{ id: 5n }, { id: 6n, payload: { ok: false } }]));
+    const read = async () =>
+      (await db.execute(select(nullable).orderBy(asc(nullable.columns.id)))).rows.map((row) => ({
+        ...row,
+        data: row.data && [...row.data],
+      }));
+    expect(await read()).toEqual([
+      { id: 1n, ...empty },
+      {
+        id: 2n,
+        data: [1, 2],
+        payload: { ok: true },
+        at: '2026-10-23 01:02:03.000000000',
+        day: '2026-10-23',
+      },
+      { id: 3n, ...empty },
+      { id: 4n, ...empty },
+      { id: 5n, ...empty },
+      { id: 6n, ...empty, payload: { ok: false } },
+    ]);
+    await db.execute(update(nullable, empty).where(eq(nullable.columns.id, 2n)));
+    await db.execute(insert(nullSource, [{ id: 1n }, { id: 7n }]));
+    await db.execute(
+      mergeInto(
+        nullable,
+        nullSource,
+        eq(nullable.columns.id, nullSource.columns.id),
+      ).whenNotMatchedInsert({
+        id: nullSource.columns.id,
+        payload: null,
+      }),
+    );
+    const rows = await read();
+    expect(rows.find((row) => row.id === 2n)).toEqual({ id: 2n, ...empty });
+    expect(rows.filter((row) => row.id >= 7n)).toEqual([{ id: 7n, ...empty }]);
   });
 
   it('reads every DOUBLE exactly, including extremes and subnormals', async () => {

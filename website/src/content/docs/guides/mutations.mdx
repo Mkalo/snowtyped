@@ -11,7 +11,8 @@ import writes from '../../../snippets/writes.ts?raw';
 <Snippet code={writes} />
 
 - `insert(table, values)` accepts one row or an array of rows. Required columns must be present;
-  omitted nullable columns become SQL NULL.
+  omitted nullable columns become SQL NULL. An explicit `null` also writes SQL NULL, including on
+  VARIANT columns, where it is not JSON `null`.
 - `update(table, values)` accepts typed literal values and expressions from its own table.
 - Statements resolve to `{ affectedRows, queryId }`. There is no emulated RETURNING clause.
 

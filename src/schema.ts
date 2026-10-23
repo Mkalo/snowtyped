@@ -79,8 +79,10 @@ function column<T, R extends boolean>(
   const writeSchema = nullable(constrained(value));
   const node = identifier(name);
   function encode(parsed: ColumnValue<T, R>): ExpressionNode {
-    if (dataType === 'variant' && parsed !== null) {
-      const encoded = JSON.stringify(parsed);
+    // NULL goes through the same wrapper so it carries the column type; a bare NULL
+    // bind is VARCHAR, which Snowflake rejects for VARIANT and BINARY in INSERT ... SELECT.
+    if (dataType === 'variant') {
+      const encoded = parsed === null ? null : JSON.stringify(parsed);
       if (encoded === undefined) throw new TypeError('VARIANT values must be JSON serializable.');
       return Object.freeze({
         kind: 'function',
@@ -88,13 +90,14 @@ function column<T, R extends boolean>(
         args: Object.freeze([scalarParameter(encoded)]),
       });
     }
-    if (dataType === 'binary' && parsed !== null) {
-      const bytes = parsed as Uint8Array;
+    if (dataType === 'binary') {
       return Object.freeze({
         kind: 'function',
         name: 'TO_BINARY',
         args: Object.freeze([
-          scalarParameter(Buffer.from(bytes).toString('hex')),
+          scalarParameter(
+            parsed === null ? null : Buffer.from(parsed as Uint8Array).toString('hex'),
+          ),
           scalarParameter('HEX'),
         ]),
       });
