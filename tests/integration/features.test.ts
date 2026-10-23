@@ -217,6 +217,33 @@ describe('complete query and execution paths against Snowflake', () => {
     ]);
   });
 
+  it('orders by a column that shares its name with another projection alias', async () => {
+    const byName = [{ NAME: null }, { NAME: 'grace@example.test' }, { NAME: 'linus@example.test' }];
+    const { email, id, name } = customers.columns;
+    expect((await db.execute(select(customers, { NAME: email }).orderBy(asc(name)))).rows).toEqual(
+      byName,
+    );
+    expect(
+      (
+        await db.execute(
+          select(customers, { NAME: email })
+            .orderBy(asc(lower(name)))
+            .limit(1),
+        )
+      ).rows,
+    ).toEqual(byName.slice(0, 1));
+    expect(
+      (await db.execute(select(customers, { NAME: email, ID: name }).orderBy(asc(id)))).rows.map(
+        (row) => row.ID,
+      ),
+    ).toEqual(['Grace', 'Linus', 'Ada']);
+    expect((await db.execute(select(customers, { NAME: id }).orderBy(desc(name)))).rows).toEqual([
+      { NAME: 3n },
+      { NAME: 2n },
+      { NAME: 9007199254740993n },
+    ]);
+  });
+
   it('composes derived sources and CTEs with validated wire decoding', async () => {
     const source = select(orders, {
       customer: orders.columns.customerId,
