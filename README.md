@@ -136,7 +136,7 @@ await db.execute(
 );
 ```
 
-INSERT accepts one row or an array of rows. Required columns must be present; omitted nullable columns become SQL NULL. UPDATE accepts typed literal values and expressions from its table. MERGE supports matched update/delete and unmatched insert. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
+INSERT accepts one row or an array of rows. Required columns must be present. Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or NULL; explicit `null` stays NULL. Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row; Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps. Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)` to make them optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)` column, which is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These modifiers are metadata only; they do not emit DDL. UPDATE accepts typed literal values and expressions from its table. MERGE supports matched update/delete and unmatched insert. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
 
 ## Raw tagged queries
 
@@ -201,11 +201,11 @@ Await running operations and close cursors before starting a transaction on a si
 
 ## Introspection
 
-`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Generated declarations carry NUMBER precision/scale, VARCHAR length, and TIME/TIMESTAMP precision when they differ from Snowflake's defaults; INFORMATION_SCHEMA does not report BINARY length. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
+`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Generated declarations carry NUMBER precision/scale, VARCHAR length, and TIME/TIMESTAMP precision when they differ from Snowflake's defaults; INFORMATION_SCHEMA does not report BINARY length. Column defaults, identity settings, and virtual column expressions become `.serverDefault()`, `.identity()`, and `.virtual()` modifiers. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
 
 ## Scope and distribution
 
-The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, default/generated columns, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 

@@ -20,13 +20,15 @@ const expected = {
     types: names(
       `AnyColumn AnyExpression BindValue BoundColumns Column ColumnMap ColumnValue CompiledQuery
       DataType Expression FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions
-      GeoJsonGeometry GeoPosition InferColumn InferExpression InferSelection InsertValues
-      IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery Ordering
-      Predicate RangeBoundary RawQuery SelectQuery Selection SqlInterpolation SqlParameter
-      Table TableOptions UpdateValues WindowFrame`,
-      `CteNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode FrameBoundaryNode
-      IdentifierNode InsertNode JoinNode MergeNode OrderNode RelationNode SelectNode
-      SourceReference StatementNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
+      GeoJsonGeometry GeoPosition IdentityOptions InferColumn InferExpression InferSelection
+      InsertValues IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery MutationQuery
+      Ordering Predicate RangeBoundary RawQuery SelectQuery Selection ServerValue
+      ServerValueKind ServerValues SqlInterpolation SqlParameter Table TableOptions
+      UpdateValues WindowFrame`,
+      `CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode FlattenNode
+      FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeNode OrderNode RelationNode
+      SelectNode SourceReference StatementNode TableNode TemporalNode UpdateNode
+      WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {

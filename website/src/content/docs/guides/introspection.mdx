@@ -10,7 +10,9 @@ import introspect from '../../../snippets/introspect.ts?raw';
 `INFORMATION_SCHEMA`. `generateSchema(tables)` returns TypeScript source that declares each table
 with its exact physical names, exported as `table0`, `table1`, and so on in a stable order. Generated
 declarations carry NUMBER precision and scale, VARCHAR length, and TIME and TIMESTAMP precision when
-they differ from Snowflake's defaults. `INFORMATION_SCHEMA` does not report BINARY length.
+they differ from Snowflake's defaults. `INFORMATION_SCHEMA` does not report BINARY length. Column
+defaults, identity settings, and virtual column expressions become `.serverDefault()`, `.identity()`,
+and `.virtual()` modifiers.
 
 <Snippet code={introspect} />
 
