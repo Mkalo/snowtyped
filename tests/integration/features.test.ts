@@ -234,6 +234,52 @@ describe('complete query and execution paths against Snowflake', () => {
     ]);
   });
 
+  it('orders grouped queries by windows over aggregates', async () => {
+    const rank = rowNumber({ orderBy: [desc(sum(orders.columns.amount))] });
+    const projected = select(orders, { customer: orders.columns.customerId, rank })
+      .groupBy(orders.columns.customerId)
+      .orderBy(desc(rank));
+    expect((await db.execute(projected)).rows).toEqual([
+      { customer: 2n, rank: 2n },
+      { customer: 9007199254740993n, rank: 1n },
+    ]);
+    expect((await db.execute(projected.limit(1))).rows).toEqual([{ customer: 2n, rank: 2n }]);
+    const hidden = select(orders, { customer: orders.columns.customerId })
+      .groupBy(orders.columns.customerId)
+      .orderBy(asc(rank));
+    expect((await db.execute(hidden)).rows).toEqual([
+      { customer: 9007199254740993n },
+      { customer: 2n },
+    ]);
+  });
+
+  it('orders by a column that shares its name with another projection alias', async () => {
+    const byName = [{ NAME: null }, { NAME: 'grace@example.test' }, { NAME: 'linus@example.test' }];
+    const { email, id, name } = customers.columns;
+    expect((await db.execute(select(customers, { NAME: email }).orderBy(asc(name)))).rows).toEqual(
+      byName,
+    );
+    expect(
+      (
+        await db.execute(
+          select(customers, { NAME: email })
+            .orderBy(asc(lower(name)))
+            .limit(1),
+        )
+      ).rows,
+    ).toEqual(byName.slice(0, 1));
+    expect(
+      (await db.execute(select(customers, { NAME: email, ID: name }).orderBy(asc(id)))).rows.map(
+        (row) => row.ID,
+      ),
+    ).toEqual(['Grace', 'Linus', 'Ada']);
+    expect((await db.execute(select(customers, { NAME: id }).orderBy(desc(name)))).rows).toEqual([
+      { NAME: 3n },
+      { NAME: 2n },
+      { NAME: 9007199254740993n },
+    ]);
+  });
+
   it('composes derived sources and CTEs with validated wire decoding', async () => {
     const source = select(orders, {
       customer: orders.columns.customerId,
