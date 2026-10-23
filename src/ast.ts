@@ -13,7 +13,9 @@ export type WireType =
   | 'timestamp_ntz'
   | 'timestamp_ltz'
   | 'timestamp_tz'
-  | 'variant';
+  | 'variant'
+  | 'geography'
+  | 'geometry';
 export interface SourceReference {
   readonly id: symbol;
   readonly name: string;
@@ -81,7 +83,8 @@ export interface CastNode {
     | 'TIMESTAMP_LTZ'
     | 'TIMESTAMP_TZ'
     | 'ARRAY'
-    | 'OBJECT';
+    | 'OBJECT'
+    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`;
 }
 export type ExpressionNode =
   | IdentifierNode
@@ -293,6 +296,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   function wire(value: string, type?: WireType): string {
     if (!type) return value;
     if (type === 'variant') return `TO_JSON(${value})`;
+    if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
+    if (type === 'geometry') return `ST_ASEWKB(${value})`;
     if (type === 'float') {
       // Text conversion keeps at most 16 digits, so send an exact integer significand and a
       // binary exponent instead. The scale is split to stay finite for subnormals.

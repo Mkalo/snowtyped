@@ -16,6 +16,7 @@ import {
   jsonText,
   scalarParameter,
 } from './expressions.js';
+import { decodeEwkb, type GeoJsonGeometry, geoJson } from './spatial.js';
 
 export type ColumnValue<T, Required extends boolean> = Required extends true ? T : T | null;
 export type DataType =
@@ -32,11 +33,16 @@ export type DataType =
   | 'variant'
   | 'array'
   | 'object'
-  | 'binary';
+  | 'binary'
+  | 'geography'
+  | 'geometry'
+  | 'vector';
 export interface ColumnConstraints {
   readonly precision?: number;
   readonly scale?: number;
   readonly length?: number;
+  readonly dimension?: number;
+  readonly srid?: number;
 }
 export interface Column<T, Required extends boolean = false, Scope extends string = string>
   extends Expression<ColumnValue<T, Required>, Scope> {
@@ -62,7 +68,7 @@ export type BoundColumns<C extends ColumnMap, Name extends string> = {
 interface Constraint<T> {
   readonly constraints: ColumnConstraints;
   readonly type: string;
-  check(value: T): boolean;
+  check?(value: T): boolean;
 }
 
 function column<T, R extends boolean>(
@@ -72,9 +78,12 @@ function column<T, R extends boolean>(
   value: z.ZodType<T>,
   required: R,
   constraint?: Constraint<T>,
+  write?: (value: T | null) => ExpressionNode,
 ): Column<T, R> {
   const constrained = (schema: z.ZodType<T>) =>
-    constraint ? schema.refine(constraint.check, `Value does not fit ${constraint.type}.`) : schema;
+    constraint?.check
+      ? schema.refine(constraint.check, `Value does not fit ${constraint.type}.`)
+      : schema;
   const nullable = (schema: z.ZodType<T>) =>
     (required ? schema : schema.nullable()) as z.ZodType<ColumnValue<T, R>>;
   const readSchema = nullable(constrained(read));
@@ -82,6 +91,7 @@ function column<T, R extends boolean>(
   const writeSchema = nullable(constrained(value));
   const node = identifier(name);
   function encode(parsed: ColumnValue<T, R>): ExpressionNode {
+    if (write) return write(parsed);
     // NULL goes through the same wrapper so it carries the column type; a bare NULL
     // bind is VARCHAR, which Snowflake rejects for VARIANT and BINARY in INSERT ... SELECT.
     if (dataType === 'variant') return parseJson(dataType, parsed);
@@ -106,7 +116,7 @@ function column<T, R extends boolean>(
   }
   const wireType: WireType | undefined = ['text', 'boolean', 'binary'].includes(dataType)
     ? undefined
-    : dataType === 'array' || dataType === 'object'
+    : ['array', 'object', 'vector'].includes(dataType)
       ? 'variant'
       : (dataType as WireType);
   return Object.freeze({
@@ -120,7 +130,7 @@ function column<T, R extends boolean>(
     required,
     constraints: Object.freeze({ ...constraint?.constraints }),
     encodeWrite: (input: ColumnValue<T, R>) => encode(writeSchema.parse(input)),
-    notNull: () => column(name, dataType, read, value, true, constraint),
+    notNull: () => column(name, dataType, read, value, true, constraint, write),
   });
 }
 /** A NULL bind still parses to a typed NULL, so mixed rows keep one SQL type. */
@@ -134,7 +144,8 @@ function parseJson(dataType: DataType, value: unknown): ExpressionNode {
     args: Object.freeze([scalarParameter(encoded)]),
   });
 }
-const json = <T>(schema: z.ZodType<T>) => jsonText().pipe(schema);
+const json = <T>(schema: z.ZodType<T>, number?: (value: number) => unknown) =>
+  jsonText(number).pipe(schema);
 function bounded(label: string, value: number, min: number, max: number): number {
   if (!Number.isSafeInteger(value) || value < min || value > max)
     throw new TypeError(`${label} must be an integer from ${min} to ${max}.`);
@@ -317,6 +328,69 @@ export function binary(
           check: (value) => value.length <= length,
         },
   );
+}
+
+export function geography(name: string): Column<GeoJsonGeometry> {
+  const schema = geoJson(4);
+  return column(name, 'geography', json(schema), schema, false, undefined, (value) =>
+    call('TO_GEOGRAPHY', value === null ? null : JSON.stringify(value)),
+  );
+}
+export function geometry(
+  name: string,
+  options: { readonly srid?: number } = {},
+): Column<GeoJsonGeometry> {
+  const srid = bounded('SRID', options.srid ?? 0, 0, 2147483647);
+  const schema = geoJson(3);
+  const read = z
+    .instanceof(Uint8Array)
+    .transform((bytes, context) => {
+      try {
+        return decodeEwkb(bytes);
+      } catch (error) {
+        context.addIssue({ code: 'custom', message: (error as Error).message });
+        return z.NEVER;
+      }
+    })
+    .refine((value) => value.srid === srid, `Value does not fit GEOMETRY with SRID ${srid}.`)
+    .transform((value) => value.geometry)
+    .pipe(schema);
+  return column(
+    name,
+    'geometry',
+    read,
+    schema,
+    false,
+    { constraints: { srid }, type: `GEOMETRY with SRID ${srid}` },
+    (value) => call('TO_GEOMETRY', value === null ? null : JSON.stringify(value), srid),
+  );
+}
+export function vector(
+  name: string,
+  element: 'int' | 'float',
+  dimension: number,
+): Column<number[]> {
+  if (element !== 'int' && element !== 'float')
+    throw new TypeError("VECTOR elements must be 'int' or 'float'.");
+  bounded('Dimension', dimension, 1, 4096);
+  const type = `VECTOR(${element === 'int' ? 'INT' : 'FLOAT'}, ${dimension})` as const;
+  const schema = z.array(
+    element === 'int'
+      ? z.number().int().min(-2147483648).max(2147483647)
+      : z.number().refine((value) => Number.isFinite(Math.fround(value)), 'FLOAT32 overflow.'),
+  );
+  return column(
+    name,
+    'vector',
+    json(schema, element === 'float' ? Math.fround : undefined),
+    schema,
+    false,
+    { constraints: { dimension }, type, check: (value) => value.length === dimension },
+    (value) => Object.freeze({ kind: 'cast', value: parseJson('vector', value), target: type }),
+  );
+}
+function call(name: string, ...args: (string | number | null)[]): ExpressionNode {
+  return Object.freeze({ kind: 'function', name, args: Object.freeze(args.map(scalarParameter)) });
 }
 
 export interface Table<C extends ColumnMap = ColumnMap, Name extends string = string> {

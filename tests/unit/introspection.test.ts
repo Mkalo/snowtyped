@@ -136,6 +136,52 @@ describe('schema introspection and code generation', () => {
       );
   });
 
+  it('generates spatial and VECTOR declarations from type aliases', async () => {
+    const row = (name: string, type: string, alias: string) => ({
+      TABLE_SCHEMA: 'S',
+      TABLE_NAME: 'T',
+      COLUMN_NAME: name,
+      DATA_TYPE: type,
+      DATA_TYPE_ALIAS: alias,
+      IS_NULLABLE: name === 'G' ? 'NO' : 'YES',
+      NUMERIC_PRECISION: null,
+      NUMERIC_SCALE: null,
+      CHARACTER_MAXIMUM_LENGTH: null,
+      DATETIME_PRECISION: null,
+    });
+    const client = {
+      queryRaw: async () => [
+        row('G', 'GEOGRAPHY', 'GEOGRAPHY'),
+        row('M', 'GEOMETRY', 'GEOMETRY'),
+        row('V', 'VECTOR', 'VECTOR(FLOAT, 4)'),
+        row('W', 'VECTOR', 'VECTOR(INT, 16)'),
+      ],
+    } as unknown as SnowflakeClient;
+    const [table] = await introspect(client, { database: 'DB' });
+    if (!table) throw new Error('Expected a table.');
+    expect(table.columns.map((column) => column.dataType)).toEqual([
+      'GEOGRAPHY',
+      'GEOMETRY',
+      'VECTOR(FLOAT, 4)',
+      'VECTOR(INT, 16)',
+    ]);
+    const code = generateSchema([table]);
+    expect(code).toContain(
+      "import { geography, geometry, snowflakeTable, vector } from 'snowtyped';",
+    );
+    for (const declaration of [
+      '"G": geography("G").notNull(),',
+      '"M": geometry("M"),',
+      '"V": vector("V", "float", 4),',
+      '"W": vector("W", "int", 16),',
+    ])
+      expect(code).toContain(declaration);
+    for (const dataType of ['VECTOR', 'VECTOR(DOUBLE, 2)'])
+      expect(() =>
+        generateSchema([{ ...table, columns: [{ ...table.columns[0], dataType } as never] }]),
+      ).toThrow(`Unsupported Snowflake type for code generation: ${dataType}`);
+  });
+
   it('rejects invalid driver metadata', async () => {
     const client = { queryRaw: async () => [{}] } as unknown as SnowflakeClient;
     await expect(introspect(client, { database: 'DB' })).rejects.toThrow();
@@ -201,7 +247,7 @@ describe('schema introspection and code generation', () => {
           columns: [
             {
               name: 'V',
-              dataType: 'GEOGRAPHY',
+              dataType: 'MAP',
               nullable: false,
               precision: null,
               scale: null,

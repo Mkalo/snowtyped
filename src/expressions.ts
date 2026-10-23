@@ -69,26 +69,29 @@ function decimal(text: string): readonly [key: string, digits: number] {
   const scale = Number(exponent) - fraction.length + digits.length - significant.length;
   return [`${sign}${significant}e${scale}`, significant.length];
 }
+function exactNumber(value: number, source: string): number {
+  const [key, digits] = decimal(source);
+  if (!Number.isFinite(value) || key !== decimal(value.toPrecision(Math.min(digits, 100)))[0])
+    throw new RangeError(`JSON number ${source} does not fit a JavaScript number exactly.`);
+  return value;
+}
 /**
- * Rejects JSON numbers whose text carries digits a JavaScript number cannot hold, instead of
- * rounding them. Text is accepted when it is the decoded double correctly rounded to the text's
- * own precision, which covers both shortest spellings and Snowflake's 16-digit DOUBLE output.
+ * By default, rejects JSON numbers whose text carries digits a JavaScript number cannot hold,
+ * instead of rounding them. Text is accepted when it is the decoded double correctly rounded to the
+ * text's own precision, which covers both shortest spellings and Snowflake's 16-digit DOUBLE output.
  */
-export const jsonText = () =>
+export const jsonText = (number: (value: number, source: string) => unknown = exactNumber) =>
   z.string().transform((input, context) => {
     try {
       // TO_JSON prints SQL NULL array elements as a bare `undefined`, which JSON.parse rejects.
       const text = input.replace(/"(?:[^"\\]|\\.)*"|undefined/g, (token) =>
         token === 'undefined' ? 'null' : token,
       );
-      return JSON.parse(text, (_key, value: unknown, parsed?: { readonly source: string }) => {
-        if (typeof value !== 'number') return value;
-        const { source } = parsed as { readonly source: string };
-        const [key, digits] = decimal(source);
-        if (!Number.isFinite(value) || key !== decimal(value.toPrecision(Math.min(digits, 100)))[0])
-          throw new RangeError(`JSON number ${source} does not fit a JavaScript number exactly.`);
-        return value;
-      }) as unknown;
+      return JSON.parse(text, (_key, value: unknown, parsed?: { readonly source: string }) =>
+        typeof value === 'number'
+          ? number(value, (parsed as { readonly source: string }).source)
+          : value,
+      ) as unknown;
     } catch (error) {
       context.addIssue({ code: 'custom', message: (error as Error).message, input });
       return z.NEVER;
