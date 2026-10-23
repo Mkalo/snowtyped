@@ -94,6 +94,23 @@ const page = all.orderBy(asc(all.columns.id)).limit(50);
 
 `.union()`, `.unionAll()`, `.intersect()`, and `.except()` combine queries whose projections have the same aliases and domains; branches are aligned by alias. UNION results are nullable when either branch is, INTERSECT only when both are, and EXCEPT keeps the left branch's types. Mixed numeric families (integer, decimal, float) or temporal kinds are rejected; same-family precision and scale widen in Snowflake. Chained calls apply to the whole preceding query, and nesting groups explicitly: every operand is parenthesized, so INTERSECT's higher keyword precedence never regroups a query. Order and paginate a combined query with its own `.columns`; branch CTEs are hoisted into one leading WITH, and serialization happens only after the set operation. Combined queries also support `.as()` and `.asCte()`.
 
+```ts
+const reports = recursiveCte(
+  'REPORTS',
+  select(employees, { id: employees.columns.id, name: employees.columns.name }).where(
+    eq(employees.columns.id, 1n),
+  ),
+  (self) =>
+    select(employees, { id: employees.columns.id, name: employees.columns.name }).innerJoin(
+      self,
+      eq(employees.columns.managerId, self.columns.id),
+    ),
+);
+const rows = await db.execute(select(reports));
+```
+
+`recursiveCte(name, anchor, recursive, { nullable })` compiles `WITH RECURSIVE name (...) AS (anchor UNION ALL recursive)`. The anchor's projection is the row contract: `self` and the resulting table have its types, and the recursive branch must produce the same aliases and domains without adding NULLs unless those columns are listed in `nullable`. The recursive branch is one SELECT with scalar projections, filters, and joins that reference `self` exactly once in FROM or a join, keep it on the preserved side of outer joins, and place outer joins after every other join; aggregates, windows, grouping, DISTINCT, ordering, pagination, and ASOF joins are rejected. `self` is only valid inside its own recursive branch, and an anchor cannot read another recursive CTE. Snowflake only treats uppercase names (`A-Z`, digits, `_`, `$`) as recursive. CTEs used by either branch are emitted before the recursive definition. Recursion depth is bounded by your data and Snowflake's `MAX_RECURSIONS`.
+
 ## Snowflake syntax
 
 ```ts

@@ -132,8 +132,22 @@ export interface CteNode {
   readonly kind: 'cte';
   readonly name: IdentifierNode;
   readonly query: QueryNode;
+  /** Present on recursive definitions; the recursive branch reads the CTE through it. */
+  readonly self?: SelfReferenceNode;
 }
-export type RelationNode = IdentifierNode | TableNode | DerivedNode | FlattenNode | CteNode;
+/** Valid only while compiling the recursive branch of the CTE that owns it. */
+export interface SelfReferenceNode {
+  readonly kind: 'self-reference';
+  readonly name: IdentifierNode;
+  readonly columns: readonly string[];
+}
+export type RelationNode =
+  | IdentifierNode
+  | TableNode
+  | DerivedNode
+  | FlattenNode
+  | CteNode
+  | SelfReferenceNode;
 export interface JoinNode {
   readonly kind: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL' | 'CROSS' | 'ASOF' | 'LATERAL';
   readonly source: RelationNode;
@@ -229,6 +243,7 @@ export function quoteIdentifier(node: IdentifierNode): string {
 /** A new context per statement prevents binds leaking across reusable queries. */
 export function compileAst(statement: StatementNode): CompiledQuery {
   const binds: BindValue[] = [];
+  const active = new Set<SelfReferenceNode>();
   function parameter(value: BindValue): string {
     binds.push(value);
     return '?';
@@ -292,6 +307,10 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         return `(${queryStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
       case 'cte':
         return quoteIdentifier(node.name);
+      case 'self-reference':
+        if (!active.has(node))
+          throw new TypeError('A recursive CTE reference is only valid in its recursive branch.');
+        return quoteIdentifier(node.name);
       case 'flatten':
         return `FLATTEN(INPUT => ${expression(node.input, true)}, PATH => ${parameter(node.path)}, OUTER => ${node.outer ? 'TRUE' : 'FALSE'}, RECURSIVE => ${node.recursive ? 'TRUE' : 'FALSE'}, MODE => '${node.mode}') AS ${quoteIdentifier(node.alias)}`;
       default:
@@ -311,10 +330,27 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     const format = formats[type];
     return `TO_VARCHAR(${value}${format ? `, '${format}'` : ''})`;
   }
+  function definition(cte: CteNode): string {
+    if (!cte.self) return `${quoteIdentifier(cte.name)} AS (${queryStatement(cte.query)})`;
+    const { with: _, ...query } = cte.query;
+    active.add(cte.self);
+    const body = queryStatement(query as QueryNode);
+    active.delete(cte.self);
+    return `${quoteIdentifier(cte.name)} (${cte.self.columns.map((column) => quoteIdentifier(identifier(column))).join(', ')}) AS (${body})`;
+  }
   function withClause(ctes: readonly CteNode[] | undefined): string {
-    return ctes?.length
-      ? `WITH ${ctes.map((cte) => `${quoteIdentifier(cte.name)} AS (${queryStatement(cte.query)})`).join(', ')} `
-      : '';
+    if (!ctes?.length) return '';
+    const ordered: CteNode[] = [];
+    // Snowflake cannot see a WITH nested in a recursive definition, so its CTEs precede it.
+    const add = (cte: CteNode) => {
+      if (ordered.includes(cte)) return;
+      if (cte.self) cte.query.with?.forEach(add);
+      if (ordered.some((item) => quoteIdentifier(item.name) === quoteIdentifier(cte.name)))
+        throw new TypeError('One WITH clause cannot define different CTEs with the same name.');
+      ordered.push(cte);
+    };
+    ctes.forEach(add);
+    return `WITH ${ordered.some((cte) => cte.self) ? 'RECURSIVE ' : ''}${ordered.map(definition).join(', ')} `;
   }
   function queryStatement(node: QueryNode, wireOutput = false): string {
     return node.kind === 'select'
