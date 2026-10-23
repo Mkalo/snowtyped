@@ -34,6 +34,12 @@ export interface BinaryNode {
   readonly left: ExpressionNode;
   readonly right: ExpressionNode;
 }
+export interface ArithmeticNode {
+  readonly kind: 'arithmetic';
+  readonly operator: '+' | '-' | '*' | '/';
+  readonly left: ExpressionNode;
+  readonly right: ExpressionNode;
+}
 export interface LogicalNode {
   readonly kind: 'logical';
   readonly operator: 'AND' | 'OR';
@@ -86,6 +92,7 @@ export type ExpressionNode =
   | ReferenceNode
   | ParameterNode
   | BinaryNode
+  | ArithmeticNode
   | LogicalNode
   | UnaryNode
   | FunctionNode
@@ -228,6 +235,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       case 'parameter':
         return parameter(node.value);
       case 'binary':
+      case 'arithmetic':
         return `(${expression(node.left, qualify)} ${node.operator} ${expression(node.right, qualify)})`;
       case 'logical':
         return `(${node.operands.map((item) => expression(item, qualify)).join(` ${node.operator} `)})`;

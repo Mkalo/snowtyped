@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
+  add,
+  avg,
   boolean,
   cast,
   count,
   date,
   decimal,
+  div,
   eq,
   float,
   inArray,
   integer,
   jsonPath,
+  mul,
   select,
   snowflakeTable,
+  sub,
+  sum,
   text,
   timestamp,
   variant,
@@ -121,5 +127,92 @@ describe('typed casts', () => {
       [10, 0.5],
     ] as const)
       expect(() => cast(day, 'decimal', precision, scale)).toThrow('DECIMAL casts');
+  });
+});
+
+describe('averages and arithmetic', () => {
+  it('derives Snowflake numeric result domains', () => {
+    const selection = {
+      avgInteger: avg(id),
+      avgDecimal: avg(price),
+      avgFloat: avg(ratio),
+      plus: add(id, 1n),
+      minus: sub(amount, '1.50'),
+      times: mul(amount, '5'),
+      quotient: div(id, id),
+      scaled: mul(ratio, 2),
+      mixed: add(id, ratio),
+      exact: add(id, amount),
+      ratio: div(sum(amount), count()),
+    };
+    const compiled = select(t, selection).compile();
+    for (const fragment of [
+      'AVG("ID")',
+      '("ID" + CAST(? AS NUMBER(38,0)))',
+      '("AMOUNT" - CAST(? AS NUMBER(38,2)))',
+      '("AMOUNT" * CAST(? AS NUMBER(38,0)))',
+      '("ID" / "ID")',
+      '("RATIO" * CAST(? AS DOUBLE))',
+      '(SUM("AMOUNT") / COUNT(*))',
+    ])
+      expect(compiled.sql).toContain(fragment);
+    expect(compiled.binds).toEqual(['1', '1.50', '5', 2]);
+    expect(Object.fromEntries(Object.entries(selection).map(([k, v]) => [k, v.wireType]))).toEqual({
+      avgInteger: 'decimal',
+      avgDecimal: 'decimal',
+      avgFloat: 'float',
+      plus: 'integer',
+      minus: 'decimal',
+      times: 'decimal',
+      quotient: 'decimal',
+      scaled: 'float',
+      mixed: 'float',
+      exact: 'decimal',
+      ratio: 'decimal',
+    });
+    expect(
+      resultSchema(selection).parse({
+        avgInteger: '1.500000',
+        avgDecimal: null,
+        avgFloat: '1.75',
+        plus: '9007199254740994',
+        minus: '-0.50',
+        times: '5.00',
+        quotient: '1.000000',
+        scaled: '3',
+        mixed: '2.5',
+        exact: '2.25',
+        ratio: null,
+      }),
+    ).toMatchObject({ avgFloat: 1.75, plus: 9007199254740994n, scaled: 3, ratio: null });
+    expect(() => resultSchema(selection).parse({ ...selection, plus: null })).toThrow();
+  });
+
+  it('tracks nullability, phase, scope, and rejects non-numeric operands', () => {
+    expect(avg(id).phase).toBe('aggregate');
+    expect(add(count(), 1n).phase).toBe('aggregate');
+    expect(
+      select(t, { n: count() })
+        .having(eq(add(count(), 1n), 3n))
+        .compile().sql,
+    ).toContain('HAVING ((COUNT(*) + CAST(? AS NUMBER(38,0))) = ?)');
+    expect(add(id, price).readSchema.parse(null)).toBeNull();
+    expect(add(price, null as never).expression).toMatchObject({
+      right: { kind: 'parameter', value: null },
+    });
+    const joined = select(t)
+      .leftJoin(o, eq(t.columns.id, o.columns.id))
+      .select({ next: add(o.columns.id, 1n) });
+    expect(resultSchema(joined.selection, joined.nullableSources).parse({ next: null })).toEqual({
+      next: null,
+    });
+    expect(add(id, o.columns.id).refs).toEqual([t.ref, o.ref]);
+    expect(inArray(add(id, price), [null]).expression).toMatchObject({
+      values: [{ kind: 'parameter', value: null }],
+    });
+    expect(() => add(label, 'x')).toThrow('Numeric helpers');
+    expect(() => avg(day)).toThrow('Numeric helpers');
+    expect(() => add(amount, `0.${'1'.repeat(38)}`)).toThrow('37 fractional digits');
+    expect(() => add(id, 1 as never)).toThrow();
   });
 });

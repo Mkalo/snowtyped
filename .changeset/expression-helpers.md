@@ -2,4 +2,4 @@
 "snowtyped": minor
 ---
 
-Add typed `cast` expressions with schema-derived output domains.
+Add typed `cast`, `avg`, and `add`/`sub`/`mul`/`div` expressions with Snowflake result domains.

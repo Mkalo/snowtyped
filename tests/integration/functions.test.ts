@@ -1,15 +1,22 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  add,
   asc,
+  avg,
   cast,
+  count,
   date,
   decimal,
+  div,
   float,
   insert,
   integer,
+  mul,
   select,
   snowflakeTable,
   sql,
+  sub,
+  sum,
   text,
   time,
   timestamp,
@@ -127,6 +134,75 @@ describe('typed expression helpers against Snowflake', () => {
         day: '2024-02-29 00:00:00.000000000',
         clock: '00:00:00.000000000',
         float: 0.0001,
+      },
+    ]);
+  });
+
+  it('averages and computes arithmetic with Snowflake numeric domains', async () => {
+    const grouped = select(metrics, {
+      grp: m.grp,
+      qty: avg(m.qty),
+      price: avg(m.price),
+      ratio: avg(m.ratio),
+      bonus: avg(m.bonus),
+      perRow: div(sum(m.price), count()),
+    })
+      .groupBy(m.grp)
+      .orderBy(asc(m.grp));
+    expect((await db.execute(grouped)).rows).toEqual([
+      {
+        grp: 'a',
+        qty: '4503599627370498.000000',
+        price: '6.3750000000',
+        ratio: 1,
+        bonus: '1.0000000000',
+        perRow: '6.3750000000',
+      },
+      {
+        grp: 'b',
+        qty: '7.000000',
+        price: '0.0001000000',
+        ratio: 2,
+        bonus: '2.5000000000',
+        perRow: '0.0001000000',
+      },
+    ]);
+    const rows = select(metrics, {
+      next: add(m.qty, 1n),
+      half: div(m.qty, 2n),
+      total: mul(m.price, m.qty),
+      net: sub(m.price, '0.25'),
+      scaled: mul(m.ratio, 2),
+      mixed: add(m.price, m.ratio),
+      maybe: add(m.bonus, m.qty),
+    }).orderBy(asc(m.id));
+    expect((await db.execute(rows)).rows).toEqual([
+      {
+        next: 9007199254740994n,
+        half: '4503599627370496.500000',
+        total: '94575592174780426.5000',
+        net: '10.2500',
+        scaled: 1,
+        mixed: 11,
+        maybe: null,
+      },
+      {
+        next: 4n,
+        half: '1.500000',
+        total: '6.7500',
+        net: '2.0000',
+        scaled: 3,
+        mixed: 3.75,
+        maybe: '4.0000',
+      },
+      {
+        next: 8n,
+        half: '3.500000',
+        total: '0.0007',
+        net: '-0.2499',
+        scaled: 4,
+        mixed: 2.0001,
+        maybe: '9.5000',
       },
     ]);
   });

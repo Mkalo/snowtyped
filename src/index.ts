@@ -56,7 +56,7 @@ export {
   sum,
   upper,
 } from './expressions.js';
-export { type CastType, type CastValue, cast } from './functions.js';
+export { add, avg, type CastType, type CastValue, cast, div, mul, sub } from './functions.js';
 export {
   generateSchema,
   type IntrospectedColumn,

@@ -1,4 +1,4 @@
-import type { CastNode, ExpressionNode } from './ast.js';
+import type { ArithmeticNode, CastNode, ExpressionNode } from './ast.js';
 import {
   type AnyExpression,
   type Expression,
@@ -6,6 +6,7 @@ import {
   type ExpressionScope,
   expression,
   type InferExpression,
+  isExpression,
   metadata,
   scalarParameter,
 } from './expressions.js';
@@ -45,6 +46,24 @@ export interface CastValue {
   timestamp_tz: string;
 }
 type NullOf<T> = null extends T ? null : never;
+type ValueOf<V> = V extends AnyExpression ? InferExpression<V> : V;
+type Numeric = bigint | number | string;
+type NumericExpression = Expression<Numeric | null, string, string>;
+type Operand<L> = NoInfer<NonNullable<InferExpression<L>>> | NumericExpression;
+type ArithmeticValue<A, B, Divide extends boolean> =
+  | ([Extract<A | B, number>] extends [never]
+      ? [Extract<A | B, string>] extends [never]
+        ? Divide extends true
+          ? string
+          : bigint
+        : string
+      : number)
+  | NullOf<A | B>;
+type ArithmeticResult<L extends AnyExpression, R, Divide extends boolean> = Expression<
+  ArithmeticValue<InferExpression<L>, ValueOf<R>, Divide>,
+  ExpressionScope<L> | ExpressionScope<R>,
+  ExpressionNullScope<L> | ExpressionNullScope<R>
+>;
 
 const domains: Record<CastType, readonly [CastNode['target'], () => AnyColumn]> = {
   text: ['VARCHAR', () => text('VALUE') as AnyColumn],
@@ -69,16 +88,55 @@ function derive(
   output: AnyExpression,
   isNullable: boolean,
   values: readonly AnyExpression[],
+  options: { readonly phase?: 'aggregate' } = {},
 ): AnyExpression {
   const read = output.readSchema;
   const value = output.valueSchema;
   return expression(node, isNullable ? read.nullable() : read, {
     ...metadata(values),
     nullRefs: [...new Set(values.flatMap((item) => item.nullRefs))],
+    ...options,
     valueSchema: isNullable ? value.nullable() : value,
     ...(output.wireType ? { wireType: output.wireType } : {}),
     encode: (input) => (input === null ? scalarParameter(null) : output.encode(input)),
   });
+}
+function literal(type: AnyExpression, value: unknown): ExpressionNode {
+  const node = type.encode(value);
+  if (node.kind !== 'parameter' || node.value === null) return node;
+  let target = domains[type.wireType as CastType][0];
+  if (type.wireType === 'decimal') {
+    const scale = String(node.value).split('.')[1]?.length ?? 0;
+    if (scale > 37) throw new TypeError('Decimal literals support at most 37 fractional digits.');
+    target = `NUMBER(38,${scale})`;
+  }
+  return Object.freeze({ kind: 'cast', value: node, target });
+}
+function numeric(values: readonly AnyExpression[], divide: boolean): CastType {
+  const types = values.map((value) => value.wireType);
+  if (types.some((type) => type !== 'integer' && type !== 'decimal' && type !== 'float'))
+    throw new TypeError('Numeric helpers require integer, decimal, or float expressions.');
+  if (types.includes('float')) return 'float';
+  return !divide && types.every((type) => type === 'integer') ? 'integer' : 'decimal';
+}
+function arithmetic(
+  operator: ArithmeticNode['operator'],
+  left: AnyExpression,
+  right: unknown,
+): AnyExpression {
+  const values = isExpression(right) ? [left, right] : [left];
+  const output = domain(numeric(values, operator === '/'));
+  return derive(
+    {
+      kind: 'arithmetic',
+      operator,
+      left: left.expression,
+      right: isExpression(right) ? right.expression : literal(left, right),
+    },
+    output,
+    values.some(nullable),
+    values,
+  );
 }
 
 export function cast<E extends AnyExpression, T extends Exclude<CastType, 'decimal'>>(
@@ -123,4 +181,45 @@ export function cast(
     nullable(value),
     [value],
   );
+}
+export function avg<E extends NumericExpression>(
+  value: E,
+): Expression<
+  (NonNullable<InferExpression<E>> extends number ? number : string) | null,
+  ExpressionScope<E>
+> {
+  return derive(
+    { kind: 'function', name: 'AVG', args: Object.freeze([value.expression]) },
+    domain(numeric([value], true)),
+    true,
+    [value],
+    { phase: 'aggregate' },
+  ) as Expression<
+    (NonNullable<InferExpression<E>> extends number ? number : string) | null,
+    ExpressionScope<E>
+  >;
+}
+export function add<L extends NumericExpression, R extends Operand<L>>(
+  left: L,
+  right: R,
+): ArithmeticResult<L, R, false> {
+  return arithmetic('+', left, right) as ArithmeticResult<L, R, false>;
+}
+export function sub<L extends NumericExpression, R extends Operand<L>>(
+  left: L,
+  right: R,
+): ArithmeticResult<L, R, false> {
+  return arithmetic('-', left, right) as ArithmeticResult<L, R, false>;
+}
+export function mul<L extends NumericExpression, R extends Operand<L>>(
+  left: L,
+  right: R,
+): ArithmeticResult<L, R, false> {
+  return arithmetic('*', left, right) as ArithmeticResult<L, R, false>;
+}
+export function div<L extends NumericExpression, R extends Operand<L>>(
+  left: L,
+  right: R,
+): ArithmeticResult<L, R, true> {
+  return arithmetic('/', left, right) as ArithmeticResult<L, R, true>;
 }
