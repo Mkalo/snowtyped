@@ -52,6 +52,7 @@ import {
   object,
   or,
   over,
+  pivot,
   rank,
   recursiveCte,
   rowNumber,
@@ -61,6 +62,7 @@ import {
   text,
   time,
   timestamp,
+  unpivot,
   update,
   updateFrom,
   upper,
@@ -553,5 +555,53 @@ describe('expression helpers', () => {
         loose(select(self, { id: self.columns.id, day: cast(self.columns.day, 'timestamp_ntz') })),
       ),
     ).toThrow('Set operation column day combines different domains: DATE and TIMESTAMP_NTZ.');
+  });
+
+  it('keep SQL types through PIVOT and UNPIVOT', () => {
+    const sales = snowflakeTable('SALES', {
+      region: text('REGION'),
+      quarter: text('QUARTER').notNull(),
+      amount: decimal('AMOUNT'),
+      ratio: float('RATIO'),
+      day: date('DAY'),
+      tags: array('TAGS'),
+    });
+    const totals = pivot(sales, 'P', {
+      aggregate: 'sum',
+      value: 'amount',
+      for: 'quarter',
+      in: { q1: 'Q1' },
+    });
+    expect(totals.columns.q1.dataType).toBe('decimal');
+    expect(totals.columns.day.dataType).toBe('date');
+    const latest = pivot(sales, 'L', {
+      aggregate: 'max',
+      value: 'day',
+      for: 'quarter',
+      in: { q1: 'Q1' },
+    });
+    expect(latest.columns.q1.dataType).toBe('date');
+    expect(lt(latest.columns.q1, c.tz).dataType).toBe('boolean');
+    expect(
+      pivot(sales, 'N', { aggregate: 'count', value: 'day', for: 'quarter', in: { q1: 'Q1' } })
+        .columns.q1.dataType,
+    ).toBe('integer');
+    expect(() =>
+      pivot(sales, 'A', { aggregate: 'min', value: 'tags', for: 'quarter', in: { q1: 'Q1' } }),
+    ).toThrow('MIN does not accept ARRAY expressions.');
+    expect(() =>
+      pivot(sales, 'D', { aggregate: 'sum', value: 'day', for: 'quarter', in: { q1: 'Q1' } }),
+    ).toThrow('PIVOT sum requires a numeric value column.');
+    const dates = snowflakeTable('DATES', {
+      id: integer('ID').notNull(),
+      a: date('A'),
+      b: date('B'),
+    });
+    const rows = unpivot(dates, 'U', { value: 'day', for: 'slot', in: ['a', 'b'] });
+    expect(rows.columns.day.dataType).toBe('date');
+    expect(rows.columns.slot.dataType).toBe('text');
+    expect(() => unpivot(sales, 'X', { value: 'n', for: 'slot', in: ['amount', 'ratio'] })).toThrow(
+      'UNPIVOT columns must share one type.',
+    );
   });
 });

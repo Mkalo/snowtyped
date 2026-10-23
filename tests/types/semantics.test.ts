@@ -39,6 +39,7 @@ import {
   min,
   object,
   over,
+  pivot,
   rank,
   recursiveCte,
   rowNumber,
@@ -48,6 +49,7 @@ import {
   text,
   time,
   timestamp,
+  unpivot,
   update,
   upper,
   variant,
@@ -252,3 +254,23 @@ recursiveCte('BAD', select(t, { id: c.id, day: c.day }), (self) =>
   // @ts-expect-error The recursive branch must keep each column's SQL type.
   select(self, { id: self.columns.id, day: cast(self.columns.day, 'timestamp_ntz') }),
 );
+
+const pivoted = pivot(snowflakeTable('PV', { q: text('Q').notNull(), day: date('DAY') }), 'P', {
+  aggregate: 'max',
+  value: 'day',
+  for: 'q',
+  in: { q1: 'Q1' },
+});
+expectTypeOf(pivoted.columns.q1.dataType).toEqualTypeOf<'date'>();
+lt(pivoted.columns.q1, c.tz);
+// @ts-expect-error PIVOT columns keep the value column's SQL type.
+eq(pivoted.columns.q1, c.name);
+const unpivoted = unpivot(snowflakeTable('UV', { a: date('A'), b: date('B') }), 'U', {
+  value: 'day',
+  for: 'slot',
+  in: ['a', 'b'],
+});
+expectTypeOf(unpivoted.columns.day.dataType).toEqualTypeOf<'date'>();
+expectTypeOf(unpivoted.columns.slot.dataType).toEqualTypeOf<'text'>();
+// @ts-expect-error UNPIVOT values keep their SQL type.
+eq(unpivoted.columns.day, c.name);

@@ -11,12 +11,12 @@ const expected = {
   snowtyped: {
     values: names(
       `add alias and array asc avg binary boolean caseWhen cast coalesce concat count date
-      dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div eq
-      flatten float generateSchema geography geometry gt gte ilike inArray insert insertFrom
-      integer introspect isNotNull isNull jsonPath lag lead length like lower lt lte max
-      mergeInto min mul ne not object or over rangeBetween rank recursiveCte rowNumber rowsBetween select
-      snowflakeTable sql sub substring sum text time timeTravel timestamp trim update
-      updateFrom upper variant vector`,
+      dateAdd dateDiff datePart dateTrunc decimal deleteFrom deleteUsing denseRank desc div
+      dynamicPivot eq flatten float generateSchema geography geometry gt gte ilike inArray
+      insert insertFrom integer introspect isNotNull isNull jsonPath lag lead length like lower
+      lt lte max mergeInto min mul ne not object or over pivot rangeBetween rank recursiveCte
+      rowNumber rowsBetween select snowflakeTable sql sub substring sum text time timestamp
+      timeTravel trim unpivot update updateFrom upper variant vector`,
       'compileAst identifier quoteIdentifier',
     ),
     types: names(
@@ -25,14 +25,17 @@ const expected = {
       FilteredMutation FlattenOptions FrameBoundary FramedWindowOptions GeoJsonGeometry
       GeoPosition IdentityOptions InferColumn InferExpression InferSelection InsertSource
       InsertValues IntersectRow IntervalUnit IntrospectedColumn IntrospectedTable MergeQuery
-      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering Predicate
-      RangeBoundary RawQuery RecursiveName RecursiveOperand RecursiveRow SelectQuery Selection ServerValue ServerValueKind ServerValues
-      SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation SqlParameter Table
-      TableOptions UnionRow UpdateValues WindowFrame`,
+      MutationQuery OffsetWindowOptions OperandRow OrderedWindowOptions Ordering PivotAggregate
+      PivotColumns PivotOptions PivotValue Predicate RangeBoundary RawQuery RecursiveName
+      RecursiveOperand RecursiveRow Selection SelectQuery ServerValue ServerValueKind
+      ServerValues SetColumns SetOperand SetOperator SetQuery SetScope SqlInterpolation
+      SqlParameter Table TableOptions UnionRow UnpivotColumns UnpivotOptions UpdateValues
+      WindowFrame`,
       `AssignmentNode CteNode DefaultNode DeleteNode DerivedNode EqualityNode ExpressionNode
-      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode
-      MergeNode OrderNode QueryNode RelationNode SelectNode SelfReferenceNode SetOperationNode SourceReference
-      StatementNode TableNode TemporalNode UpdateNode WindowFrameNode WireType`,
+      FlattenNode FrameBoundaryNode IdentifierNode InsertNode JoinNode MergeBranchNode MergeNode
+      OrderNode PivotLiteral PivotNode QueryNode RelationNode SelectNode SelfReferenceNode
+      SetOperationNode SourceReference StatementNode TableNode TemporalNode UnpivotNode
+      UpdateNode WindowFrameNode WireType`,
     ),
   },
   'snowtyped/snowflake': {

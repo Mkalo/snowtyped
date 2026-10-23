@@ -19,6 +19,8 @@ export {
   type MergeBranchNode,
   type MergeNode,
   type OrderNode,
+  type PivotLiteral,
+  type PivotNode,
   type QueryNode,
   quoteIdentifier,
   type RelationNode,
@@ -30,6 +32,7 @@ export {
   type StatementNode,
   type TableNode,
   type TemporalNode,
+  type UnpivotNode,
   type UpdateNode,
   type WindowFrameNode,
   type WireType,
@@ -121,6 +124,17 @@ export {
   update,
   updateFrom,
 } from './mutations.js';
+export {
+  dynamicPivot,
+  type PivotAggregate,
+  type PivotColumns,
+  type PivotOptions,
+  type PivotValue,
+  pivot,
+  type UnpivotColumns,
+  type UnpivotOptions,
+  unpivot,
+} from './pivot.js';
 export {
   type CompatibleOperand,
   type IntersectRow,

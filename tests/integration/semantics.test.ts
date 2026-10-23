@@ -23,6 +23,7 @@ import {
   lt,
   object,
   over,
+  pivot,
   rowNumber,
   select,
   snowflakeTable,
@@ -222,6 +223,20 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
       { day: '2024-01-03', id: 1n },
       { day: '2024-01-03', id: 2n },
     ]);
+  });
+
+  it('keeps SQL types through PIVOT', async () => {
+    const source = select(facts, { grp: c.grp, day: c.day }).as('SRC');
+    const latest = pivot(source, 'LATEST', {
+      aggregate: 'max',
+      value: 'day',
+      for: 'grp',
+      in: { lower: 'a', upper: 'B' },
+    });
+    const query = select(latest).where(
+      lt(latest.columns.lower, dateAdd('hour', 1n, latest.columns.upper)),
+    );
+    expect((await db.execute(query)).rows).toEqual([{ lower: '2024-01-02', upper: '2024-01-03' }]);
   });
 
   it('assigns across compatible SQL types', async () => {

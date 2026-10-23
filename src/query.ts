@@ -219,7 +219,7 @@ export function assertScope(
   if (values.some((value) => value.refs.some((ref) => !available.has(ref.id))))
     throw new TypeError('Expression does not belong to the available table scope.');
 }
-function derivedServerValue(): never {
+export function derivedServerValue(): never {
   throw new TypeError('Server values can only be declared on base table columns.');
 }
 function validateSelection(selection: Selection, tables: readonly Table[]): void {
