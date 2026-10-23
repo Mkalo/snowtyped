@@ -1,0 +1,85 @@
+name: Deploy docs
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish or restore, such as v0.1.0-alpha.1
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: docs-production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DOCS_TAG: ${{ inputs.tag }}
+
+jobs:
+  build:
+    name: Build release docs
+    if: github.repository == 'Mkalo/snowtyped' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Validate the tag
+        run: '[[ "$DOCS_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)\.[0-9]+)?$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a released commit on main with a matching package version
+        run: |
+          sha="$(git rev-parse --verify "refs/tags/$DOCS_TAG^{commit}")"
+          git merge-base --is-ancestor "$sha" origin/main
+          git checkout --detach "$sha"
+          version="$(node -p 'require("./package.json").version')"
+          [ "v$version" = "$DOCS_TAG" ] || { echo "::error::$DOCS_TAG contains package version $version."; exit 1; }
+          [ -f website/package.json ] || { echo "::error::$DOCS_TAG predates the documentation site."; exit 1; }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install library dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install docs dependencies
+        working-directory: website
+        run: pnpm install --frozen-lockfile
+      - name: Type check, build, and test the site
+        working-directory: website
+        env:
+          DOCS_URL: ${{ vars.DOCS_URL }}
+          DOCS_SOURCE_REF: ${{ inputs.tag }}
+        run: pnpm check
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: website/dist/
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

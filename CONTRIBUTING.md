@@ -21,6 +21,8 @@ public APIs, behavior, or feature boundaries update the matching pages in
 `website/src/content/docs/` along with the README. Its examples are type-checked snippets under
 `website/src/snippets/`, and its tests require every runtime export to appear in a guide or
 snippet. It is a separate pnpm project (Node.js 22.23.4+); run `pnpm check` in `website/`.
+Write internal links root-relative, such as `/guides/queries/`; the build adds the deployment
+base path. See [documentation deployment](docs/docs-deployment.md).
 
 See [CI and release checks](docs/ci.md) for required-check configuration, diagnostics,
 action updates, and the manual gate when hosted enforcement is unavailable.
