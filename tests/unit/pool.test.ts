@@ -137,17 +137,13 @@ describe('SDK-backed pool leases', () => {
     expect(driver.acquire).toHaveBeenCalledOnce();
     expect(driver.release).toHaveBeenCalledOnce();
     let cancelled: ((error?: SnowflakeError) => void) | undefined;
-    let complete: StatementOption['complete'];
     const statement = {
       cancel: vi.fn((callback?: (error?: SnowflakeError) => void) => {
         cancelled = callback;
       }),
     } as unknown as RowStatement;
     const connection = await driver.acquire();
-    connection.execute.mockImplementation((options: StatementOption) => {
-      complete = options.complete;
-      return statement;
-    });
+    connection.execute.mockImplementation(() => statement);
     const pending = db.queryRaw(sql`SELECT SYSTEM$WAIT(10)`, { timeoutMs: 1 });
     await vi.waitFor(() => expect(statement.cancel).toHaveBeenCalledOnce());
     await new Promise((resolve) => setTimeout(resolve, 5));

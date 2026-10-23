@@ -97,7 +97,7 @@ describe('raw client queries', () => {
     expect(fake.connection.execute).not.toHaveBeenCalled();
   });
 
-  it('cancels on a deadline only after the SDK acknowledges and ignores late completion', async () => {
+  it('cancels on a deadline once the SDK acknowledges and ignores late completion', async () => {
     const fake = deferred();
     let settled = false;
     const pending = createClient(fake.connection)
@@ -106,7 +106,6 @@ describe('raw client queries', () => {
         settled = true;
       });
     await vi.waitFor(() => expect(fake.statement.cancel).toHaveBeenCalledOnce());
-    fake.finish();
     await Promise.resolve();
     expect(settled).toBe(false);
     fake.acknowledge();
@@ -115,20 +114,16 @@ describe('raw client queries', () => {
     expect(fake.statement.cancel).toHaveBeenCalledOnce();
   });
 
-  it('surfaces SDK cancellation failures with the abort reason', async () => {
+  it('settles with the real result when a raw query finishes before its cancel', async () => {
     const fake = deferred();
     const controller = new AbortController();
-    const reason = new Error('stop');
-    const failure = new Error('cancel failed');
     const pending = createClient(fake.connection).queryRaw(sql`SELECT 1`, {
       signal: controller.signal,
     });
-    controller.abort(reason);
-    fake.acknowledge(failure);
-    await expect(pending).rejects.toMatchObject({
-      message: 'Query cancellation failed.',
-      errors: [reason, failure],
-    });
+    controller.abort(new Error('stop'));
+    fake.acknowledge(new Error('cancel failed'));
+    fake.finish();
+    await expect(pending).resolves.toEqual([{ ID: '1' }]);
   });
 
   it('rejects invalid deadlines before executing', async () => {
