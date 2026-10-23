@@ -6,6 +6,7 @@ description: Typed INSERT, UPDATE, DELETE, and MERGE statements.
 import { Aside } from '@astrojs/starlight/components';
 import Snippet from '../../../components/Snippet.astro';
 import merge from '../../../snippets/merge.ts?raw';
+import sourcedWrites from '../../../snippets/sourced-writes.ts?raw';
 import writes from '../../../snippets/writes.ts?raw';
 
 <Snippet code={writes} />
@@ -19,8 +20,26 @@ import writes from '../../../snippets/writes.ts?raw';
   UPDATE and DELETE without `.where()` affect every row in the table.
 </Aside>
 
+## Writes from another source
+
+<Snippet code={sourcedWrites} />
+
+- `insertFrom(target, query)` maps each selected name to a target column. The selected row type,
+  including nullability from outer joins, must fit the target, and every required column must be
+  selected.
+- `updateFrom(target, source, on, values)` and `deleteUsing(target, source, on)` require a join
+  predicate. `.where()` adds filters to it, so a forgotten filter cannot cross join every row.
+- Sources are base tables or derived queries (`.as()`). Combine several tables into one derived
+  query.
+
 ## MERGE
 
-`mergeInto(target, source, on)` supports matched update, matched delete, and unmatched insert.
+`mergeInto(target, source, on)` adds `WHEN [NOT] MATCHED` branches in the order they are called.
+`whenMatchedUpdate(values, condition?)`, `whenMatchedDelete(condition?)`, and
+`whenNotMatchedInsert(values, condition?)` each take an optional condition.
 
 <Snippet code={merge} />
+
+- An unconditional branch must be the last of its kind. Calling it again replaces it, and adding a
+  conditional branch after it throws.
+- NOT MATCHED values and conditions can only reference the source; the target row does not exist.
