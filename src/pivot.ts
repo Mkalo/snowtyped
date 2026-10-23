@@ -164,6 +164,12 @@ function aggregation(
       throw new TypeError('Unsupported PIVOT aggregate.');
   }
   if (options.default === null) throw new TypeError('A PIVOT default cannot be null.');
+  if (
+    options.aggregate === 'sum' &&
+    options.default !== undefined &&
+    !/^-?\d+(?:\.\d+)?$/.test(String(options.default))
+  )
+    throw new TypeError('A PIVOT sum default must be decimal text.');
   const groups = Object.entries(source.columns).filter(
     ([key]) => key !== options.value && key !== options.for,
   );

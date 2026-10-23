@@ -187,6 +187,7 @@ describe('PIVOT', () => {
     expect(() => loose(sales, 'X', { ...base, value: 'region' })).toThrow('numeric');
     expect(() => loose(sales, 'X', { ...base, aggregate: 'avg' })).toThrow('Unsupported');
     expect(() => loose(sales, 'X', { ...base, default: null })).toThrow('cannot be null');
+    expect(() => loose(sales, 'X', { ...base, default: 'abc' })).toThrow('decimal text');
     expect(() => loose(sales, 'X', { ...base, in: {} })).toThrow('at least one value');
     expect(() => loose(sales, 'X', { ...base, in: { id: 'Q1' } })).toThrow(
       'collides with a grouping column: id',
