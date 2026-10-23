@@ -1,0 +1,102 @@
+---
+title: Schema declarations
+description: Declare Snowflake tables once and get result types and runtime validation from them.
+---
+
+import Snippet from '../../../components/Snippet.astro';
+import constraints from '../../../snippets/constraints.ts?raw';
+import schema from '../../../snippets/schema.ts?raw';
+import semiStructured from '../../../snippets/semi-structured.ts?raw';
+import spatialVector from '../../../snippets/spatial-vector.ts?raw';
+import structuredTypes from '../../../snippets/structured-types.ts?raw';
+import variantShape from '../../../snippets/variant-shape.ts?raw';
+
+A table declaration is the single source of truth for a structured query. It determines the
+TypeScript result type and the Zod validator that checks returned rows. You do not write result
+interfaces or decoders.
+
+<Snippet code={schema} />
+
+- The first argument to `snowflakeTable` is the physical table name. The optional third argument
+  qualifies it with a `database` and `schema`.
+- Each column builder takes the exact physical column name. Names are quoted, so case and
+  punctuation are preserved.
+- Columns are nullable by default. `.notNull()` removes `null` from the inferred type.
+- Declarations should match the physical schema. Declared precision, scale, and length are checked
+  by Snowtyped; other database constraints remain enforced by Snowflake.
+
+## Column types
+
+| Declaration                             | Non-null output           | Notes                                       |
+| --------------------------------------- | ------------------------- | ------------------------------------------- |
+| `text('NAME')`                          | `string`                  | Text                                        |
+| `integer('ID')`                         | `bigint`                  | Exact integral NUMBER                       |
+| `decimal('BALANCE')`                    | `string`                  | Exact fixed-point decimal text              |
+| `float('VALUE')`                        | `number`                  | Finite floating-point values                |
+| `boolean('ACTIVE')`                     | `boolean`                 | No truthiness coercion                      |
+| `date('DAY')`                           | `string`                  | Calendar date                               |
+| `time('CLOCK')`                         | `string`                  | Time with up to nine fractional digits      |
+| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`                  | Nanoseconds retained; LTZ/TZ include offset |
+| `binary('DATA')`                        | `Uint8Array`              | SDK Buffers are accepted                    |
+| `variant('PAYLOAD')`                    | `unknown`                 | JSON without an assumed shape               |
+| `array('TAGS')`                         | `unknown[]`               | Semi-structured ARRAY                       |
+| `object('META')`                        | `Record<string, unknown>` | Semi-structured OBJECT                      |
+| `geography('LOCATION')`                 | `GeoJsonGeometry`         | GeoJSON geometry, exact coordinates         |
+| `geometry('SHAPE', { srid: 4326 })`     | `GeoJsonGeometry`         | Exact coordinates; SRID checked (default 0) |
+| `vector('EMBEDDING', 'float', 768)`     | `number[]`                | FLOAT32 or INT32 elements, fixed dimension  |
+
+See [validation and representations](/guides/validation/) for why numbers and temporal values use
+these representations.
+
+## Precision, scale, and length
+
+Declare the physical constraints of a column so values that would not fit are rejected instead of
+being rounded or truncated by Snowflake.
+
+<Snippet code={constraints} />
+
+INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including
+extra scale or fractional seconds. Zeros that do not change the value are accepted. VARCHAR length
+counts code points and BINARY length counts bytes. Predicate literals are not constrained.
+
+## Structured VARIANT columns
+
+Give `variant` a Zod schema to declare a JSON shape. The schema is checked at runtime, and read and
+write types are inferred from it. A type parameter alone cannot establish a VARIANT shape.
+
+<Snippet code={variantShape} />
+
+`array` takes an element schema and `object` takes an OBJECT schema in the same way. JSON numbers
+that a JavaScript number cannot hold exactly reject the result instead of being rounded.
+
+<Snippet code={semiStructured} />
+
+## Structured ARRAY, OBJECT, and MAP columns
+
+Declare Snowflake structured types with `structured(name, type)` and `structuredType` descriptors:
+`integer`, `decimal`, `text`, and `boolean` take the same constraint options as the column
+factories, and `array`, `object`, and `map` nest them.
+
+<Snippet code={structuredTypes} />
+
+Elements, fields, and MAP values are nullable unless declared `.notNull()`. OBJECT values must have
+exactly the declared keys. MAP values are JavaScript `Map`s keyed by `string` or `bigint`, and MAP
+keys must be VARCHAR or NUMBER with scale 0. NUMBER elements stay exact, and decimals are padded to
+their declared scale. Writes cast to the declared type. Snowflake compares and assigns a structured
+value only with the same structured type, never with VARIANT. The checks know a column is
+structured but not its element types, so Snowflake still rejects mismatched element types. FLOAT,
+temporal, binary, and semi-structured elements are not supported yet.
+
+## Spatial and vector columns
+
+<Snippet code={spatialVector} />
+
+Spatial values are GeoJSON geometry objects. Features, `bbox`, and `crs` members are rejected.
+GEOMETRY results must carry the declared SRID, and Snowflake does not support `=` on spatial values.
+VECTOR writes must match the declared dimension. FLOAT elements are stored as FLOAT32, so results
+return the nearest FLOAT32 value.
+
+## Aliases
+
+Use `alias(table, 'name')` when the same table appears more than once in a query. See
+[joins](/guides/queries/#joins).

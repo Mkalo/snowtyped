@@ -1,6 +1,6 @@
 import type { StatementOption } from 'snowflake-sdk';
 import type { MutationQuery } from '../mutations.js';
-import type { SelectQuery } from '../query.js';
+import type { SelectQuery, SetQuery } from '../query.js';
 import { type InferSelection, resultSchema, type Selection } from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation, sql } from '../sql.js';
 import {
@@ -25,16 +25,27 @@ export interface SnowflakeClient {
     query: SelectQuery<S, Scope, Nullable>,
     options?: ExecuteOptions,
   ): Promise<QueryResult<InferSelection<S, Nullable>>>;
+  execute<Row>(query: SetQuery<Row>, options?: ExecuteOptions): Promise<QueryResult<Row>>;
   execute(query: MutationQuery, options?: ExecuteOptions): Promise<MutationResult>;
   queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: SqlInterpolation[]): Promise<T>;
-  queryRaw<T = unknown>(query: RawQuery<T>): Promise<T>;
-  queryRaw<T = unknown>(query: RawQuery): Promise<T>;
+  queryRaw<T = unknown>(query: RawQuery<T>, options?: ExecuteOptions): Promise<T>;
+  queryRaw<T = unknown>(query: RawQuery, options?: ExecuteOptions): Promise<T>;
   stream<S extends Selection, Scope extends string, Nullable extends string>(
     query: SelectQuery<S, Scope, Nullable>,
     options?: ExecuteOptions,
   ): AsyncIterable<InferSelection<S, Nullable>>;
+  stream<Row>(query: SetQuery<Row>, options?: ExecuteOptions): AsyncIterable<Row>;
   streamRaw<T = unknown>(query: RawQuery, options?: ExecuteOptions): AsyncIterable<T>;
   transaction<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T>;
+}
+
+type RowQuery = SelectQuery<Selection, string, string> | SetQuery<Record<string, unknown>>;
+
+const unusable = new WeakSet<DriverConnection>();
+
+/** True once a failed ROLLBACK left the connection in an unknown transaction state. */
+export function isUnusable(connection: DriverConnection): boolean {
+  return unusable.has(connection);
 }
 
 /** Uses a connected SDK connection. The caller owns connection lifecycle. */
@@ -58,6 +69,10 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
   }
   function factory(session?: Session): SnowflakeClient {
     function check() {
+      if (unusable.has(connection))
+        throw new Error(
+          'This connection is unusable because a transaction ROLLBACK failed; discard it.',
+        );
       if (activeSession && !session)
         throw new Error(
           'This connection is reserved by an active transaction; use its transaction client.',
@@ -65,7 +80,7 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
       if (session && (activeSession !== session || session.closed))
         throw new Error('This transaction client is no longer active.');
     }
-    function prepared(query: SelectQuery<Selection, string, string>) {
+    function prepared(query: RowQuery) {
       let schema = schemas.get(query);
       if (!schema) {
         schema = resultSchema(query.selection, query.nullableSources);
@@ -102,11 +117,11 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
       };
     };
     async function execute(
-      query: SelectQuery<Selection, string, string> | MutationQuery,
+      query: RowQuery | MutationQuery,
       options: ExecuteOptions = {},
     ): Promise<QueryResult<unknown> | MutationResult> {
       check();
-      const decode = query.kind === 'select' ? prepared(query) : undefined;
+      const decode = query.kind === 'mutation' ? undefined : prepared(query);
       const result = await request(
         connection,
         driverOptions(query, 'array'),
@@ -124,24 +139,24 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
       };
     }
     return Object.freeze({
-      execute: (
-        query: SelectQuery<Selection, string, string> | MutationQuery,
-        options?: ExecuteOptions,
-      ) => tracked(execute(query, options), session),
+      execute: (query: RowQuery | MutationQuery, options?: ExecuteOptions) =>
+        tracked(execute(query, options), session),
       async queryRaw<T = unknown>(
         input: TemplateStringsArray | RawQuery<T>,
-        ...values: SqlInterpolation[]
+        ...values: SqlInterpolation[] | [ExecuteOptions?]
       ): Promise<T> {
         check();
-        const query = isRawQuery(input) ? input : sql<T>(input, ...values);
+        const raw = isRawQuery(input);
+        const query = raw ? input : sql<T>(input, ...(values as SqlInterpolation[]));
+        const options = (raw ? values[0] : undefined) as ExecuteOptions | undefined;
         return tracked(
-          request(connection, driverOptions(query, 'object')).then(
+          request(connection, driverOptions(query, 'object'), requestSignal(options ?? {})).then(
             (result) => result.rows?.map((row) => normalizeWireRow(row, result.statement)) as T,
           ),
           session,
         );
       },
-      async *stream(query: SelectQuery<Selection, string, string>, options: ExecuteOptions = {}) {
+      async *stream(query: RowQuery, options: ExecuteOptions = {}) {
         check();
         const decode = prepared(query);
         streams++;
@@ -195,6 +210,7 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
             try {
               await request(connection, driverOptions(sql`ROLLBACK`, 'object'));
             } catch (rollback) {
+              unusable.add(connection);
               throw new AggregateError(
                 [error, rollback],
                 'Transaction failed and rollback also failed.',
