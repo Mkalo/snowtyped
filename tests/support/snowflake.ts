@@ -11,9 +11,21 @@ export function integrationConfig(environment: NodeJS.ProcessEnv = process.env):
     'SNOWFLAKE_DATABASE',
     'SNOWFLAKE_WAREHOUSE',
     'SNOWFLAKE_ROLE',
-    'SNOWFLAKE_PRIVATE_KEY_PATH',
   ] as const;
-  const missing = required.filter((name) => !environment[name]?.trim());
+  let privateKey = environment.SNOWFLAKE_PRIVATE_KEY?.trim();
+  if (privateKey && !privateKey.startsWith('-----BEGIN ')) {
+    privateKey = Buffer.from(privateKey, 'base64').toString('utf8').trim();
+    if (!privateKey.startsWith('-----BEGIN ')) {
+      throw new Error(
+        'SNOWFLAKE_PRIVATE_KEY must be a PEM private key or the Base64 encoding of the full PEM.',
+      );
+    }
+  }
+  const privateKeyPath = environment.SNOWFLAKE_PRIVATE_KEY_PATH?.trim();
+  const missing: string[] = required.filter((name) => !environment[name]?.trim());
+  if (!privateKey && !privateKeyPath) {
+    missing.push('SNOWFLAKE_PRIVATE_KEY or SNOWFLAKE_PRIVATE_KEY_PATH');
+  }
   if (missing.length) {
     throw new Error(
       `Missing integration configuration: ${missing.join(', ')}. See docs/snowflake-setup.md.`,
@@ -25,7 +37,7 @@ export function integrationConfig(environment: NodeJS.ProcessEnv = process.env):
     database: environment.SNOWFLAKE_DATABASE as string,
     warehouse: environment.SNOWFLAKE_WAREHOUSE as string,
     role: environment.SNOWFLAKE_ROLE as string,
-    privateKeyPath: environment.SNOWFLAKE_PRIVATE_KEY_PATH as string,
+    ...(privateKey ? { privateKey } : { privateKeyPath: privateKeyPath as string }),
     ...(environment.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
       ? { privateKeyPass: environment.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }
       : {}),

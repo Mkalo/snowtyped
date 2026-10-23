@@ -48,7 +48,15 @@ SNOWFLAKE_ROLE=SNOWFLAKE_TYPESAFE_TEST_ROLE
 SNOWFLAKE_PRIVATE_KEY_PATH=.secrets/snowflake_test_key.p8
 ```
 
-The account field takes an account identifier, not a full `https://` URL. Relative key paths are resolved from the project directory. Existing process environment variables take precedence over the local file. Other `.env` files are not loaded.
+To provide the key directly without a key file at test time, Base64-encode the entire PEM (including its header, footer, and newlines) and replace `SNOWFLAKE_PRIVATE_KEY_PATH` with the resulting single-line value:
+
+```dotenv
+SNOWFLAKE_PRIVATE_KEY=<base64-encoded full PEM>
+```
+
+The test configuration decodes Base64 before passing the key to the Snowflake SDK. A raw PEM in a quoted multiline value is also accepted. `SNOWFLAKE_PRIVATE_KEY` takes precedence when both key settings are present. For an encrypted PEM, also set `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` to its existing passphrase; unencrypted keys need no passphrase. Keep private keys in the ignored `.env.integration` file or your secret manager.
+
+The account field takes an account identifier, not a full `https://` URL. Relative key paths are resolved from the project directory. Existing process environment variables take precedence over the same variables in the local file. Other `.env` files are not loaded.
 
 ## 4. Run live tests
 
