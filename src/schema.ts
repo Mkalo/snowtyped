@@ -120,11 +120,19 @@ export function decimal(name: string): Column<string> {
 export function boolean(name: string): Column<boolean> {
   return column(name, 'boolean', z.boolean(), z.boolean(), false);
 }
+/** Decodes `<significand>p<exponent>` wire text; plain numeric text is also accepted. */
+function decodeFloat(value: string): number {
+  const match = /^(-?\d+)p(-?\d+)$/.exec(value);
+  if (!match) return Number(value);
+  const exponent = Number(match[2]);
+  const half = Math.trunc(exponent / 2);
+  return Number(match[1]) * 2 ** half * 2 ** (exponent - half);
+}
 export function float(name: string): Column<number> {
   return column(
     name,
     'float',
-    z.string().transform(Number).pipe(z.number().finite()),
+    z.string().transform(decodeFloat).pipe(z.number().finite()),
     z.number().finite(),
     false,
   );
