@@ -10,6 +10,7 @@ import expressions from '../../../snippets/expressions.ts?raw';
 import firstQuery from '../../../snippets/first-query.ts?raw';
 import grouping from '../../../snippets/grouping.ts?raw';
 import joins from '../../../snippets/joins.ts?raw';
+import nested from '../../../snippets/nested.ts?raw';
 import recursiveCtes from '../../../snippets/recursive-ctes.ts?raw';
 import setOperations from '../../../snippets/set-operations.ts?raw';
 import subqueries from '../../../snippets/subqueries.ts?raw';
@@ -77,6 +78,28 @@ Use `alias(table, 'name')` for repeated table names. Table and alias scopes are 
 and at runtime; dynamic identities that share a static name are distinguished at runtime.
 
 <Snippet code={aliases} />
+
+## Nested objects
+
+A projection entry can be a plain object of further entries, nested to any depth. The SQL stays
+flat: each leaf is projected under its dotted path, such as `"customer.name"`, with its own exact
+wire format, and rows are rebuilt into objects when they are decoded.
+
+<Snippet code={nested} />
+
+An object over an outer-joined source becomes `null` only when that is certain. Its keys are its
+direct entries whose declared type excludes NULL, such as a `.notNull()` column or `count()`. The
+object is `null` when every key reads NULL and each key can only be NULL through an outer join.
+A present object proves the sources that every key reads, so their other NOT NULL columns are
+non-null inside it. An object without keys, or with a key that no outer join can null, is always
+an object, with each entry nullable as usual. Include the joined table's NOT NULL key to make an
+object collapse.
+
+Nested objects are rebuilt per result row, so a one-to-many join still returns one row per child,
+and `.limit()` and `.offset()` count those joined rows. Execution, streaming, pools, and
+transactions decode nested rows the same way. A query with a nested projection cannot be a derived
+table, CTE, set operand, subquery, or INSERT source, and nested paths cannot repeat another
+projection alias.
 
 ## Grouping and pagination
 

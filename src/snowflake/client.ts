@@ -1,7 +1,14 @@
 import type { StatementOption } from 'snowflake-sdk';
+import type * as z from 'zod';
 import type { MutationQuery } from '../mutations.js';
 import type { SelectQuery, SetQuery } from '../query.js';
-import { type InferSelection, resultSchema, type Selection } from '../schema.js';
+import {
+  type InferSelection,
+  type Projection,
+  projectionLeaves,
+  projectionRow,
+  resultSchema,
+} from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation, sql } from '../sql.js';
 import {
   type DriverConnection,
@@ -21,7 +28,7 @@ export interface MutationResult {
   readonly affectedRows: number;
 }
 export interface SnowflakeClient {
-  execute<S extends Selection, Scope extends string, Nullable extends string>(
+  execute<S extends Projection, Scope extends string, Nullable extends string>(
     query: SelectQuery<S, Scope, Nullable>,
     options?: ExecuteOptions,
   ): Promise<QueryResult<InferSelection<S, Nullable>>>;
@@ -30,7 +37,7 @@ export interface SnowflakeClient {
   queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: SqlInterpolation[]): Promise<T>;
   queryRaw<T = unknown>(query: RawQuery<T>, options?: ExecuteOptions): Promise<T>;
   queryRaw<T = unknown>(query: RawQuery, options?: ExecuteOptions): Promise<T>;
-  stream<S extends Selection, Scope extends string, Nullable extends string>(
+  stream<S extends Projection, Scope extends string, Nullable extends string>(
     query: SelectQuery<S, Scope, Nullable>,
     options?: ExecuteOptions,
   ): AsyncIterable<InferSelection<S, Nullable>>;
@@ -39,7 +46,7 @@ export interface SnowflakeClient {
   transaction<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T>;
 }
 
-type RowQuery = SelectQuery<Selection, string, string> | SetQuery<Record<string, unknown>>;
+type RowQuery = SelectQuery<Projection, string, string> | SetQuery<Record<string, unknown>>;
 
 const unusable = new WeakSet<DriverConnection>();
 
@@ -50,7 +57,7 @@ export function isUnusable(connection: DriverConnection): boolean {
 
 /** Uses a connected SDK connection. The caller owns connection lifecycle. */
 export function createClient(connection: DriverConnection): SnowflakeClient {
-  const schemas = new WeakMap<object, ReturnType<typeof resultSchema>>();
+  const schemas = new WeakMap<object, z.ZodType>();
   interface Session {
     readonly requests: Promise<unknown>[];
     closed: boolean;
@@ -83,15 +90,16 @@ export function createClient(connection: DriverConnection): SnowflakeClient {
     function prepared(query: RowQuery) {
       let schema = schemas.get(query);
       if (!schema) {
-        schema = resultSchema(query.selection, query.nullableSources);
+        schema = resultSchema(query.selection as Projection, query.nullableSources) as z.ZodType;
         schemas.set(query, schema);
       }
       const validator = schema;
-      const keys = Object.keys(query.selection);
+      const width = projectionLeaves(query.selection).length;
+      const shape = projectionRow(query.selection);
       return (row: unknown): unknown => {
-        if (!Array.isArray(row) || row.length !== keys.length)
+        if (!Array.isArray(row) || row.length !== width)
           throw new TypeError('Result row does not match the declared projection width.');
-        return validator.parse(Object.fromEntries(keys.map((key, i) => [key, row[i]])));
+        return validator.parse(shape(row));
       };
     }
     const driverOptions = (

@@ -30,7 +30,7 @@ const expected = {
       IntrospectedColumn IntrospectedTable MatchRecognizeColumns MatchRecognizeOptions MatchRowScope
       MatchVariableScope MeasureContext MergeQuery MutationQuery Navigation OffsetWindowOptions
       OperandRow OrderedWindowOptions Ordering PivotAggregate PivotColumns PivotOptions PivotValue
-      Predicate QuantifiablePattern QuantifierOptions RangeBoundary RawQuery RecursiveName
+      Predicate Projection QuantifiablePattern QuantifierOptions RangeBoundary RawQuery RecursiveName
       RecursiveOperand RecursiveRow RowPattern RowsPerMatch Selection SelectQuery ServerValue
       ServerValueKind ServerValues SetColumns SetOperand SetOperator SetQuery SetScope
       SqlInterpolation SqlParameter StructuredType Table TableOptions UnionRow UnpivotColumns
