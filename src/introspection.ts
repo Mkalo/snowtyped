@@ -24,6 +24,7 @@ const metadata = () =>
         TABLE_NAME: z.string(),
         COLUMN_NAME: z.string(),
         DATA_TYPE: z.string(),
+        DATA_TYPE_ALIAS: z.string().nullable(),
         IS_NULLABLE: z.enum(['YES', 'NO']),
         NUMERIC_PRECISION: z.string().nullable(),
         NUMERIC_SCALE: z.string().nullable(),
@@ -39,7 +40,7 @@ export async function introspect(
   options: { readonly database: string; readonly schema?: string },
 ): Promise<readonly IntrospectedTable[]> {
   const rows = metadata().parse(
-    await client.queryRaw(sql`SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, NUMERIC_PRECISION, NUMERIC_SCALE, CHARACTER_MAXIMUM_LENGTH, DATETIME_PRECISION
+    await client.queryRaw(sql`SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATA_TYPE_ALIAS, IS_NULLABLE, NUMERIC_PRECISION, NUMERIC_SCALE, CHARACTER_MAXIMUM_LENGTH, DATETIME_PRECISION
     FROM ${sql.identifier(options.database, 'INFORMATION_SCHEMA', 'COLUMNS')}
     WHERE TABLE_SCHEMA <> ${'INFORMATION_SCHEMA'} ${options.schema === undefined ? sql.unsafe('') : sql`AND TABLE_SCHEMA = ${options.schema}`}
     ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`),
@@ -63,7 +64,9 @@ export async function introspect(
     table.columns.push(
       Object.freeze({
         name: row.COLUMN_NAME,
-        dataType: row.DATA_TYPE,
+        dataType: /^(?:ARRAY|OBJECT)\(/i.test(row.DATA_TYPE_ALIAS ?? '')
+          ? (row.DATA_TYPE_ALIAS as string)
+          : row.DATA_TYPE,
         nullable: row.IS_NULLABLE === 'YES',
         precision: numeric(row.NUMERIC_PRECISION ?? row.DATETIME_PRECISION),
         scale: numeric(row.NUMERIC_SCALE),
@@ -126,9 +129,13 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
             args.push(`{ precision: ${column.precision} }`);
           break;
         case 'VARIANT':
-        case 'ARRAY':
-        case 'OBJECT':
           factoryName = 'variant';
+          break;
+        case 'ARRAY':
+          factoryName = 'array';
+          break;
+        case 'OBJECT':
+          factoryName = 'object';
           break;
         case 'BINARY':
           factoryName = 'binary';

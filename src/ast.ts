@@ -79,7 +79,9 @@ export interface CastNode {
     | 'TIME'
     | 'TIMESTAMP_NTZ'
     | 'TIMESTAMP_LTZ'
-    | 'TIMESTAMP_TZ';
+    | 'TIMESTAMP_TZ'
+    | 'ARRAY'
+    | 'OBJECT';
 }
 export type ExpressionNode =
   | IdentifierNode

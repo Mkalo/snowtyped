@@ -29,6 +29,8 @@ export type DataType =
   | 'timestamp_ltz'
   | 'timestamp_tz'
   | 'variant'
+  | 'array'
+  | 'object'
   | 'binary';
 export interface ColumnConstraints {
   readonly precision?: number;
@@ -79,15 +81,13 @@ function column<T, R extends boolean>(
   const writeSchema = nullable(constrained(value));
   const node = identifier(name);
   function encode(parsed: ColumnValue<T, R>): ExpressionNode {
-    if (dataType === 'variant' && parsed !== null) {
-      const encoded = JSON.stringify(parsed);
-      if (encoded === undefined) throw new TypeError('VARIANT values must be JSON serializable.');
+    if (dataType === 'variant' && parsed !== null) return parseJson(dataType, parsed);
+    if (dataType === 'array' || dataType === 'object')
       return Object.freeze({
-        kind: 'function',
-        name: 'PARSE_JSON',
-        args: Object.freeze([scalarParameter(encoded)]),
+        kind: 'cast',
+        value: parseJson(dataType, parsed),
+        target: dataType === 'array' ? 'ARRAY' : 'OBJECT',
       });
-    }
     if (dataType === 'binary' && parsed !== null) {
       const bytes = parsed as Uint8Array;
       return Object.freeze({
@@ -101,12 +101,15 @@ function column<T, R extends boolean>(
     }
     return scalarParameter(parsed);
   }
+  const wireType: WireType | undefined = ['text', 'boolean', 'binary'].includes(dataType)
+    ? undefined
+    : dataType === 'array' || dataType === 'object'
+      ? 'variant'
+      : (dataType as WireType);
   return Object.freeze({
     ...expression(node, readSchema, {
       valueSchema,
-      ...(!['text', 'boolean', 'binary'].includes(dataType)
-        ? { wireType: dataType as WireType }
-        : {}),
+      ...(wireType ? { wireType } : {}),
       encode,
     }),
     node,
@@ -117,6 +120,22 @@ function column<T, R extends boolean>(
     notNull: () => column(name, dataType, read, value, true, constraint),
   });
 }
+/** A NULL bind still parses to a typed NULL, so mixed rows keep one SQL type. */
+function parseJson(dataType: DataType, value: unknown): ExpressionNode {
+  const encoded = value === null ? null : JSON.stringify(value);
+  if (encoded === undefined)
+    throw new TypeError(`${dataType.toUpperCase()} values must be JSON serializable.`);
+  return Object.freeze({
+    kind: 'function',
+    name: 'PARSE_JSON',
+    args: Object.freeze([scalarParameter(encoded)]),
+  });
+}
+const json = <T>(schema: z.ZodType<T>) =>
+  z
+    .string()
+    .transform((value) => JSON.parse(value) as unknown)
+    .pipe(schema);
 function bounded(label: string, value: number, min: number, max: number): number {
   if (!Number.isSafeInteger(value) || value < min || value > max)
     throw new TypeError(`${label} must be an integer from ${min} to ${max}.`);
@@ -242,16 +261,24 @@ export function timestamp(
 export function variant(name: string): Column<unknown>;
 export function variant<T>(name: string, schema: z.ZodType<T>): Column<T>;
 export function variant(name: string, schema: z.ZodType<unknown> = z.unknown()): Column<unknown> {
-  return column(
-    name,
-    'variant',
-    z
-      .string()
-      .transform((value) => JSON.parse(value) as unknown)
-      .pipe(schema),
-    schema,
-    false,
-  );
+  return column(name, 'variant', json(schema), schema, false);
+}
+export function array(name: string): Column<unknown[]>;
+export function array<T>(name: string, element: z.ZodType<T>): Column<T[]>;
+export function array(name: string, element: z.ZodType<unknown> = z.unknown()): Column<unknown[]> {
+  const schema = z.array(element);
+  return column(name, 'array', json(schema), schema, false);
+}
+export function object(name: string): Column<Record<string, unknown>>;
+export function object<T extends Record<string, unknown>>(
+  name: string,
+  schema: z.ZodType<T>,
+): Column<T>;
+export function object(
+  name: string,
+  schema: z.ZodType<Record<string, unknown>> = z.record(z.string(), z.unknown()),
+): Column<Record<string, unknown>> {
+  return column(name, 'object', json(schema), schema, false);
 }
 export function binary(
   name: string,

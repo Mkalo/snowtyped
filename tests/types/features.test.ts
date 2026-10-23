@@ -1,6 +1,8 @@
 import { expectTypeOf } from 'vitest';
+import * as z from 'zod';
 import {
   alias,
+  array,
   binary,
   count,
   decimal,
@@ -9,6 +11,7 @@ import {
   insert,
   integer,
   jsonPath,
+  object,
   select,
   snowflakeTable,
   sql,
@@ -125,3 +128,30 @@ integer('ID', { scale: 2 });
 text('NAME', { precision: 3 });
 // @ts-expect-error Constraint values are numbers.
 decimal('AMOUNT', { precision: '12' });
+const docs = snowflakeTable('DOCS', {
+  tags: array('TAGS', z.string()).notNull(),
+  items: array('ITEMS'),
+  meta: object('META', z.object({ ok: z.boolean() })),
+  extra: object('EXTRA'),
+});
+expectTypeOf(db.execute(select(docs)))
+  .resolves.toHaveProperty('rows')
+  .toEqualTypeOf<
+    readonly {
+      readonly tags: string[];
+      readonly items: unknown[] | null;
+      readonly meta: { ok: boolean } | null;
+      readonly extra: Record<string, unknown> | null;
+    }[]
+  >();
+insert(docs, { tags: [], items: [1, 'a'], meta: { ok: true }, extra: { any: [] } });
+// @ts-expect-error Array elements must match the declared element schema.
+insert(docs, { tags: [1] });
+// @ts-expect-error ARRAY columns hold arrays.
+insert(docs, { tags: 'a' });
+// @ts-expect-error OBJECT values must match the declared schema.
+update(docs, { meta: { ok: 'yes' } });
+// @ts-expect-error OBJECT columns hold objects.
+update(docs, { extra: [1] });
+// @ts-expect-error An OBJECT schema must produce objects.
+object('META', z.string());

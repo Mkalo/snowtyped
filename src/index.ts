@@ -77,6 +77,7 @@ export { type SelectQuery, select } from './query.js';
 export {
   type AnyColumn,
   alias,
+  array,
   type BoundColumns,
   binary,
   boolean,
@@ -90,6 +91,7 @@ export {
   type InferColumn,
   type InferSelection,
   integer,
+  object,
   type Selection,
   snowflakeTable,
   type Table,

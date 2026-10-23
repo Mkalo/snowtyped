@@ -15,6 +15,7 @@ describe('schema introspection and code generation', () => {
         TABLE_NAME: 'T',
         COLUMN_NAME: 'ID',
         DATA_TYPE: 'NUMBER',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'NO',
         NUMERIC_PRECISION: '38',
         NUMERIC_SCALE: '0',
@@ -26,6 +27,7 @@ describe('schema introspection and code generation', () => {
         TABLE_NAME: 'T',
         COLUMN_NAME: 'Name"',
         DATA_TYPE: 'TEXT',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'YES',
         NUMERIC_PRECISION: null,
         NUMERIC_SCALE: null,
@@ -37,6 +39,7 @@ describe('schema introspection and code generation', () => {
         TABLE_NAME: 'T',
         COLUMN_NAME: 'AT',
         DATA_TYPE: 'TIMESTAMP_TZ',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'YES',
         NUMERIC_PRECISION: null,
         NUMERIC_SCALE: null,
@@ -48,6 +51,7 @@ describe('schema introspection and code generation', () => {
         TABLE_NAME: 'OTHER',
         COLUMN_NAME: 'ID',
         DATA_TYPE: 'NUMBER',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'NO',
         NUMERIC_PRECISION: '38',
         NUMERIC_SCALE: '2',
@@ -91,6 +95,45 @@ describe('schema introspection and code generation', () => {
     expect(code).toContain('"ID": integer("ID").notNull()');
     expect(code).toContain('"AT": timestamp("AT", "tz", { precision: 3 })');
     expect(code).toContain('"ID": decimal("ID", { precision: 38, scale: 2 }).notNull()');
+  });
+
+  it('distinguishes semi-structured ARRAY and OBJECT from structured types', async () => {
+    const row = (name: string, type: string, alias: string | null) => ({
+      TABLE_SCHEMA: 'S',
+      TABLE_NAME: 'T',
+      COLUMN_NAME: name,
+      DATA_TYPE: type,
+      DATA_TYPE_ALIAS: alias,
+      IS_NULLABLE: 'YES',
+      NUMERIC_PRECISION: null,
+      NUMERIC_SCALE: null,
+      CHARACTER_MAXIMUM_LENGTH: null,
+      DATETIME_PRECISION: null,
+    });
+    const client = {
+      queryRaw: async () => [
+        row('A', 'ARRAY', 'ARRAY'),
+        row('O', 'OBJECT', 'OBJECT'),
+        row('SA', 'ARRAY', 'ARRAY(NUMBER)'),
+        row('SO', 'OBJECT', 'OBJECT(CITY VARCHAR)'),
+      ],
+    } as unknown as SnowflakeClient;
+    const [table] = await introspect(client, { database: 'DB' });
+    if (!table) throw new Error('Expected a table.');
+    expect(table.columns.map((column) => column.dataType)).toEqual([
+      'ARRAY',
+      'OBJECT',
+      'ARRAY(NUMBER)',
+      'OBJECT(CITY VARCHAR)',
+    ]);
+    const code = generateSchema([{ ...table, columns: table.columns.slice(0, 2) }]);
+    expect(code).toContain("import { array, object, snowflakeTable } from 'snowtyped';");
+    expect(code).toContain('"A": array("A"),');
+    expect(code).toContain('"O": object("O"),');
+    for (const column of table.columns.slice(2))
+      expect(() => generateSchema([{ ...table, columns: [column] }])).toThrow(
+        `Unsupported Snowflake type for code generation: ${column.dataType}`,
+      );
   });
 
   it('rejects invalid driver metadata', async () => {
@@ -139,6 +182,8 @@ describe('schema introspection and code generation', () => {
       'time',
       'timestamp',
       'variant',
+      'array',
+      'object',
       'binary',
     ])
       expect(code).toContain(`${name}(`);

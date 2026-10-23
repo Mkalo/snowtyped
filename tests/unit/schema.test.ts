@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import * as z from 'zod';
 import {
+  array,
   binary,
   boolean,
   decimal,
@@ -9,6 +11,7 @@ import {
   like,
   lt,
   mergeInto,
+  object,
   select,
   snowflakeTable,
   text,
@@ -215,5 +218,89 @@ describe('declared column constraints', () => {
     expect(query.compile().binds).toEqual(['%abc%']);
     expect(select(table).where(lt(table.columns.id, 1000n)).compile().binds).toEqual(['1000']);
     expect(() => select(table).where(lt(table.columns.id, 'x' as unknown as bigint))).toThrow();
+  });
+});
+
+describe('semi-structured ARRAY and OBJECT columns', () => {
+  const table = snowflakeTable('DOCS', {
+    id: integer('ID').notNull(),
+    tags: array('TAGS', z.string()).notNull(),
+    items: array('ITEMS'),
+    meta: object('META', z.strictObject({ ok: z.boolean() })),
+    extra: object('EXTRA'),
+  });
+  const { tags, items, meta, extra } = table.columns;
+
+  it('decodes JSON wire values against the declared schema', () => {
+    expect(tags.readSchema.parse('["a","b"]')).toEqual(['a', 'b']);
+    expect(items.readSchema.parse('[1,null,{"a":[]}]')).toEqual([1, null, { a: [] }]);
+    expect(items.readSchema.parse(null)).toBeNull();
+    expect(meta.readSchema.parse('{"ok":true}')).toEqual({ ok: true });
+    expect(extra.readSchema.parse('{"a":null}')).toEqual({ a: null });
+    for (const input of ['[1]', '{}', null]) expect(() => tags.readSchema.parse(input)).toThrow();
+    for (const input of ['{"ok":1}', '{"ok":true,"x":1}', '[]'])
+      expect(() => meta.readSchema.parse(input)).toThrow();
+    expect(() => extra.readSchema.parse('[]')).toThrow();
+    expect([tags.dataType, meta.dataType, tags.wireType, meta.wireType]).toEqual([
+      'array',
+      'object',
+      'variant',
+      'variant',
+    ]);
+  });
+
+  it('casts JSON writes, including NULL, to the column type', () => {
+    expect(tags.encode(['a'])).toEqual({
+      kind: 'cast',
+      value: {
+        kind: 'function',
+        name: 'PARSE_JSON',
+        args: [{ kind: 'parameter', value: '["a"]' }],
+      },
+      target: 'ARRAY',
+    });
+    expect(meta.encode(null)).toEqual({
+      kind: 'cast',
+      value: { kind: 'function', name: 'PARSE_JSON', args: [{ kind: 'parameter', value: null }] },
+      target: 'OBJECT',
+    });
+    const rows = insert(table, [
+      { id: 1n, tags: [], items: null, meta: null },
+      { id: 2n, tags: ['x'], items: [1, 'two'], meta: { ok: false }, extra: { k: [1] } },
+    ]).compile();
+    expect(rows.sql).toBe(
+      'INSERT INTO "DOCS" ("ID", "TAGS", "ITEMS", "META", "EXTRA") ' +
+        'SELECT ?, CAST(PARSE_JSON(?) AS ARRAY), CAST(PARSE_JSON(?) AS ARRAY), CAST(PARSE_JSON(?) AS OBJECT), CAST(PARSE_JSON(?) AS OBJECT) ' +
+        'UNION ALL SELECT ?, CAST(PARSE_JSON(?) AS ARRAY), CAST(PARSE_JSON(?) AS ARRAY), CAST(PARSE_JSON(?) AS OBJECT), CAST(PARSE_JSON(?) AS OBJECT)',
+    );
+    expect(rows.binds).toEqual([
+      '1',
+      '[]',
+      null,
+      null,
+      null,
+      '2',
+      '["x"]',
+      '[1,"two"]',
+      '{"ok":false}',
+      '{"k":[1]}',
+    ]);
+    expect(
+      select(table)
+        .where(eq(meta, { ok: true }))
+        .compile(),
+    ).toMatchObject({
+      sql: expect.stringContaining('("META" = CAST(PARSE_JSON(?) AS OBJECT))'),
+      binds: ['{"ok":true}'],
+    });
+    expect(select(table).compile().sql).toContain('TO_JSON("__sflib_result"."tags") AS "tags"');
+  });
+
+  it('validates writes against the declared schema', () => {
+    expect(() => insert(table, { id: 1n, tags: [1] as unknown as string[] })).toThrow();
+    expect(() => insert(table, { id: 1n, tags: null as unknown as string[] })).toThrow();
+    expect(() => update(table, { meta: { ok: true, x: 1 } as { ok: boolean } })).toThrow();
+    expect(() => update(table, { items: [1n] })).toThrow('serialize');
+    expect(update(table, { extra: { a: 1 } }).compile().binds).toEqual(['{"a":1}']);
   });
 });

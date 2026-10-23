@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   alias,
   and,
+  array,
   asc,
   binary,
   count,
@@ -24,6 +25,7 @@ import {
   jsonPath,
   lower,
   mergeInto,
+  object,
   rowNumber,
   select,
   snowflakeTable,
@@ -106,6 +108,17 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const docs = snowflakeTable(
+    'DOCS',
+    {
+      id: integer('ID').notNull(),
+      tags: array('TAGS', z.string()).notNull(),
+      items: array('ITEMS'),
+      meta: object('META', z.strictObject({ ok: z.boolean(), note: z.string().nullable() })),
+      extra: object('EXTRA'),
+    },
+    namespace,
+  );
   const name = (table: { node: { parts: readonly string[] } }) =>
     sql.identifier(...(table.node.parts as [string, ...string[]]));
 
@@ -153,6 +166,9 @@ describe('complete query and execution paths against Snowflake', () => {
     );
     await db.queryRaw(
       sql`CREATE TABLE ${name(constrained)} (ID NUMBER(3,0) NOT NULL, AMOUNT NUMBER(5,2), CODE VARCHAR(3), DATA BINARY(2), CLOCK TIME(3), AT_VALUE TIMESTAMP_LTZ(0))`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(docs)} (ID NUMBER(38,0) NOT NULL, TAGS ARRAY NOT NULL, ITEMS ARRAY, META OBJECT, EXTRA OBJECT)`,
     );
   });
   afterAll(() => fixture.cleanup());
@@ -364,6 +380,80 @@ describe('complete query and execution paths against Snowflake', () => {
       '"AT_VALUE": timestamp("AT_VALUE", "ltz", { precision: 0 })',
     ])
       expect(code).toContain(declaration);
+  });
+
+  it('round-trips semi-structured ARRAY and OBJECT columns', async () => {
+    await db.execute(
+      insert(docs, [
+        { id: 1n, tags: [], items: null, meta: null },
+        {
+          id: 2n,
+          tags: ['a', 'b'],
+          items: [1, null, { nested: [true] }],
+          meta: { ok: true, note: null },
+          extra: { empty: {} },
+        },
+      ]),
+    );
+    await db.execute(
+      update(docs, { items: ['updated'], meta: { ok: false, note: 'x' } }).where(
+        eq(docs.columns.id, 1n),
+      ),
+    );
+    await db.execute(
+      mergeInto(docs, staged, eq(docs.columns.id, staged.columns.id)).whenNotMatchedInsert({
+        id: staged.columns.id,
+        tags: ['merged'],
+        extra: { k: 1 },
+      }),
+    );
+    const rows = (await db.execute(select(docs).orderBy(asc(docs.columns.id)))).rows;
+    expect(rows).toEqual([
+      { id: 1n, tags: [], items: ['updated'], meta: { ok: false, note: 'x' }, extra: null },
+      {
+        id: 2n,
+        tags: ['a', 'b'],
+        items: [1, null, { nested: [true] }],
+        meta: { ok: true, note: null },
+        extra: { empty: {} },
+      },
+      { id: 100n, tags: ['merged'], items: null, meta: null, extra: { k: 1 } },
+      { id: 101n, tags: ['merged'], items: null, meta: null, extra: { k: 1 } },
+    ]);
+    const matched = await db.execute(
+      select(docs)
+        .select({ id: docs.columns.id })
+        .where(eq(docs.columns.meta, { ok: true, note: null })),
+    );
+    expect(matched.rows).toEqual([{ id: 2n }]);
+    await db.queryRaw(sql`UPDATE ${name(docs)} SET TAGS = ARRAY_CONSTRUCT(1) WHERE ID = ${101}`);
+    await expect(db.execute(select(docs))).rejects.toThrow();
+
+    const structured = snowflakeTable('STRUCTURED', { id: integer('ID') }, namespace);
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(structured)} (ID NUMBER, SA ARRAY(NUMBER), SO OBJECT(city VARCHAR))`,
+    );
+    try {
+      const tables = await introspect(db, namespace);
+      const code = generateSchema(tables.filter((table) => table.name === 'DOCS'));
+      for (const declaration of [
+        '"TAGS": array("TAGS").notNull()',
+        '"ITEMS": array("ITEMS")',
+        '"META": object("META")',
+      ])
+        expect(code).toContain(declaration);
+      const table = tables.find((entry) => entry.name === 'STRUCTURED');
+      expect(table?.columns.map((column) => column.dataType)).toEqual([
+        'NUMBER',
+        'ARRAY(NUMBER)',
+        'OBJECT(CITY VARCHAR)',
+      ]);
+      expect(() => generateSchema(tables.filter((entry) => entry.name === 'STRUCTURED'))).toThrow(
+        'ARRAY(NUMBER)',
+      );
+    } finally {
+      await db.queryRaw(sql`DROP TABLE ${name(structured)}`);
+    }
   });
 
   it('streams schema-validated results and raw rows', async () => {
