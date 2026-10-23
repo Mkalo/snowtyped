@@ -270,6 +270,11 @@ describe('VECTOR columns', () => {
       3,
     ]);
     expect(counts.readSchema.parse('[2147483647,-2147483648]')).toEqual([2147483647, -2147483648]);
+    expect(values.readSchema.parse('[-6.727404335356611e-17,1,2]')).toEqual([
+      Math.fround(-6.727404335356611e-17),
+      1,
+      2,
+    ]);
     expect(counts.readSchema.parse(null)).toBeNull();
     for (const input of ['[1,2]', '[1,2,3,4]', null, '{"a":1}'])
       expect(() => values.readSchema.parse(input)).toThrow();

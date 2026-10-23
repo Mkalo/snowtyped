@@ -142,7 +142,8 @@ function parseJson(dataType: DataType, value: unknown): ExpressionNode {
     args: Object.freeze([scalarParameter(encoded)]),
   });
 }
-const json = <T>(schema: z.ZodType<T>) => jsonText().pipe(schema);
+const json = <T>(schema: z.ZodType<T>, number?: (value: number) => unknown) =>
+  jsonText(number).pipe(schema);
 function bounded(label: string, value: number, min: number, max: number): number {
   if (!Number.isSafeInteger(value) || value < min || value > max)
     throw new TypeError(`${label} must be an integer from ${min} to ${max}.`);
@@ -371,7 +372,7 @@ export function vector(
   return column(
     name,
     'vector',
-    json(schema.transform((values) => (element === 'int' ? values : values.map(Math.fround)))),
+    json(schema, element === 'float' ? Math.fround : undefined),
     schema,
     false,
     { constraints: { dimension }, type, check: (value) => value.length === dimension },

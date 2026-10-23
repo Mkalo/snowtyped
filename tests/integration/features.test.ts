@@ -578,6 +578,20 @@ describe('complete query and execution paths against Snowflake', () => {
         counts: [0, 0],
       })),
     ]);
+    await db.execute(
+      update(spatial, { embedding: [-6.727404335356611e-17, 0, 1] }).where(
+        eq(spatial.columns.id, 101n),
+      ),
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { embedding: spatial.columns.embedding }).where(
+            eq(spatial.columns.id, 101n),
+          ),
+        )
+      ).rows,
+    ).toEqual([{ embedding: [Math.fround(-6.727404335356611e-17), 0, 1] }]);
     await db.execute(update(spatial, { plain: collection }).where(eq(spatial.columns.id, 100n)));
     const nearest = await db.execute(
       select(spatial, { id: spatial.columns.id, plain: spatial.columns.plain })

@@ -67,17 +67,20 @@ function decimalKey(text: string): string {
   if (!significant) return '0';
   return `${sign}${significant}e${Number(exponent) - fraction.length + digits.length - significant.length}`;
 }
-/** Rejects JSON numbers that would lose digits as a JavaScript number instead of rounding them. */
-export const jsonText = () =>
+function exactNumber(value: number, source: string): number {
+  if (!Number.isFinite(value) || decimalKey(source) !== decimalKey(String(value)))
+    throw new RangeError(`JSON number ${source} does not fit a JavaScript number exactly.`);
+  return value;
+}
+/** By default, rejects JSON numbers that would lose digits as a JavaScript number instead of rounding them. */
+export const jsonText = (number: (value: number, source: string) => unknown = exactNumber) =>
   z.string().transform((input, context) => {
     try {
-      return JSON.parse(input, (_key, value: unknown, parsed?: { readonly source: string }) => {
-        if (typeof value !== 'number') return value;
-        const { source } = parsed as { readonly source: string };
-        if (!Number.isFinite(value) || decimalKey(source) !== decimalKey(String(value)))
-          throw new RangeError(`JSON number ${source} does not fit a JavaScript number exactly.`);
-        return value;
-      }) as unknown;
+      return JSON.parse(input, (_key, value: unknown, parsed?: { readonly source: string }) =>
+        typeof value === 'number'
+          ? number(value, (parsed as { readonly source: string }).source)
+          : value,
+      ) as unknown;
     } catch (error) {
       context.addIssue({ code: 'custom', message: (error as Error).message, input });
       return z.NEVER;
