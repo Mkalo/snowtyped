@@ -22,5 +22,7 @@ import writes from '../../../snippets/writes.ts?raw';
 ## MERGE
 
 `mergeInto(target, source, on)` supports matched update, matched delete, and unmatched insert.
+The source can be a table, a derived query, or a CTE; a CTE source is inlined as a derived query
+because MERGE has no WITH clause.
 
 <Snippet code={merge} />
