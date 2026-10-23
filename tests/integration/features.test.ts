@@ -94,6 +94,18 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const constrained = snowflakeTable(
+    'CONSTRAINED',
+    {
+      id: integer('ID', { precision: 3 }).notNull(),
+      amount: decimal('AMOUNT', { precision: 5, scale: 2 }),
+      code: text('CODE', { length: 3 }),
+      data: binary('DATA', { length: 2 }),
+      clock: time('CLOCK', { precision: 3 }),
+      at: timestamp('AT_VALUE', 'ltz', { precision: 0 }),
+    },
+    namespace,
+  );
   const name = (table: { node: { parts: readonly string[] } }) =>
     sql.identifier(...(table.node.parts as [string, ...string[]]));
 
@@ -138,6 +150,9 @@ describe('complete query and execution paths against Snowflake', () => {
     );
     await db.queryRaw(
       sql`CREATE TABLE ${name(types)} (ID NUMBER(38,0) NOT NULL, VALUE DOUBLE NOT NULL, DAY DATE NOT NULL, CLOCK TIME(9) NOT NULL, AT_VALUE TIMESTAMP_NTZ(9) NOT NULL, DATA BINARY NOT NULL, PAYLOAD VARIANT NOT NULL)`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(constrained)} (ID NUMBER(3,0) NOT NULL, AMOUNT NUMBER(5,2), CODE VARCHAR(3), DATA BINARY(2), CLOCK TIME(3), AT_VALUE TIMESTAMP_LTZ(0))`,
     );
   });
   afterAll(() => fixture.cleanup());
@@ -288,6 +303,67 @@ describe('complete query and execution paths against Snowflake', () => {
     expect(row?.at).toContain('123456789');
     expect([...(row?.data ?? [])]).toEqual([0, 42, 255]);
     expect(row?.payload).toEqual({ ok: true });
+  });
+
+  it('round-trips constraint boundaries and rejects values Snowflake would narrow', async () => {
+    for (const row of [
+      {
+        id: 999n,
+        amount: '999.99',
+        code: '😀😀😀',
+        data: new Uint8Array([0, 255]),
+        clock: '23:59:59.999',
+        at: '2026-10-22 12:34:56',
+      },
+      { id: -999n, amount: '-999.99', code: 'abc', clock: '00:00:00.100000' },
+      { id: 0n },
+    ])
+      await db.execute(insert(constrained, row));
+    const rows = (await db.execute(select(constrained).orderBy(asc(constrained.columns.id)))).rows;
+    expect(rows.map((row) => ({ ...row, data: row.data && [...row.data] }))).toMatchObject([
+      { id: -999n, amount: '-999.99', code: 'abc', data: null, clock: '00:00:00.100000000' },
+      { id: 0n, amount: null, code: null, data: null, clock: null, at: null },
+      {
+        id: 999n,
+        amount: '999.99',
+        code: '😀😀😀',
+        data: [0, 255],
+        clock: '23:59:59.999000000',
+        at: expect.stringContaining('2026-10-22 12:34:56.000000000'),
+      },
+    ]);
+    for (const values of [
+      { id: 1000n },
+      { id: 1n, amount: '1.234' },
+      { id: 1n, amount: '1000' },
+      { id: 1n, code: 'abcd' },
+      { id: 1n, data: new Uint8Array(3) },
+      { id: 1n, clock: '12:00:00.0001' },
+      { id: 1n, at: '2026-10-22 12:34:56.7' },
+    ])
+      expect(() => insert(constrained, values)).toThrow('does not fit');
+    await db.queryRaw(
+      sql`UPDATE ${name(constrained)} SET AMOUNT = ${'1.23'}, CODE = ${'abc'} WHERE ID = ${0}`,
+    );
+    const narrower = snowflakeTable(
+      'CONSTRAINED',
+      { id: integer('ID').notNull(), code: text('CODE', { length: 2 }) },
+      namespace,
+    );
+    await expect(db.execute(select(narrower).where(eq(narrower.columns.id, 0n)))).rejects.toThrow(
+      'VARCHAR(2)',
+    );
+    const tables = await introspect(db, namespace);
+    const code = generateSchema(tables.filter((table) => table.name === 'CONSTRAINED'));
+    for (const declaration of [
+      '"ID": integer("ID", { precision: 3 }).notNull()',
+      '"AMOUNT": decimal("AMOUNT", { precision: 5, scale: 2 })',
+      '"CODE": text("CODE", { length: 3 })',
+      '"DATA": binary("DATA")',
+      '"CLOCK": time("CLOCK", { precision: 3 })',
+      '"AT_VALUE": timestamp("AT_VALUE", "ltz", { precision: 0 })',
+    ])
+      expect(code).toContain(declaration);
   });
 
   it('streams schema-validated results and raw rows', async () => {

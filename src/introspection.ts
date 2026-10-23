@@ -8,6 +8,7 @@ export interface IntrospectedColumn {
   readonly nullable: boolean;
   readonly precision: number | null;
   readonly scale: number | null;
+  readonly length: number | null;
 }
 export interface IntrospectedTable {
   readonly database: string;
@@ -26,16 +27,19 @@ const metadata = () =>
         IS_NULLABLE: z.enum(['YES', 'NO']),
         NUMERIC_PRECISION: z.string().nullable(),
         NUMERIC_SCALE: z.string().nullable(),
+        CHARACTER_MAXIMUM_LENGTH: z.string().nullable(),
+        DATETIME_PRECISION: z.string().nullable(),
       }),
     ),
   );
+const numeric = (value: string | null) => (value === null ? null : Number(value));
 
 export async function introspect(
   client: Pick<SnowflakeClient, 'queryRaw'>,
   options: { readonly database: string; readonly schema?: string },
 ): Promise<readonly IntrospectedTable[]> {
   const rows = metadata().parse(
-    await client.queryRaw(sql`SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, NUMERIC_PRECISION, NUMERIC_SCALE
+    await client.queryRaw(sql`SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, NUMERIC_PRECISION, NUMERIC_SCALE, CHARACTER_MAXIMUM_LENGTH, DATETIME_PRECISION
     FROM ${sql.identifier(options.database, 'INFORMATION_SCHEMA', 'COLUMNS')}
     WHERE TABLE_SCHEMA <> ${'INFORMATION_SCHEMA'} ${options.schema === undefined ? sql.unsafe('') : sql`AND TABLE_SCHEMA = ${options.schema}`}
     ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`),
@@ -61,8 +65,9 @@ export async function introspect(
         name: row.COLUMN_NAME,
         dataType: row.DATA_TYPE,
         nullable: row.IS_NULLABLE === 'YES',
-        precision: row.NUMERIC_PRECISION === null ? null : Number(row.NUMERIC_PRECISION),
-        scale: row.NUMERIC_SCALE === null ? null : Number(row.NUMERIC_SCALE),
+        precision: numeric(row.NUMERIC_PRECISION ?? row.DATETIME_PRECISION),
+        scale: numeric(row.NUMERIC_SCALE),
+        length: numeric(row.CHARACTER_MAXIMUM_LENGTH),
       }),
     );
   }
@@ -78,17 +83,23 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
   const declarations = tables.map((table, index) => {
     const columns = table.columns.map((column) => {
       let factoryName: string;
-      let mode = '';
+      const args = [JSON.stringify(column.name)];
       switch (column.dataType.toUpperCase()) {
         case 'NUMBER':
         case 'FIXED':
         case 'DECIMAL':
           factoryName = column.scale === 0 ? 'integer' : 'decimal';
+          if (column.scale === 0 && column.precision !== null && column.precision !== 38)
+            args.push(`{ precision: ${column.precision} }`);
+          if (column.scale !== 0 && column.precision !== null && column.scale !== null)
+            args.push(`{ precision: ${column.precision}, scale: ${column.scale} }`);
           break;
         case 'TEXT':
         case 'VARCHAR':
         case 'CHAR':
           factoryName = 'text';
+          if (column.length !== null && column.length !== 16777216)
+            args.push(`{ length: ${column.length} }`);
           break;
         case 'BOOLEAN':
           factoryName = 'boolean';
@@ -103,12 +114,16 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
           break;
         case 'TIME':
           factoryName = 'time';
+          if (column.precision !== null && column.precision !== 9)
+            args.push(`{ precision: ${column.precision} }`);
           break;
         case 'TIMESTAMP_NTZ':
         case 'TIMESTAMP_LTZ':
         case 'TIMESTAMP_TZ':
           factoryName = 'timestamp';
-          mode = `, ${JSON.stringify(column.dataType.slice(10).toLowerCase())}`;
+          args.push(JSON.stringify(column.dataType.slice(10).toLowerCase()));
+          if (column.precision !== null && column.precision !== 9)
+            args.push(`{ precision: ${column.precision} }`);
           break;
         case 'VARIANT':
         case 'ARRAY':
@@ -117,12 +132,14 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
           break;
         case 'BINARY':
           factoryName = 'binary';
+          if (column.length !== null && column.length !== 8388608)
+            args.push(`{ length: ${column.length} }`);
           break;
         default:
           throw new TypeError(`Unsupported Snowflake type for code generation: ${column.dataType}`);
       }
       imports.add(factoryName);
-      return `  ${JSON.stringify(column.name)}: ${factoryName}(${JSON.stringify(column.name)}${mode})${column.nullable ? '' : '.notNull()'},`;
+      return `  ${JSON.stringify(column.name)}: ${factoryName}(${args.join(', ')})${column.nullable ? '' : '.notNull()'},`;
     });
     return `export const table${index} = snowflakeTable(${JSON.stringify(table.name)}, {\n${columns.join('\n')}\n}, { database: ${JSON.stringify(table.database)}, schema: ${JSON.stringify(table.schema)} });`;
   });

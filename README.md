@@ -64,7 +64,9 @@ The compiler serializes exact numeric and temporal outputs after the native quer
 | `binary('DATA')`                        | `Uint8Array`    | SDK Buffers are accepted                    |
 | `variant('PAYLOAD')`                    | `unknown`       | JSON without an assumed shape               |
 
-Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. A type parameter alone cannot establish a VARIANT shape. The declaration is checked at runtime, and read/write types are inferred from it. Numeric precision/scale and other database constraints remain database-enforced; declarations should match the physical schema.
+Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. A type parameter alone cannot establish a VARIANT shape. The declaration is checked at runtime, and read/write types are inferred from it.
+
+Declare physical constraints with `integer('QTY', { precision: 9 })`, `decimal('BALANCE', { precision: 12, scale: 2 })`, `text('CODE', { length: 3 })`, `binary('HASH', { length: 32 })`, `time('CLOCK', { precision: 3 })`, or `timestamp('AT', 'ltz', { precision: 6 })`. INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including extra scale or fractional seconds that Snowflake would silently round or truncate; zeros that do not change the value are accepted. VARCHAR length counts code points and BINARY length counts bytes. Predicate literals are not constrained. Other database constraints remain database-enforced; declarations should match the physical schema.
 
 ## Query composition
 
@@ -184,7 +186,7 @@ Await running operations and close cursors before starting a transaction on a si
 
 ## Introspection
 
-`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
+`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Generated declarations carry NUMBER precision/scale, VARCHAR length, and TIME/TIMESTAMP precision when they differ from Snowflake's defaults; INFORMATION_SCHEMA does not report BINARY length. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
 
 ## Scope and distribution
 
