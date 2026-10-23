@@ -90,8 +90,10 @@ wire format, and rows are rebuilt into objects when they are decoded.
 An object over an outer-joined source becomes `null` only when that is certain. Its keys are its
 direct entries whose declared type excludes NULL, such as a `.notNull()` column or `count()`. The
 object is `null` when every key reads NULL and each key can only be NULL through an outer join.
-A present object proves the sources that every key reads, so their other NOT NULL columns are
-non-null inside it. An object without keys, or with a key that no outer join can null, is always
+A present object proves the sources that every key proves, so their other NOT NULL columns are
+non-null inside it. Only a column key proves its source; an expression key such as `coalesce()`
+can be non-NULL while some of its sources are absent, so it proves none. When an object collapses,
+its entries from other sources are dropped with it, so keep those outside the object. An object without keys, or with a key that no outer join can null, is always
 an object, with each entry nullable as usual. Include the joined table's NOT NULL key to make an
 object collapse.
 

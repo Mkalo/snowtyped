@@ -2,11 +2,14 @@
 import { expectTypeOf } from 'vitest';
 import {
   add,
+  caseWhen,
+  coalesce,
   count,
   eq,
   exists,
   insertFrom,
   integer,
+  isNull,
   type Projection,
   select,
   snowflakeTable,
@@ -23,6 +26,11 @@ const users = snowflakeTable('USERS', {
   id: integer('ID').notNull(),
   name: text('NAME').notNull(),
   bio: text('BIO'),
+});
+const editors = snowflakeTable('EDITORS', {
+  id: integer('ID').notNull(),
+  postId: integer('POST_ID').notNull(),
+  name: text('NAME').notNull(),
 });
 const p = posts.columns;
 const u = users.columns;
@@ -85,7 +93,28 @@ expectTypeOf(full.select({ pair: { post: p.id, user: u.id } }).rowType).toEqualT
   | undefined
 >();
 expectTypeOf(full.select({ pair: { sum: add(p.id, u.id), name: u.name } }).rowType).toEqualTypeOf<
-  { readonly pair: { readonly sum: bigint | null; readonly name: string } | null } | undefined
+  | { readonly pair: { readonly sum: bigint | null; readonly name: string | null } | null }
+  | undefined
+>();
+// Only column keys prove their source: a non-NULL COALESCE or CASE can leave a source absent.
+const edited = joined.leftJoin(editors, eq(p.id, editors.columns.postId));
+expectTypeOf(
+  edited.select({
+    who: { name: coalesce(u.name, editors.columns.name), editorId: editors.columns.id },
+  }).rowType,
+).toEqualTypeOf<
+  | { readonly who: { readonly name: string | null; readonly editorId: bigint | null } | null }
+  | undefined
+>();
+expectTypeOf(
+  edited.select({
+    who: {
+      name: caseWhen(isNull(u.id), editors.columns.name).else(u.name),
+      id: editors.columns.id,
+    },
+  }).rowType,
+).toEqualTypeOf<
+  { readonly who: { readonly name: string | null; readonly id: bigint | null } | null } | undefined
 >();
 
 // Nested objects resolve presence relative to what their parent proves.

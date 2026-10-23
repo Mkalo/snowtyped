@@ -88,8 +88,9 @@ export type Selection = Readonly<Record<string, AnyExpression>>;
 export type Projection = { readonly [key: string]: AnyExpression | Projection };
 type Leaf = { readonly dataType: DataType };
 /**
- * A nested object's keys are its direct NOT NULL entries, tagged with the outer-joined sources
- * that can null them, or 'always' when none can.
+ * A nested object's keys are its direct NOT NULL entries: 'always' when no outer join can null
+ * them, otherwise the outer-joined sources a non-NULL key proves present. Only a column proves its
+ * source; an expression such as COALESCE can be non-NULL with some of its sources absent.
  */
 type PresenceKeys<P, Nullable extends string> = {
   [K in keyof P]: P[K] extends Leaf
@@ -97,7 +98,11 @@ type PresenceKeys<P, Nullable extends string> = {
       ? never
       : [Extract<ExpressionNullScope<P[K]>, Nullable>] extends [never]
         ? 'always'
-        : [Extract<ExpressionNullScope<P[K]>, Nullable>]
+        : [
+            P[K] extends { readonly required: boolean }
+              ? Extract<ExpressionNullScope<P[K]>, Nullable>
+              : never,
+          ]
     : never;
 }[keyof P];
 type KeyScopes<K> = K extends readonly [infer N] ? N : never;
@@ -684,8 +689,8 @@ export function projectionRow(projection: Projection): (values: readonly unknown
 }
 /**
  * A nested object is NULL when every NOT NULL entry it holds directly reads NULL, and each of
- * those keys can only be NULL through an outer join. A present object proves the sources that
- * every key reads.
+ * those keys can only be NULL through an outer join. A present object proves the sources proven
+ * by every key, and only a column key proves its source.
  */
 function presence(projection: Projection, nullable: ReadonlySet<symbol>) {
   const keys = Object.entries(projection).filter(
@@ -696,7 +701,10 @@ function presence(projection: Projection, nullable: ReadonlySet<symbol>) {
     value.nullRefs.map((ref) => ref.id).filter((id) => nullable.has(id)),
   );
   if (!keys.length || scopes.some((scope) => !scope.length)) return undefined;
-  const proven = new Set(scopes.reduce((all, scope) => all.filter((id) => scope.includes(id))));
+  const proofs = keys.map(([, value], index) =>
+    'required' in value ? (scopes[index] as symbol[]) : [],
+  );
+  const proven = new Set(proofs.reduce((all, scope) => all.filter((id) => scope.includes(id))));
   return {
     keys: keys.map(([key]) => key),
     nullable: new Set([...nullable].filter((id) => !proven.has(id))),

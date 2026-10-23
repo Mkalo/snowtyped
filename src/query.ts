@@ -287,11 +287,21 @@ function validateProjection(projection: Projection, nested = false): void {
   }
 }
 /** Flattens nested entries to dotted aliases, keeping flat projections unchanged. */
-function shape(projection: Projection): Pick<State, 'selection' | 'projection'> {
-  validateProjection(projection);
+function snapshot(projection: Projection): Projection {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(projection).map(([key, value]) => [
+        key,
+        isLeaf(value) ? value : snapshot(value),
+      ]),
+    ),
+  );
+}
+function shape(input: Projection): Pick<State, 'selection' | 'projection'> {
+  validateProjection(input);
+  const projection = snapshot(input);
   const leaves = projectionLeaves(projection);
-  const snapshot = Object.freeze({ ...projection });
-  if (leaves.every(([path]) => path.length === 1)) return { selection: snapshot as Selection };
+  if (leaves.every(([path]) => path.length === 1)) return { selection: projection as Selection };
   const selection: Record<string, AnyExpression> = {};
   for (const [path, value] of leaves) {
     const alias = path.join('.');
@@ -300,7 +310,7 @@ function shape(projection: Projection): Pick<State, 'selection' | 'projection'> 
       throw new TypeError(`Nested projection path ${alias} repeats another projection alias.`);
     selection[alias] = value;
   }
-  return { selection: Object.freeze(selection), projection: snapshot };
+  return { selection: Object.freeze(selection), projection };
 }
 function assertFlat(state: State): void {
   if (state.projection)

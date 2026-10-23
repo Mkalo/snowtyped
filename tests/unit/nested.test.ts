@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   add,
   asc,
+  caseWhen,
+  coalesce,
   count,
   eq,
   exists,
   inSubquery,
   insertFrom,
   integer,
+  isNull,
   recursiveCte,
   scalar,
   select,
@@ -28,6 +31,11 @@ const users = snowflakeTable('USERS', {
   name: text('NAME').notNull(),
   bio: text('BIO'),
   data: variant('DATA').notNull(),
+});
+const editors = snowflakeTable('EDITORS', {
+  id: integer('ID').notNull(),
+  postId: integer('POST_ID').notNull(),
+  name: text('NAME').notNull(),
 });
 const p = posts.columns;
 const u = users.columns;
@@ -143,9 +151,38 @@ describe('nested projections', () => {
     ]);
     const sum = full.select({ pair: { sum: add(p.id, u.id), name: u.name } });
     expect(await decode(sum, [[null, 'Ada']])).toEqual([{ pair: { sum: null, name: 'Ada' } }]);
-    await expect(decode(sum, [['3', null]])).rejects.toThrow();
+    expect(await decode(sum, [['3', null]])).toEqual([{ pair: { sum: 3n, name: null } }]);
     const single = full.select({ pair: { sum: add(p.id, u.id), bio: u.bio } });
     expect(await decode(single, [[null, null]])).toEqual([{ pair: null }]);
+  });
+
+  it('proves no source through COALESCE or CASE keys', async () => {
+    const edited = joined.leftJoin(editors, eq(p.id, editors.columns.postId));
+    const who = edited.select({
+      who: { name: coalesce(u.name, editors.columns.name), editorId: editors.columns.id },
+    });
+    expect(
+      await decode(who, [
+        ['Ada', null],
+        [null, null],
+      ]),
+    ).toEqual([{ who: { name: 'Ada', editorId: null } }, { who: null }]);
+    const cased = edited.select({
+      who: {
+        name: caseWhen(isNull(u.id), editors.columns.name).else(u.name),
+        id: editors.columns.id,
+      },
+    });
+    expect(await decode(cased, [['Ada', null]])).toEqual([{ who: { name: 'Ada', id: null } }]);
+  });
+
+  it('snapshots nested projections when the query is built', async () => {
+    const author: Record<string, typeof u.name> = { name: u.name };
+    const query = joined.select({ author });
+    author.bio = u.name;
+    expect(query.ast.projections.map((item) => item.alias)).toEqual(['author.name']);
+    expect(Object.isFrozen(query.selection.author)).toBe(true);
+    expect(await decode(query, [['Ada']])).toEqual([{ author: { name: 'Ada' } }]);
   });
 
   it('resolves child objects against what their parent proves', async () => {

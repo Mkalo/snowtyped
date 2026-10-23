@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   asc,
   binary,
+  coalesce,
   count,
   eq,
   float,
@@ -37,6 +38,15 @@ describe('nested projections against Snowflake', () => {
       id: integer('ID').notNull(),
       authorId: integer('AUTHOR_ID'),
       title: text('TITLE').notNull(),
+    },
+    namespace,
+  );
+  const editors = snowflakeTable(
+    'EDITORS',
+    {
+      id: integer('ID').notNull(),
+      postId: integer('POST_ID').notNull(),
+      name: text('NAME').notNull(),
     },
     namespace,
   );
@@ -76,6 +86,15 @@ describe('nested projections against Snowflake', () => {
         { id: 11n, authorId: 9007199254740993n, title: 'Second' },
         { id: 12n, authorId: null, title: 'Anonymous' },
         { id: 13n, authorId: 404n, title: 'Dangling' },
+      ]),
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${tableIdentifier(editors)} (ID NUMBER(38,0) NOT NULL, POST_ID NUMBER(38,0) NOT NULL, NAME VARCHAR NOT NULL)`,
+    );
+    await db.execute(
+      insert(editors, [
+        { id: 1n, postId: 11n, name: 'Ed' },
+        { id: 2n, postId: 12n, name: 'Eve' },
       ]),
     );
   });
@@ -151,6 +170,23 @@ describe('nested projections against Snowflake', () => {
     expect((await db.execute(grouped)).rows).toEqual([
       { name: 'Ada', stats: { posts: 2n, author: { name: 'Ada' } } },
       { name: 'Grace', stats: { posts: 0n, author: { name: 'Grace' } } },
+    ]);
+  });
+
+  it('proves no source through a COALESCE key', async () => {
+    const query = select(posts)
+      .leftJoin(users, eq(p.authorId, u.id))
+      .leftJoin(editors, eq(p.id, editors.columns.postId))
+      .select({
+        id: p.id,
+        who: { name: coalesce(u.name, editors.columns.name), editorId: editors.columns.id },
+      })
+      .orderBy(asc(p.id));
+    expect((await db.execute(query)).rows).toEqual([
+      { id: 10n, who: { name: 'Ada', editorId: null } },
+      { id: 11n, who: { name: 'Ada', editorId: 1n } },
+      { id: 12n, who: { name: 'Eve', editorId: 2n } },
+      { id: 13n, who: null },
     ]);
   });
 
