@@ -1,7 +1,7 @@
 {
   "name": "snowtyped",
   "version": "0.1.0-alpha.0",
-  "private": true,
+  "private": false,
   "description": "Schema-driven Snowflake queries, runtime validation, and parameterized raw SQL for TypeScript.",
   "repository": {
     "type": "git",
@@ -11,7 +11,13 @@
     "url": "https://github.com/Mkalo/snowtyped/issues"
   },
   "homepage": "https://github.com/Mkalo/snowtyped#readme",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org",
+    "tag": "alpha",
+    "provenance": true
+  },
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "engines": {
@@ -54,13 +60,15 @@
   "files": [
     "dist",
     "src",
+    "LICENSE",
     "README.md",
     "CHANGELOG.md"
   ],
   "scripts": {
     "changeset": "changeset",
     "check:changesets": "node scripts/check-changesets.mjs",
-    "test:versioning": "node scripts/test-versioning.mjs",
+    "test:versioning": "vitest run --config vitest.tooling.config.ts tests/tooling/versioning.test.ts",
+    "test:release": "vitest run --config vitest.tooling.config.ts tests/tooling/release",
     "version:packages": "changeset version && pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile && biome format --write package.json",
     "build": "tsdown",
     "dev": "tsdown --watch",
@@ -71,7 +79,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:package": "node scripts/test-package.mjs",
+    "test:package": "vitest run --config vitest.tooling.config.ts tests/tooling/package.test.ts",
     "check:package": "publint && attw --pack .",
     "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build && pnpm check:package && pnpm test:package",
     "prepack": "pnpm build",
@@ -91,9 +99,11 @@
     "@changesets/cli": "3.0.3",
     "@changesets/get-release-plan": "5.0.2",
     "@types/node": "22.20.5",
+    "@types/semver": "7.8.0",
     "@vitest/coverage-v8": "5.0.5",
     "esbuild": "0.28.2",
     "publint": "0.3.25",
+    "semver": "7.8.1",
     "snowflake-sdk": "3.4.0",
     "tsdown": "0.23.1",
     "typescript": "6.0.3",

@@ -10,4 +10,5 @@ changeset with `pnpm changeset --empty` and explain the exemption in the PR.
 Reviewers must reject empty changesets for package behavior or public API changes.
 
 See [the versioning policy](../docs/versioning.md) for prereleases, stable
-transitions, and the separate version PR workflow. The package remains private.
+transitions, and the separate version PR workflow. Reviewed MIT-licensed releases
+use the [npm publication flow](../docs/versioning.md#npm-publication).

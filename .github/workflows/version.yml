@@ -71,5 +71,5 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ steps.version-pr.outputs.pr-number }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body | sub("This PR was opened[^\n]*"; "This PR only updates versions, changelogs, and the lockfile. Merging it does not publish packages, create tags, or create GitHub releases. Publication remains blocked pending #20/#24. Additional changesets on main update this same PR.")' > "$RUNNER_TEMP/version-pr-body.md"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body | sub("This PR was opened[^\n]*"; "This PR only updates versions, changelogs, and the lockfile. Merging it does not publish packages, create tags, or create GitHub releases. Use the separate Release package workflow to prepare and stage a reviewed release for npm approval with 2FA. Additional changesets on main update this same PR.")' > "$RUNNER_TEMP/version-pr-body.md"
           gh pr edit "$PR_NUMBER" --body-file "$RUNNER_TEMP/version-pr-body.md"

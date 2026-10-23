@@ -2,7 +2,7 @@
 
 A Snowflake-first TypeScript query library built on `snowflake-sdk`, with an owned AST, declared schemas, inferred results, and compiled Zod 4 runtime validation. Parameterized raw SQL is also supported, with a query-time return type or `unknown` by default.
 
-Version `0.1.0-alpha.0`. The package is private pending licensing and API review.
+Version `0.1.0-alpha.0`. Alpha software under the [MIT license](LICENSE); the public API may change before a stable release.
 
 ## Development and verification
 
