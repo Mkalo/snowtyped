@@ -1,0 +1,65 @@
+---
+title: Production use
+description: Pool sizing, deadlines, session failures, streaming memory, and type-checking cost.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Snippet from '../../../components/Snippet.astro';
+import poolProduction from '../../../snippets/pool-production.ts?raw';
+
+These limits come from the live production scenarios in the test suite, run against
+`snowflake-sdk` 3.4.0.
+
+<Snippet code={poolProduction} />
+
+## Pool waits and deadlines
+
+The SDK pool has no acquire timeout by default, so a request waits until a connection frees up.
+Set `acquireTimeoutMillis` to bound every wait. A pooled request's `signal` and `timeoutMs` cover
+both the wait and the statement. A request that stops waiting never runs, and a connection granted
+afterwards goes straight back to the pool.
+
+Size `max` for concurrent transactions plus other work: a transaction holds one connection for
+its whole callback, and a stream holds one until it finishes or is closed. Idle connections are
+evicted only when `evictionRunIntervalMillis` is set; otherwise they stay open until `close()`.
+
+`close()` rejects new work, waits for running and queued operations, including unfinished stream
+iterators, and then closes every connection. Finish or `return()` every iterator, or `close()`
+waits for it.
+
+## Session failures
+
+When a pooled session terminates (expiry, `SYSTEM$ABORT_SESSION`, or network loss), the SDK
+reports it on the next request with code `407002`. That request rejects and the pool destroys the
+connection instead of lending it again. With `testOnBorrow: true`, the pool heartbeats each
+connection before lending it and replaces a terminated one before a request runs on it. This costs
+one round trip per acquire.
+
+Snowtyped never resubmits a statement. The SDK's own transport retries reuse the statement's
+request ID.
+
+<Aside type="caution">
+  A deadline that fires just as a statement is submitted can reach Snowflake before the
+  statement is executing. The cancel is refused, the request rejects with `AggregateError`, and
+  the statement may still complete. On a cold pool, login uses part of a pooled deadline and
+  makes this more likely. Treat that rejection as an unknown outcome for mutations.
+</Aside>
+
+## Streaming memory
+
+Streaming memory is bounded by the SDK's result-chunk prefetch, not by the row count. In live runs,
+1-2 million random 300-character rows peaked at 110-160 MB above baseline. Highly compressible
+results decompress into large chunks and can use far more: 1.5 million rows of one repeated
+400-character string peaked at 1.1 GB, with the SDK alone as well. Lowering the connection option
+`resultPrefetch` to 1 reduced that to 745 MB.
+
+Breaking out of a stream destroys the row stream and releases its connection. It does not save
+server work: the statement has already completed by the time the first row arrives.
+
+## Type-checking cost
+
+Inference cost grows linearly with the number of declared tables and columns. A generated schema
+of 50 tables with 42 columns each, plus a 13-table join, type-checks in about 6 seconds with
+TypeScript 6.0. Hover information on the joined query's rows takes 1.6-2.5 seconds after an edit,
+and completions take about 20 ms. Run `pnpm bench:types` in the repository to measure other
+shapes.

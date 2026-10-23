@@ -17,34 +17,9 @@ Set `SNOWTYPED_SOAK_SECONDS` to lengthen the sustained run (default 15).
 
 ## Operational boundaries
 
-- **Pool waits.** The SDK pool has no acquire timeout by default; a request waits until a
-  connection frees up. Set `acquireTimeoutMillis`, or pass `signal`/`timeoutMs` per request,
-  which cover both the wait and the statement.
-- **Idle connections.** Idle connections are evicted only when `evictionRunIntervalMillis` is
-  set; otherwise they stay open until `close()`.
-- **Terminated sessions.** The SDK reports a terminated session (code `407002`) on the next
-  request. That request rejects and its connection is destroyed; the pool does not retry it.
-  With `testOnBorrow: true` the pool heartbeats each connection before lending it and
-  replaces a terminated one first, at the cost of one round trip per acquire.
-- **Deadlines at submission.** A `signal` or `timeoutMs` that fires just as a statement is
-  submitted can reach Snowflake before the statement is executing. The cancel is then refused,
-  the request rejects with `AggregateError: Query cancellation failed.`, and the statement may
-  still complete (#67). A pooled deadline also covers the connection wait, so on a cold pool a
-  short deadline can land in this window after login. Treat that rejection as an unknown
-  outcome for mutations.
-- **Retries.** Snowtyped never resubmits a statement. snowflake-sdk's transport retries reuse
-  the statement's request ID.
-- **Streaming memory.** Memory is bounded by snowflake-sdk's chunk prefetch, not by the row
-  count. Random 300-character rows peaked at 110-160 MB above baseline for 1-2M rows.
-  Highly compressible results decompress into large chunks: 1.5M rows of a repeated
-  400-character string peaked at 1.1 GB with the plain SDK as well, and 745 MB with
-  `resultPrefetch: 1`. Cast or trim wide repetitive columns in SQL when that matters.
-- **Early exit.** `break` destroys the row stream after the statement completed; it does not
-  save server work already done.
-- **`close()`.** Waits for running and queued work, including unfinished stream iterators.
-  Always finish or `return()` an iterator, or `close()` waits for it.
-- **Transactions.** A transaction holds one pooled connection for its whole callback; size
-  `max` for concurrent transactions plus other work.
+User-facing limits (pool waits, deadlines, session failures, streaming memory, and
+type-checking cost) are in the [production use guide](../website/src/content/docs/guides/production.mdx).
+Update it with this file when a measurement changes.
 
 ## Resource cleanup
 
