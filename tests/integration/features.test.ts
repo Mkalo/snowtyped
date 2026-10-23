@@ -340,8 +340,15 @@ describe('complete query and execution paths against Snowflake', () => {
       { id: 1n, data: new Uint8Array(3) },
       { id: 1n, clock: '12:00:00.0001' },
       { id: 1n, at: '2026-10-22 12:34:56.7' },
+      { id: 1n, at: '1700000000123' },
     ])
       expect(() => insert(constrained, values)).toThrow('does not fit');
+    await db.execute(insert(constrained, { id: 1n, at: '1700000000000' }));
+    expect(
+      await db.queryRaw(
+        sql`SELECT TO_CHAR(CONVERT_TIMEZONE('UTC', AT_VALUE), 'YYYY-MM-DD HH24:MI:SS.FF3') AS AT FROM ${name(constrained)} WHERE ID = ${1}`,
+      ),
+    ).toEqual([{ AT: '2023-11-14 22:13:20.000' }]);
     await db.queryRaw(
       sql`UPDATE ${name(constrained)} SET AMOUNT = ${'1.23'}, CODE = ${'abc'} WHERE ID = ${0}`,
     );

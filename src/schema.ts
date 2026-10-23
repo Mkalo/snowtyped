@@ -122,9 +122,16 @@ function bounded(label: string, value: number, min: number, max: number): number
     throw new TypeError(`${label} must be an integer from ${min} to ${max}.`);
   return value;
 }
+function epochFraction(value: string): string {
+  if (!/^[+-]?\d+$/.test(value)) return '';
+  const epoch = BigInt(value);
+  const scale =
+    epoch < 31536000000n ? 0 : epoch < 31536000000000n ? 3 : epoch < 31536000000000000n ? 6 : 9;
+  return value.slice(value.length - scale);
+}
 function fraction(value: string, precision: number): boolean {
   const match = /\d:\d{2}:\d{2}\.(\d+)|^[+-]?\d+\.(\d+)$/.exec(value);
-  const digits = match?.[1] ?? match?.[2] ?? '';
+  const digits = match?.[1] ?? match?.[2] ?? epochFraction(value);
   return digits.replace(/0+$/, '').length <= precision;
 }
 function fractional(type: string, options: { readonly precision?: number }) {
@@ -192,7 +199,9 @@ export function decimal(
     constraints: { precision, scale },
     type: `NUMBER(${precision},${scale})`,
     check(value) {
-      const [, whole, digits = ''] = /^-?(\d+)(?:\.(\d+))?$/.exec(value) as RegExpExecArray;
+      const match = /^-?(\d+)(?:\.(\d+))?$/.exec(value);
+      if (!match) return true;
+      const [, whole, digits = ''] = match;
       return (
         (whole as string).replace(/^0+/, '').length <= precision - scale &&
         digits.replace(/0+$/, '').length <= scale
