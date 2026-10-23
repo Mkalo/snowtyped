@@ -208,6 +208,22 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
     expect((await db.execute(shifted)).rows).toEqual([{ id: 3n }]);
   });
 
+  it('keeps SQL types through set operations', async () => {
+    const days = select(facts, { day: c.day })
+      .where(eq(c.id, 1n))
+      .union(select(facts, { day: c.day }).where(eq(c.id, 3n)))
+      .as('DAYS');
+    const query = select(days)
+      .innerJoin(facts, gte(days.columns.day, c.at))
+      .select({ day: days.columns.day, id: c.id })
+      .orderBy(asc(days.columns.day), asc(c.id));
+    expect((await db.execute(query)).rows).toEqual([
+      { day: '2024-01-01', id: 1n },
+      { day: '2024-01-03', id: 1n },
+      { day: '2024-01-03', id: 2n },
+    ]);
+  });
+
   it('assigns across compatible SQL types', async () => {
     await db.execute(update(facts, { at: c.day }).where(eq(c.id, 3n)));
     const query = select(facts, { at: c.at }).where(eq(c.id, 3n));

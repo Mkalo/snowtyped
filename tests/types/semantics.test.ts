@@ -227,3 +227,15 @@ add(c.amount, c.name);
 dateAdd('day', c.amount, c.day);
 // @ts-expect-error INSERT ... SELECT values must match the column's SQL type.
 insertFrom(t, select(u, { id: u.columns.id, name: u.columns.day }));
+
+const days = select(t, { value: c.day }).union(select(u, { value: u.columns.day }));
+expectTypeOf(days.columns.value.dataType).toEqualTypeOf<'date'>();
+expectTypeOf(days.as('S').columns.value.dataType).toEqualTypeOf<'date'>();
+lt(days.columns.value, c.tz);
+days.intersect(select(t, { value: c.day }));
+// @ts-expect-error Set operation columns keep their SQL type.
+eq(days.columns.value, c.name);
+// @ts-expect-error Set operation branches need the same SQL type per column.
+select(t, { value: c.name }).union(select(t, { value: c.day }));
+// @ts-expect-error Set operation branches need the same SQL type per column.
+days.except(select(t, { value: c.ntz }));

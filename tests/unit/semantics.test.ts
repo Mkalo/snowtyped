@@ -521,4 +521,20 @@ describe('expression helpers', () => {
       insertFrom(t, select(u, { id: u.columns.id, name: u.columns.name })).compile().sql,
     ).toContain('INSERT INTO "T" ("ID", "NAME") SELECT');
   });
+
+  it('keep SQL types through set operations', () => {
+    const days = select(t, { value: c.day }).union(select(t, { value: c.day }));
+    expect(days.columns.value.dataType).toBe('date');
+    expect(days.as('S').columns.value.dataType).toBe('date');
+    expect(lt(days.columns.value, c.tz).dataType).toBe('boolean');
+    expect(() => eq(days.columns.value, loose(c.name))).toThrow(
+      'Cannot compare DATE with TEXT expressions.',
+    );
+    expect(() => select(t, { value: c.name }).union(loose(select(t, { value: c.active })))).toThrow(
+      'Set operation column value combines different domains: TEXT and BOOLEAN.',
+    );
+    expect(() => select(t, { value: c.id }).except(loose(select(t, { value: c.amount })))).toThrow(
+      'INTEGER and DECIMAL',
+    );
+  });
 });
