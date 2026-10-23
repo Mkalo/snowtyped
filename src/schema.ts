@@ -13,6 +13,7 @@ import {
   type ExpressionNullScope,
   expression,
   type InferExpression,
+  jsonText,
   scalarParameter,
 } from './expressions.js';
 import { decodeEwkb, type GeoJsonGeometry, geoJson } from './spatial.js';
@@ -141,11 +142,7 @@ function parseJson(dataType: DataType, value: unknown): ExpressionNode {
     args: Object.freeze([scalarParameter(encoded)]),
   });
 }
-const json = <T>(schema: z.ZodType<T>) =>
-  z
-    .string()
-    .transform((value) => JSON.parse(value) as unknown)
-    .pipe(schema);
+const json = <T>(schema: z.ZodType<T>) => jsonText().pipe(schema);
 function bounded(label: string, value: number, min: number, max: number): number {
   if (!Number.isSafeInteger(value) || value < min || value > max)
     throw new TypeError(`${label} must be an integer from ${min} to ${max}.`);

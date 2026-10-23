@@ -59,6 +59,30 @@ export function expression<T, S extends string = never, N extends string = S>(
     },
   });
 }
+function decimalKey(text: string): string {
+  const [, sign, whole, fraction = '', exponent = '0'] =
+    /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text) as RegExpExecArray;
+  const digits = `${whole}${fraction}`.replace(/^0+/, '');
+  const significant = digits.replace(/0+$/, '');
+  if (!significant) return '0';
+  return `${sign}${significant}e${Number(exponent) - fraction.length + digits.length - significant.length}`;
+}
+/** Rejects JSON numbers that would lose digits as a JavaScript number instead of rounding them. */
+export const jsonText = () =>
+  z.string().transform((input, context) => {
+    try {
+      return JSON.parse(input, (_key, value: unknown, parsed?: { readonly source: string }) => {
+        if (typeof value !== 'number') return value;
+        const { source } = parsed as { readonly source: string };
+        if (!Number.isFinite(value) || decimalKey(source) !== decimalKey(String(value)))
+          throw new RangeError(`JSON number ${source} does not fit a JavaScript number exactly.`);
+        return value;
+      }) as unknown;
+    } catch (error) {
+      context.addIssue({ code: 'custom', message: (error as Error).message, input });
+      return z.NEVER;
+    }
+  });
 export function isExpression(value: unknown): value is AnyExpression {
   return typeof value === 'object' && value !== null && 'expression' in value;
 }
@@ -380,10 +404,7 @@ export function jsonPath<E extends AnyExpression>(
     throw new TypeError('JSON indexes must be nonnegative safe integers.');
   return expression(
     { kind: 'json-path', value: value.expression, path: Object.freeze([...path]) },
-    z
-      .string()
-      .transform((input) => JSON.parse(input) as unknown)
-      .nullable(),
+    jsonText().nullable(),
     { ...metadata([value]), wireType: 'variant' },
   );
 }

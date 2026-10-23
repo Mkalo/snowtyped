@@ -8,6 +8,7 @@ import {
   eq,
   insert,
   integer,
+  jsonPath,
   like,
   lt,
   mergeInto,
@@ -18,6 +19,7 @@ import {
   time,
   timestamp,
   update,
+  variant,
 } from '../../src/index.js';
 import { resultSchema } from '../../src/schema.js';
 
@@ -265,6 +267,29 @@ describe('semi-structured ARRAY and OBJECT columns', () => {
       'variant',
       'variant',
     ]);
+  });
+
+  it('rejects JSON numbers that would lose precision instead of rounding them', () => {
+    expect(
+      items.readSchema.parse('[1.50,-0,0.1,1e2,-2.5E-3,9007199254740991,0.0,1e21,1E+21]'),
+    ).toEqual([1.5, -0, 0.1, 100, -0.0025, 9007199254740991, 0, 1e21, 1e21]);
+    for (const input of [
+      '[12345678901234567890]',
+      '[0.1234567890123456789]',
+      '[9007199254740993]',
+      '[1e400]',
+      '[1e-400]',
+      '{"n":{"deep":[9007199254740993]}}',
+    ]) {
+      const result = variant('V').readSchema.safeParse(input);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain('does not fit a JavaScript number');
+    }
+    expect(extra.readSchema.safeParse('{"n":9007199254740993}').success).toBe(false);
+    expect(
+      jsonPath(table.columns.meta, 'ok').readSchema.safeParse('9007199254740993').success,
+    ).toBe(false);
+    expect(variant('V').readSchema.safeParse('{').error?.issues[0]?.code).toBe('custom');
   });
 
   it('casts JSON writes, including NULL, to the column type', () => {
