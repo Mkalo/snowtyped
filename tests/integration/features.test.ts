@@ -94,6 +94,11 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const doubles = snowflakeTable(
+    'DOUBLES',
+    { id: integer('ID').notNull(), value: float('VALUE').notNull() },
+    namespace,
+  );
   const name = (table: { node: { parts: readonly string[] } }) =>
     sql.identifier(...(table.node.parts as [string, ...string[]]));
 
@@ -288,6 +293,30 @@ describe('complete query and execution paths against Snowflake', () => {
     expect(row?.at).toContain('123456789');
     expect([...(row?.data ?? [])]).toEqual([0, 42, 255]);
     expect(row?.payload).toEqual({ ok: true });
+  });
+
+  it('reads every DOUBLE exactly, including extremes and subnormals', async () => {
+    const values = [
+      123456789.12345679,
+      0.30000000000000004,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      Number.MIN_VALUE,
+      2.225073858507201e-308,
+      2.2250738585072014e-308,
+      9007199254740991,
+    ];
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(doubles)} (ID NUMBER(38,0) NOT NULL, VALUE DOUBLE NOT NULL)`,
+    );
+    await db.execute(
+      insert(
+        doubles,
+        values.map((value, index) => ({ id: BigInt(index), value })),
+      ),
+    );
+    const rows = (await db.execute(select(doubles).orderBy(asc(doubles.columns.id)))).rows;
+    expect(rows.map((row) => row.value)).toEqual(values);
   });
 
   it('streams schema-validated results and raw rows', async () => {
