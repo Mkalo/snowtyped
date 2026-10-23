@@ -176,7 +176,7 @@ try {
 }
 ```
 
-Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
+Import `createClient` and `createPool` from `snowtyped/snowflake`. The pool delegates to the official SDK and pins a connection through an entire transaction or streamed iteration. Set `testOnBorrow: true` to heartbeat each connection before lending it, so a terminated session is replaced before a request runs on it. `createClient` leaves connect/destroy to the caller. No implicit query retries are performed.
 
 A pooled request's `signal` and `timeoutMs` also cover the wait for a connection, so a request that stops waiting never runs; `acquireTimeoutMillis` bounds that wait for every request. A connection whose session has terminated is destroyed instead of returned to the pool, though the request that found it still rejects. `close()` rejects new work, waits for running and queued operations, including unfinished streams, and then closes every connection. See [production behavior](docs/production.md) for operational limits, cleanup, and benchmark baselines.
 

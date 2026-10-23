@@ -126,4 +126,11 @@ describe('SDK-backed pool leases', () => {
     expect(driver.release).not.toHaveBeenCalled();
     await db.close();
   });
+
+  it('passes testOnBorrow through to the SDK pool', async () => {
+    fakePool();
+    const db = await createPool({}, { testOnBorrow: true });
+    expect(sdk.createPool).toHaveBeenCalledWith({}, { min: 0, max: 5, testOnBorrow: true });
+    await db.close();
+  });
 });

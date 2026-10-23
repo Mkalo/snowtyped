@@ -12,6 +12,8 @@ export interface PoolOptions {
   readonly acquireTimeoutMillis?: number;
   readonly idleTimeoutMillis?: number;
   readonly evictionRunIntervalMillis?: number;
+  /** Heartbeat each connection before lending it; costs one round trip per acquire. */
+  readonly testOnBorrow?: boolean;
 }
 export interface PooledClient extends SnowflakeClient {
   close(): Promise<void>;

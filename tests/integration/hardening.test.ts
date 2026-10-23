@@ -247,6 +247,19 @@ describe('production scenarios against Snowflake', () => {
     }
   });
 
+  it('replaces a terminated session before lending it with testOnBorrow', async () => {
+    const { pool } = await observedPool({ max: 1, testOnBorrow: true });
+    try {
+      const first = await session(pool);
+      await pool.queryRaw`SELECT SYSTEM$ABORT_SESSION(${Number(first)})`;
+      const replacement = await session(pool);
+      expect(replacement).toBeDefined();
+      expect(replacement).not.toBe(first);
+    } finally {
+      await pool.close();
+    }
+  });
+
   it('runs a failed mutation exactly once', async () => {
     const tag = `retry_${randomUUID().replaceAll('-', '')}`;
     const target = sql.identifier(namespace.database, namespace.schema, 'LEDGER');

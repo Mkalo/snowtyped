@@ -2,7 +2,7 @@
 import { expectTypeOf } from 'vitest';
 import type { InferSelection } from '../../src/index.js';
 import { eq, integer, select, snowflakeTable, sql, text } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
+import type { PoolOptions, SnowflakeClient } from '../../src/snowflake/index.js';
 
 const customers = snowflakeTable('CUSTOMERS', {
   id: integer('ID').notNull(),
@@ -46,3 +46,6 @@ expectTypeOf(client.queryRaw(sql<{ ID: string }[]>`SELECT 1 AS ID`)).toEqualType
 >();
 // @ts-expect-error Arbitrary objects are not implicitly encoded as SQL parameters.
 sql`SELECT ${{ unsafe: true }}`;
+
+expectTypeOf<{ max: 1; testOnBorrow: true }>().toExtend<PoolOptions>();
+expectTypeOf<{ testOnBorrow: 'yes' }>().not.toExtend<PoolOptions>();

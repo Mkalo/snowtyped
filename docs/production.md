@@ -24,6 +24,8 @@ Set `SNOWTYPED_SOAK_SECONDS` to lengthen the sustained run (default 15).
   set; otherwise they stay open until `close()`.
 - **Terminated sessions.** The SDK reports a terminated session (code `407002`) on the next
   request. That request rejects and its connection is destroyed; the pool does not retry it.
+  With `testOnBorrow: true` the pool heartbeats each connection before lending it and
+  replaces a terminated one first, at the cost of one round trip per acquire.
 - **Retries.** Snowtyped never resubmits a statement. snowflake-sdk's transport retries reuse
   the statement's request ID.
 - **Streaming memory.** Memory is bounded by snowflake-sdk's chunk prefetch, not by the row
