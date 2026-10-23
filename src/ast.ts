@@ -13,7 +13,9 @@ export type WireType =
   | 'timestamp_ntz'
   | 'timestamp_ltz'
   | 'timestamp_tz'
-  | 'variant';
+  | 'variant'
+  | 'geography'
+  | 'geometry';
 export interface SourceReference {
   readonly id: symbol;
   readonly name: string;
@@ -79,7 +81,10 @@ export interface CastNode {
     | 'TIME'
     | 'TIMESTAMP_NTZ'
     | 'TIMESTAMP_LTZ'
-    | 'TIMESTAMP_TZ';
+    | 'TIMESTAMP_TZ'
+    | 'ARRAY'
+    | 'OBJECT'
+    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`;
 }
 export type ExpressionNode =
   | IdentifierNode
@@ -159,11 +164,16 @@ export interface SelectNode {
   readonly offset?: number;
   readonly with?: readonly CteNode[];
 }
+export interface DefaultNode {
+  readonly kind: 'default';
+  /** A typed NULL for the shared source row, needed where a bare NULL cannot join a UNION. */
+  readonly placeholder?: ExpressionNode;
+}
 export interface InsertNode {
   readonly kind: 'insert';
   readonly table: IdentifierNode;
   readonly columns: readonly IdentifierNode[];
-  readonly rows: readonly (readonly ExpressionNode[])[];
+  readonly rows: readonly (readonly (ExpressionNode | DefaultNode)[])[];
   readonly query?: SelectNode;
 }
 export interface AssignmentNode {
@@ -288,15 +298,19 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         throw new TypeError('Unsupported expression AST node.');
     }
   }
-  function order(node: OrderNode, qualify: boolean): string {
-    return `${expression(node.expression, qualify)} ${node.direction}${node.nulls ? ` NULLS ${node.nulls}` : ''}`;
+  function order(node: OrderNode, qualify: boolean, rendered?: string): string {
+    return `${rendered ?? expression(node.expression, qualify)} ${node.direction}${node.nulls ? ` NULLS ${node.nulls}` : ''}`;
+  }
+  function projectionOf(node: SelectNode, value: ExpressionNode) {
+    const key = JSON.stringify(value);
+    return node.projections.find((projection) => JSON.stringify(projection.column) === key);
   }
   function source(node: RelationNode): string {
     switch (node.kind) {
       case 'identifier':
         return quoteIdentifier(node);
       case 'table':
-        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
+        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)}${node.temporal.selector === 'TIMESTAMP' ? '::TIMESTAMP_TZ' : ''})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
       case 'derived':
         return `(${selectStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
       case 'cte':
@@ -310,6 +324,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   function wire(value: string, type?: WireType): string {
     if (!type) return value;
     if (type === 'variant') return `TO_JSON(${value})`;
+    if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
+    if (type === 'geometry') return `ST_ASEWKB(${value})`;
     if (type === 'float') {
       // Text conversion keeps at most 16 digits, so send an exact integer significand and a
       // binary exponent instead. The scale is split to stay finite for subnormals.
@@ -333,9 +349,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       const extras: { column: ExpressionNode; alias: string }[] = [];
       const used = new Set(node.projections.map((item) => item.alias));
       const ordering = (node.orderBy ?? []).map((item, index) => {
-        const projected = node.projections.find(
-          (projection) => JSON.stringify(projection.column) === JSON.stringify(item.expression),
-        );
+        const projected = projectionOf(node, item.expression);
         if (node.distinct && !projected)
           throw new TypeError('DISTINCT ORDER BY expressions must be projected.');
         let name = projected?.alias;
@@ -345,7 +359,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           used.add(name);
           extras.push({ column: item.expression, alias: name });
         }
-        return `${quoteIdentifier(identifier('__sflib_result', name))} ${item.direction}${item.nulls ? ` NULLS ${item.nulls}` : ''}`;
+        return order(item, false, quoteIdentifier(identifier('__sflib_result', name)));
       });
       const native = selectStatement(
         { ...node, projections: [...node.projections, ...extras] },
@@ -379,8 +393,15 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       text += ` GROUP BY ${node.groupBy.map((value) => expression(value, qualified)).join(', ')}`;
     if (node.having) text += ` HAVING ${expression(node.having, qualified)}`;
     if (node.qualify) text += ` QUALIFY ${expression(node.qualify, qualified)}`;
-    if (node.orderBy?.length)
-      text += ` ORDER BY ${node.orderBy.map((value) => order(value, qualified)).join(', ')}`;
+    if (node.orderBy?.length) {
+      // Projected expressions order by alias (windows over aggregates are invalid repeated here);
+      // the rest are qualified because ORDER BY resolves bare names to aliases before columns.
+      const ordering = node.orderBy.map((value) => {
+        const projected = projectionOf(node, value.expression);
+        return order(value, true, projected && quoteIdentifier(identifier(projected.alias)));
+      });
+      text += ` ORDER BY ${ordering.join(', ')}`;
+    }
     if (node.limit !== undefined) text += ` LIMIT ${node.limit}`;
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;
@@ -390,13 +411,32 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       .map(({ column, value }) => `${quoteIdentifier(column)} = ${expression(value, qualified)}`)
       .join(', ');
   }
+  function insertStatement(node: InsertNode): string {
+    const target = `${quoteIdentifier(node.table)} (${node.columns.map(quoteIdentifier).join(', ')})`;
+    if (node.query) return `INSERT INTO ${target} ${selectStatement(node.query)}`;
+    if (!node.rows.some((row) => row.some((value) => value.kind === 'default')))
+      return `INSERT INTO ${target} ${node.rows.map((row) => `SELECT ${row.map((value) => expression(value as ExpressionNode)).join(', ')}`).join(' UNION ALL ')}`;
+    // VALUES rejects expressions such as PARSE_JSON, so rows with differing omitted columns
+    // become one conditional multi-table insert whose branches use DEFAULT per row shape.
+    const shapes: string[] = [];
+    const sources = node.rows.map((row) => {
+      const shape = row
+        .map((value, index) =>
+          value.kind === 'default' ? 'DEFAULT' : quoteIdentifier(identifier(`__sflib_${index}`)),
+        )
+        .join(', ');
+      if (!shapes.includes(shape)) shapes.push(shape);
+      return `SELECT ${shapes.indexOf(shape)} AS "__sflib_shape", ${row.map((value, index) => `${value.kind !== 'default' ? expression(value) : value.placeholder ? expression(value.placeholder) : 'NULL'} AS ${quoteIdentifier(identifier(`__sflib_${index}`))}`).join(', ')}`;
+    });
+    return `INSERT ALL ${shapes.map((shape, index) => `WHEN "__sflib_shape" = ${index} THEN INTO ${target} VALUES (${shape})`).join(' ')} ${sources.join(' UNION ALL ')}`;
+  }
   let sql: string;
   switch (statement.kind) {
     case 'select':
       sql = selectStatement(statement, true);
       break;
     case 'insert':
-      sql = `INSERT INTO ${quoteIdentifier(statement.table)} (${statement.columns.map(quoteIdentifier).join(', ')}) ${statement.query ? selectStatement(statement.query) : statement.rows.map((row) => `SELECT ${row.map((value) => expression(value)).join(', ')}`).join(' UNION ALL ')}`;
+      sql = insertStatement(statement);
       break;
     case 'update': {
       const qualified = Boolean(statement.from);

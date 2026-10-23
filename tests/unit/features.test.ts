@@ -201,6 +201,45 @@ describe('composable expressions and clauses', () => {
       select(a, { id: a.columns.id }).distinct().orderBy(asc(a.columns.name)).compile(),
     ).toThrow('must be projected');
   });
+
+  it('orders the native SELECT by projection aliases', () => {
+    const rank = rowNumber({ orderBy: [desc(sum(b.columns.amount))] });
+    expect(
+      select(b, { id: b.columns.id, rank }).groupBy(b.columns.id).orderBy(desc(rank)).compile().sql,
+    ).toBe(
+      'SELECT TO_VARCHAR("__sflib_result"."id") AS "id", TO_VARCHAR("__sflib_result"."rank") AS "rank" FROM (SELECT "ID" AS "id", ROW_NUMBER() OVER (ORDER BY SUM("AMOUNT") DESC) AS "rank" FROM "B" GROUP BY "ID" ORDER BY "rank" DESC) AS "__sflib_result" ORDER BY "__sflib_result"."rank" DESC',
+    );
+    expect(
+      select(b, { id: b.columns.id }).groupBy(b.columns.id).orderBy(asc(rank)).compile().sql,
+    ).toContain('AS "__sflib_order_0" FROM "B" GROUP BY "ID" ORDER BY "__sflib_order_0" ASC)');
+    const query = select(a, { name: a.columns.name })
+      .where(eq(a.columns.id, 1n))
+      .orderBy(desc(a.columns.name, 'LAST'), asc(lower(a.columns.name)))
+      .compile();
+    expect(query.sql).toBe(
+      'SELECT "NAME" AS "name" FROM "A" WHERE ("ID" = ?) ORDER BY "name" DESC NULLS LAST, LOWER("A"."NAME") ASC',
+    );
+    expect(query.binds).toEqual(['1']);
+  });
+
+  it('qualifies unprojected ORDER BY columns so projection aliases cannot capture them', () => {
+    expect(
+      select(a, { NAME: lower(a.columns.name) })
+        .orderBy(asc(a.columns.name), desc(rowNumber({ orderBy: [asc(a.columns.name)] })))
+        .compile().sql,
+    ).toBe(
+      'SELECT LOWER("NAME") AS "NAME" FROM "A" ORDER BY "A"."NAME" ASC, ROW_NUMBER() OVER (ORDER BY "A"."NAME" ASC) DESC',
+    );
+    const x = alias(a, 'X');
+    expect(
+      select(x, { ID: lower(x.columns.name) })
+        .orderBy(asc(x.columns.id))
+        .compile().sql,
+    ).toBe('SELECT LOWER("NAME") AS "ID" FROM "A" AS "X" ORDER BY "X"."ID" ASC');
+    expect(select(x, { NAME: x.columns.id }).orderBy(asc(x.columns.name)).compile().sql).toContain(
+      '"NAME" AS "__sflib_order_0" FROM "A" AS "X" ORDER BY "__sflib_order_0" ASC',
+    );
+  });
 });
 
 describe('relations and Snowflake source transformations', () => {
@@ -292,6 +331,12 @@ describe('relations and Snowflake source transformations', () => {
     expect(select(timeTravel(a, { offset: -10 }, 'BEFORE')).compile().sql).toContain(
       'BEFORE (OFFSET => ?)',
     );
+    expect(
+      select(timeTravel(a, { timestamp: '2026-10-22T00:00:00-07:00' })).compile().sql,
+    ).toContain('AT (TIMESTAMP => ?::TIMESTAMP_TZ)');
+    expect(select(timeTravel(a, { statement: 'query-id' })).compile().sql).toContain(
+      'AT (STATEMENT => ?)',
+    );
     expect(() => timeTravel(select(a).as('d'), { offset: 0 })).toThrow('base table');
     expect(() => timeTravel(a, { offset: 1 })).toThrow('nonpositive');
     expect(() => timeTravel(a, { offset: 0.5 })).toThrow('nonpositive');
@@ -320,10 +365,21 @@ describe('all declared scalar domains and DML', () => {
       kind: 'function',
       name: 'PARSE_JSON',
     });
-    expect(variant('V').encode(null)).toEqual({ kind: 'parameter', value: null });
+    expect(variant('V').encode(null)).toEqual({
+      kind: 'function',
+      name: 'PARSE_JSON',
+      args: [{ kind: 'parameter', value: null }],
+    });
     expect(binary('B').readSchema.parse(new Uint8Array([42]))).toEqual(new Uint8Array([42]));
     expect(binary('B').encode(new Uint8Array([0, 255]))).toMatchObject({ name: 'TO_BINARY' });
-    expect(binary('B').encode(null)).toEqual({ kind: 'parameter', value: null });
+    expect(binary('B').encode(null)).toEqual({
+      kind: 'function',
+      name: 'TO_BINARY',
+      args: [
+        { kind: 'parameter', value: null },
+        { kind: 'parameter', value: 'HEX' },
+      ],
+    });
     const types = snowflakeTable('TYPES', {
       d: date('D'),
       t: time('T'),
@@ -369,13 +425,49 @@ describe('all declared scalar domains and DML', () => {
       sql: 'INSERT INTO "T" ("ID", "NAME") SELECT ?, ? UNION ALL SELECT ?, ?',
       binds: ['1', 'a', '2', null],
     });
-    expect(insert(table, { id: 3n }).compile().binds).toEqual(['3', null]);
+    expect(insert(table, { id: 3n }).compile()).toEqual({
+      sql: 'INSERT INTO "T" ("ID") SELECT ?',
+      binds: ['3'],
+    });
     expect(() => insert(table, [])).toThrow('at least one row');
     expect(() => insert(table, { id: 1n, wrong: true } as unknown as { id: bigint })).toThrow(
       'Unknown',
     );
-    expect(() => insert(table, {} as { id: bigint })).toThrow();
+    expect(() => insert(table, {} as { id: bigint })).toThrow('Missing required insert column: id');
     expect(() => insert(select(table).as('derived'), { id: 1n, name: null })).toThrow('base table');
+  });
+
+  it('types NULL like the encoded values of VARIANT and BINARY columns', () => {
+    const table = snowflakeTable('T', {
+      id: integer('ID').notNull(),
+      payload: variant('PAYLOAD'),
+      data: binary('DATA'),
+      day: date('DAY'),
+    });
+    expect(
+      insert(table, [
+        { id: 1n, payload: { a: 1 }, data: new Uint8Array([255]), day: '2026-10-23' },
+        { id: 2n, payload: null, data: null, day: null },
+      ]).compile(),
+    ).toEqual({
+      sql:
+        'INSERT INTO "T" ("ID", "PAYLOAD", "DATA", "DAY") SELECT ?, PARSE_JSON(?), TO_BINARY(?, ?), ?' +
+        ' UNION ALL SELECT ?, PARSE_JSON(?), TO_BINARY(?, ?), ?',
+      binds: [...['1', '{"a":1}', 'ff', 'HEX', '2026-10-23'], ...['2', null, null, 'HEX', null]],
+    });
+    expect(update(table, { payload: null, data: null }).compile()).toEqual({
+      sql: 'UPDATE "T" SET "PAYLOAD" = PARSE_JSON(?), "DATA" = TO_BINARY(?, ?)',
+      binds: [null, null, 'HEX'],
+    });
+    const source = snowflakeTable('S', { id: integer('ID').notNull() });
+    expect(
+      mergeInto(table, source, eq(table.columns.id, source.columns.id))
+        .whenNotMatchedInsert({ id: source.columns.id, payload: null, data: null, day: null })
+        .compile(),
+    ).toEqual({
+      sql: 'MERGE INTO "T" AS "T" USING "S" ON ("T"."ID" = "S"."ID") WHEN NOT MATCHED THEN INSERT ("ID", "PAYLOAD", "DATA", "DAY") VALUES ("S"."ID", PARSE_JSON(?), TO_BINARY(?, ?), ?)',
+      binds: [null, null, 'HEX', null],
+    });
   });
 
   it('compiles update and delete filters and enforces scalar scope', () => {
@@ -405,7 +497,10 @@ describe('all declared scalar domains and DML', () => {
     expect(updateInsert.compile().sql).toContain(
       'WHEN MATCHED THEN UPDATE SET "LABEL" = "SOURCE"."LABEL"',
     );
-    expect(updateInsert.compile().binds).toEqual([null]);
+    expect(updateInsert.compile()).toMatchObject({
+      sql: expect.stringContaining('WHEN NOT MATCHED THEN INSERT ("ID") VALUES ("SOURCE"."ID")'),
+      binds: [],
+    });
     expect(merge.whenMatchedUpdate({ label: 'x' }).whenMatchedDelete().compile().sql).toContain(
       'WHEN MATCHED THEN DELETE',
     );

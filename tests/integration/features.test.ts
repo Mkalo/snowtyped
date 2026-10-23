@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import {
   alias,
   and,
+  array,
   asc,
   binary,
   count,
@@ -13,7 +14,10 @@ import {
   eq,
   flatten,
   float,
+  type GeoJsonGeometry,
   generateSchema,
+  geography,
+  geometry,
   gt,
   gte,
   inArray,
@@ -24,6 +28,7 @@ import {
   jsonPath,
   lower,
   mergeInto,
+  object,
   rowNumber,
   select,
   snowflakeTable,
@@ -35,6 +40,7 @@ import {
   timeTravel,
   update,
   variant,
+  vector,
 } from '../../src/index.js';
 import { createPool } from '../../src/snowflake/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
@@ -94,6 +100,53 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const constrained = snowflakeTable(
+    'CONSTRAINED',
+    {
+      id: integer('ID', { precision: 3 }).notNull(),
+      amount: decimal('AMOUNT', { precision: 5, scale: 2 }),
+      code: text('CODE', { length: 3 }),
+      data: binary('DATA', { length: 2 }),
+      clock: time('CLOCK', { precision: 3 }),
+      at: timestamp('AT_VALUE', 'ltz', { precision: 0 }),
+    },
+    namespace,
+  );
+  const docs = snowflakeTable(
+    'DOCS',
+    {
+      id: integer('ID').notNull(),
+      tags: array('TAGS', z.string()).notNull(),
+      items: array('ITEMS'),
+      meta: object('META', z.strictObject({ ok: z.boolean(), note: z.string().nullable() })),
+      extra: object('EXTRA'),
+    },
+    namespace,
+  );
+  const spatial = snowflakeTable(
+    'SPATIAL',
+    {
+      id: integer('ID').notNull(),
+      location: geography('LOCATION').notNull(),
+      shape: geometry('SHAPE', { srid: 4326 }),
+      plain: geometry('PLAIN'),
+      embedding: vector('EMBEDDING', 'float', 3),
+      counts: vector('COUNTS', 'int', 2).notNull(),
+    },
+    namespace,
+  );
+  const nullable = snowflakeTable(
+    'NULLABLE_TYPES',
+    {
+      id: integer('ID').notNull(),
+      data: binary('DATA'),
+      payload: variant('PAYLOAD', z.object({ ok: z.boolean() })),
+      at: timestamp('AT_VALUE'),
+      day: date('DAY'),
+    },
+    namespace,
+  );
+  const nullSource = snowflakeTable('NULL_SOURCE', { id: integer('ID').notNull() }, namespace);
   const doubles = snowflakeTable(
     'DOUBLES',
     { id: integer('ID').notNull(), value: float('VALUE').notNull() },
@@ -144,6 +197,19 @@ describe('complete query and execution paths against Snowflake', () => {
     await db.queryRaw(
       sql`CREATE TABLE ${name(types)} (ID NUMBER(38,0) NOT NULL, VALUE DOUBLE NOT NULL, DAY DATE NOT NULL, CLOCK TIME(9) NOT NULL, AT_VALUE TIMESTAMP_NTZ(9) NOT NULL, DATA BINARY NOT NULL, PAYLOAD VARIANT NOT NULL)`,
     );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(constrained)} (ID NUMBER(3,0) NOT NULL, AMOUNT NUMBER(5,2), CODE VARCHAR(3), DATA BINARY(2), CLOCK TIME(3), AT_VALUE TIMESTAMP_LTZ(0))`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(docs)} (ID NUMBER(38,0) NOT NULL, TAGS ARRAY NOT NULL, ITEMS ARRAY, META OBJECT, EXTRA OBJECT)`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(spatial)} (ID NUMBER(38,0) NOT NULL, LOCATION GEOGRAPHY NOT NULL, SHAPE GEOMETRY, PLAIN GEOMETRY, EMBEDDING VECTOR(FLOAT, 3), COUNTS VECTOR(INT, 2) NOT NULL)`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(nullable)} (ID NUMBER(38,0) NOT NULL, DATA BINARY, PAYLOAD VARIANT, AT_VALUE TIMESTAMP_NTZ(9), DAY DATE)`,
+    );
+    await db.queryRaw(sql`CREATE TABLE ${name(nullSource)} (ID NUMBER(38,0) NOT NULL)`);
   });
   afterAll(() => fixture.cleanup());
 
@@ -203,6 +269,52 @@ describe('complete query and execution paths against Snowflake', () => {
     ]);
   });
 
+  it('orders grouped queries by windows over aggregates', async () => {
+    const rank = rowNumber({ orderBy: [desc(sum(orders.columns.amount))] });
+    const projected = select(orders, { customer: orders.columns.customerId, rank })
+      .groupBy(orders.columns.customerId)
+      .orderBy(desc(rank));
+    expect((await db.execute(projected)).rows).toEqual([
+      { customer: 2n, rank: 2n },
+      { customer: 9007199254740993n, rank: 1n },
+    ]);
+    expect((await db.execute(projected.limit(1))).rows).toEqual([{ customer: 2n, rank: 2n }]);
+    const hidden = select(orders, { customer: orders.columns.customerId })
+      .groupBy(orders.columns.customerId)
+      .orderBy(asc(rank));
+    expect((await db.execute(hidden)).rows).toEqual([
+      { customer: 9007199254740993n },
+      { customer: 2n },
+    ]);
+  });
+
+  it('orders by a column that shares its name with another projection alias', async () => {
+    const byName = [{ NAME: null }, { NAME: 'grace@example.test' }, { NAME: 'linus@example.test' }];
+    const { email, id, name } = customers.columns;
+    expect((await db.execute(select(customers, { NAME: email }).orderBy(asc(name)))).rows).toEqual(
+      byName,
+    );
+    expect(
+      (
+        await db.execute(
+          select(customers, { NAME: email })
+            .orderBy(asc(lower(name)))
+            .limit(1),
+        )
+      ).rows,
+    ).toEqual(byName.slice(0, 1));
+    expect(
+      (await db.execute(select(customers, { NAME: email, ID: name }).orderBy(asc(id)))).rows.map(
+        (row) => row.ID,
+      ),
+    ).toEqual(['Grace', 'Linus', 'Ada']);
+    expect((await db.execute(select(customers, { NAME: id }).orderBy(desc(name)))).rows).toEqual([
+      { NAME: 3n },
+      { NAME: 2n },
+      { NAME: 9007199254740993n },
+    ]);
+  });
+
   it('composes derived sources and CTEs with validated wire decoding', async () => {
     const source = select(orders, {
       customer: orders.columns.customerId,
@@ -258,6 +370,24 @@ describe('complete query and execution paths against Snowflake', () => {
     ).toHaveLength(3);
   });
 
+  it('honors the UTC offset of time-travel timestamps', async () => {
+    const history = snowflakeTable('HISTORY', { id: integer('ID').notNull() }, namespace);
+    await db.queryRaw(sql`CREATE TABLE ${name(history)} (ID NUMBER(38,0) NOT NULL)`);
+    await db.execute(insert(history, { id: 1n }));
+    await db.queryRaw(sql`SELECT SYSTEM$WAIT(1)`);
+    const [moment] = await db.queryRaw<{ AT: string }[]>(
+      sql`SELECT TO_VARCHAR(CONVERT_TIMEZONE('Etc/GMT+7', CURRENT_TIMESTAMP()), 'YYYY-MM-DD"T"HH24:MI:SS.FF9TZH:TZM') AS AT`,
+    );
+    const timestamp = moment?.AT as string;
+    expect(timestamp).toMatch(/-07:00$/);
+    await db.queryRaw(sql`SELECT SYSTEM$WAIT(1)`);
+    await db.execute(insert(history, { id: 2n }));
+    for (const mode of ['AT', 'BEFORE'] as const) {
+      const snapshot = timeTravel(history, { timestamp }, mode);
+      expect((await db.execute(select(snapshot))).rows).toEqual([{ id: 1n }]);
+    }
+  });
+
   it('supports INSERT, UPDATE, DELETE, and MERGE', async () => {
     await db.execute(insert(writes, { id: 100n, name: 'old' }));
     await db.execute(update(writes, { name: 'changed' }).where(eq(writes.columns.id, 100n)));
@@ -293,6 +423,372 @@ describe('complete query and execution paths against Snowflake', () => {
     expect(row?.at).toContain('123456789');
     expect([...(row?.data ?? [])]).toEqual([0, 42, 255]);
     expect(row?.payload).toEqual({ ok: true });
+  });
+
+  it('round-trips constraint boundaries and rejects values Snowflake would narrow', async () => {
+    for (const row of [
+      {
+        id: 999n,
+        amount: '999.99',
+        code: '😀😀😀',
+        data: new Uint8Array([0, 255]),
+        clock: '23:59:59.999',
+        at: '2026-10-22 12:34:56',
+      },
+      { id: -999n, amount: '-999.99', code: 'abc', clock: '00:00:00.100000' },
+      { id: 0n },
+    ])
+      await db.execute(insert(constrained, row));
+    const rows = (await db.execute(select(constrained).orderBy(asc(constrained.columns.id)))).rows;
+    expect(rows.map((row) => ({ ...row, data: row.data && [...row.data] }))).toMatchObject([
+      { id: -999n, amount: '-999.99', code: 'abc', data: null, clock: '00:00:00.100000000' },
+      { id: 0n, amount: null, code: null, data: null, clock: null, at: null },
+      {
+        id: 999n,
+        amount: '999.99',
+        code: '😀😀😀',
+        data: [0, 255],
+        clock: '23:59:59.999000000',
+        at: expect.stringContaining('2026-10-22 12:34:56.000000000'),
+      },
+    ]);
+    for (const values of [
+      { id: 1000n },
+      { id: 1n, amount: '1.234' },
+      { id: 1n, amount: '1000' },
+      { id: 1n, code: 'abcd' },
+      { id: 1n, data: new Uint8Array(3) },
+      { id: 1n, clock: '12:00:00.0001' },
+      { id: 1n, at: '2026-10-22 12:34:56.7' },
+      { id: 1n, at: '1700000000123' },
+    ])
+      expect(() => insert(constrained, values)).toThrow('does not fit');
+    await db.execute(insert(constrained, { id: 1n, at: '1700000000000' }));
+    expect(
+      await db.queryRaw(
+        sql`SELECT TO_CHAR(CONVERT_TIMEZONE('UTC', AT_VALUE), 'YYYY-MM-DD HH24:MI:SS.FF3') AS AT FROM ${name(constrained)} WHERE ID = ${1}`,
+      ),
+    ).toEqual([{ AT: '2023-11-14 22:13:20.000' }]);
+    await db.queryRaw(
+      sql`UPDATE ${name(constrained)} SET AMOUNT = ${'1.23'}, CODE = ${'abc'} WHERE ID = ${0}`,
+    );
+    const narrower = snowflakeTable(
+      'CONSTRAINED',
+      { id: integer('ID').notNull(), code: text('CODE', { length: 2 }) },
+      namespace,
+    );
+    await expect(db.execute(select(narrower).where(eq(narrower.columns.id, 0n)))).rejects.toThrow(
+      'VARCHAR(2)',
+    );
+    const tables = await introspect(db, namespace);
+    const code = generateSchema(tables.filter((table) => table.name === 'CONSTRAINED'));
+    for (const declaration of [
+      '"ID": integer("ID", { precision: 3 }).notNull()',
+      '"AMOUNT": decimal("AMOUNT", { precision: 5, scale: 2 })',
+      '"CODE": text("CODE", { length: 3 })',
+      '"DATA": binary("DATA")',
+      '"CLOCK": time("CLOCK", { precision: 3 })',
+      '"AT_VALUE": timestamp("AT_VALUE", "ltz", { precision: 0 })',
+    ])
+      expect(code).toContain(declaration);
+  });
+
+  it('round-trips semi-structured ARRAY and OBJECT columns', async () => {
+    await db.execute(
+      insert(docs, [
+        { id: 1n, tags: [], items: null, meta: null },
+        {
+          id: 2n,
+          tags: ['a', 'b'],
+          items: [1, null, { nested: [true] }],
+          meta: { ok: true, note: null },
+          extra: { empty: {} },
+        },
+      ]),
+    );
+    await db.execute(
+      update(docs, { items: ['updated'], meta: { ok: false, note: 'x' } }).where(
+        eq(docs.columns.id, 1n),
+      ),
+    );
+    await db.execute(
+      mergeInto(docs, staged, eq(docs.columns.id, staged.columns.id)).whenNotMatchedInsert({
+        id: staged.columns.id,
+        tags: ['merged'],
+        extra: { k: 1 },
+      }),
+    );
+    const rows = (await db.execute(select(docs).orderBy(asc(docs.columns.id)))).rows;
+    expect(rows).toEqual([
+      { id: 1n, tags: [], items: ['updated'], meta: { ok: false, note: 'x' }, extra: null },
+      {
+        id: 2n,
+        tags: ['a', 'b'],
+        items: [1, null, { nested: [true] }],
+        meta: { ok: true, note: null },
+        extra: { empty: {} },
+      },
+      { id: 100n, tags: ['merged'], items: null, meta: null, extra: { k: 1 } },
+      { id: 101n, tags: ['merged'], items: null, meta: null, extra: { k: 1 } },
+    ]);
+    const matched = await db.execute(
+      select(docs)
+        .select({ id: docs.columns.id })
+        .where(eq(docs.columns.meta, { ok: true, note: null })),
+    );
+    expect(matched.rows).toEqual([{ id: 2n }]);
+    const items = select(docs)
+      .select({ items: docs.columns.items })
+      .where(eq(docs.columns.id, 100n));
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = PARSE_JSON(${'[1.50, 2.5e-3, 9007199254740991, 1e300]'}) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([
+      { items: [1.5, 0.0025, 9007199254740991, 1e300] },
+    ]);
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = ARRAY_CONSTRUCT(1, NULL, ${'undefined'}) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([{ items: [1, null, 'undefined'] }]);
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = ARRAY_CONSTRUCT(5e-324::DOUBLE, PARSE_JSON(${'1e-310'}), PI()) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([{ items: [5e-324, 1e-310, Math.PI] }]);
+    for (const json of ['[12345678901234567890]', '[0.1234567890123456789]']) {
+      await db.queryRaw(
+        sql`UPDATE ${name(docs)} SET ITEMS = PARSE_JSON(${json}) WHERE ID = ${100}`,
+      );
+      await expect(db.execute(items)).rejects.toThrow('does not fit a JavaScript number');
+    }
+    await db.queryRaw(sql`UPDATE ${name(docs)} SET TAGS = ARRAY_CONSTRUCT(1) WHERE ID = ${101}`);
+    await expect(db.execute(select(docs))).rejects.toThrow();
+
+    const structured = snowflakeTable('STRUCTURED', { id: integer('ID') }, namespace);
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(structured)} (ID NUMBER, SA ARRAY(NUMBER), SO OBJECT(city VARCHAR))`,
+    );
+    try {
+      const tables = await introspect(db, namespace);
+      const code = generateSchema(tables.filter((table) => table.name === 'DOCS'));
+      for (const declaration of [
+        '"TAGS": array("TAGS").notNull()',
+        '"ITEMS": array("ITEMS")',
+        '"META": object("META")',
+      ])
+        expect(code).toContain(declaration);
+      const table = tables.find((entry) => entry.name === 'STRUCTURED');
+      expect(table?.columns.map((column) => column.dataType)).toEqual([
+        'NUMBER',
+        'ARRAY(NUMBER)',
+        'OBJECT(CITY VARCHAR)',
+      ]);
+      expect(() => generateSchema(tables.filter((entry) => entry.name === 'STRUCTURED'))).toThrow(
+        'ARRAY(NUMBER)',
+      );
+    } finally {
+      await db.queryRaw(sql`DROP TABLE ${name(structured)}`);
+    }
+  });
+
+  it('round-trips GEOGRAPHY, GEOMETRY, and VECTOR columns exactly', async () => {
+    const precise: GeoJsonGeometry = {
+      type: 'Point',
+      coordinates: [0.30000000000000004, 45.123456789012344],
+    };
+    const polygon: GeoJsonGeometry = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 0],
+        ],
+      ],
+    };
+    const collection: GeoJsonGeometry = {
+      type: 'GeometryCollection',
+      geometries: [
+        { type: 'Point', coordinates: [1, 2, 3] },
+        {
+          type: 'MultiLineString',
+          coordinates: [
+            [
+              [0, 0, 0],
+              [1, 1, 0.5],
+            ],
+          ],
+        },
+      ],
+    };
+    await db.execute(
+      insert(spatial, [
+        { id: 1n, location: precise, shape: precise, embedding: [0.1, -2, 3.4e38], counts: [1, 2] },
+        {
+          id: 2n,
+          location: { type: 'Point', coordinates: [1, 2, 3, 4] },
+          shape: null,
+          plain: collection,
+          embedding: null,
+          counts: [2147483647, -2147483648],
+        },
+      ]),
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { location: spatial.columns.location }).where(eq(spatial.columns.id, 2n)),
+        )
+      ).rows,
+    ).toEqual([{ location: { type: 'Point', coordinates: [1, 2, 3, 4] } }]);
+    await db.execute(
+      update(spatial, { location: polygon, plain: polygon }).where(eq(spatial.columns.id, 2n)),
+    );
+    await db.execute(
+      mergeInto(spatial, staged, eq(spatial.columns.id, staged.columns.id)).whenNotMatchedInsert({
+        id: staged.columns.id,
+        location: { type: 'MultiPoint', coordinates: [[1, 2]] },
+        counts: [0, 0],
+      }),
+    );
+    const rows = (await db.execute(select(spatial).orderBy(asc(spatial.columns.id)))).rows;
+    expect(rows).toEqual([
+      {
+        id: 1n,
+        location: precise,
+        shape: precise,
+        plain: null,
+        embedding: [Math.fround(0.1), -2, Math.fround(3.4e38)],
+        counts: [1, 2],
+      },
+      {
+        id: 2n,
+        location: polygon,
+        shape: null,
+        plain: polygon,
+        embedding: null,
+        counts: [2147483647, -2147483648],
+      },
+      ...[100n, 101n].map((id) => ({
+        id,
+        location: { type: 'MultiPoint', coordinates: [[1, 2]] },
+        shape: null,
+        plain: null,
+        embedding: null,
+        counts: [0, 0],
+      })),
+    ]);
+    await db.execute(
+      update(spatial, { embedding: [-6.727404335356611e-17, 0, 1] }).where(
+        eq(spatial.columns.id, 101n),
+      ),
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { embedding: spatial.columns.embedding }).where(
+            eq(spatial.columns.id, 101n),
+          ),
+        )
+      ).rows,
+    ).toEqual([{ embedding: [Math.fround(-6.727404335356611e-17), 0, 1] }]);
+    await db.execute(update(spatial, { plain: collection }).where(eq(spatial.columns.id, 100n)));
+    const nearest = await db.execute(
+      select(spatial, { id: spatial.columns.id, plain: spatial.columns.plain })
+        .where(eq(spatial.columns.embedding, [Math.fround(0.1), -2, Math.fround(3.4e38)]))
+        .orderBy(asc(spatial.columns.id)),
+    );
+    expect(nearest.rows).toEqual([{ id: 1n, plain: null }]);
+    expect(
+      (
+        await db.execute(
+          select(spatial, { plain: spatial.columns.plain }).where(eq(spatial.columns.id, 100n)),
+        )
+      ).rows,
+    ).toEqual([{ plain: collection }]);
+    await expect(
+      db.execute(select(spatial).where(eq(spatial.columns.location, precise as GeoJsonGeometry))),
+    ).rejects.toThrow("Invalid argument types for function '='");
+    expect(() => insert(spatial, { id: 3n, location: precise, counts: [1, 2, 3] })).toThrow(
+      'VECTOR(INT, 2)',
+    );
+    await db.queryRaw(
+      sql`UPDATE ${name(spatial)} SET SHAPE = TO_GEOMETRY('POINT(1 2)') WHERE ID = ${101}`,
+    );
+    await expect(db.execute(select(spatial))).rejects.toThrow('GEOMETRY with SRID 4326');
+    await db.queryRaw(
+      sql`UPDATE ${name(spatial)} SET SHAPE = TO_GEOMETRY('POINT(1 2)', 4326) WHERE ID = ${101}`,
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { shape: spatial.columns.shape }).where(eq(spatial.columns.id, 101n)),
+        )
+      ).rows,
+    ).toEqual([{ shape: { type: 'Point', coordinates: [1, 2] } }]);
+
+    const tables = await introspect(db, namespace);
+    const code = generateSchema(tables.filter((table) => table.name === 'SPATIAL'));
+    for (const declaration of [
+      '"LOCATION": geography("LOCATION").notNull()',
+      '"SHAPE": geometry("SHAPE")',
+      '"EMBEDDING": vector("EMBEDDING", "float", 3)',
+      '"COUNTS": vector("COUNTS", "int", 2).notNull()',
+    ])
+      expect(code).toContain(declaration);
+  });
+
+  it('writes NULL to typed columns alone and mixed with values', async () => {
+    const empty = { data: null, payload: null, at: null, day: null };
+    await db.execute(insert(nullable, { id: 1n, ...empty }));
+    await db.execute(
+      insert(nullable, [
+        {
+          id: 2n,
+          data: new Uint8Array([1, 2]),
+          payload: { ok: true },
+          at: '2026-10-23 01:02:03.000000000',
+          day: '2026-10-23',
+        },
+        { id: 3n, ...empty },
+        { id: 4n },
+      ]),
+    );
+    await db.execute(insert(nullable, [{ id: 5n }, { id: 6n, payload: { ok: false } }]));
+    const read = async () =>
+      (await db.execute(select(nullable).orderBy(asc(nullable.columns.id)))).rows.map((row) => ({
+        ...row,
+        data: row.data && [...row.data],
+      }));
+    expect(await read()).toEqual([
+      { id: 1n, ...empty },
+      {
+        id: 2n,
+        data: [1, 2],
+        payload: { ok: true },
+        at: '2026-10-23 01:02:03.000000000',
+        day: '2026-10-23',
+      },
+      { id: 3n, ...empty },
+      { id: 4n, ...empty },
+      { id: 5n, ...empty },
+      { id: 6n, ...empty, payload: { ok: false } },
+    ]);
+    await db.execute(update(nullable, empty).where(eq(nullable.columns.id, 2n)));
+    await db.execute(insert(nullSource, [{ id: 1n }, { id: 7n }]));
+    await db.execute(
+      mergeInto(
+        nullable,
+        nullSource,
+        eq(nullable.columns.id, nullSource.columns.id),
+      ).whenNotMatchedInsert({
+        id: nullSource.columns.id,
+        payload: null,
+      }),
+    );
+    const rows = await read();
+    expect(rows.find((row) => row.id === 2n)).toEqual({ id: 2n, ...empty });
+    expect(rows.filter((row) => row.id >= 7n)).toEqual([{ id: 7n, ...empty }]);
   });
 
   it('reads every DOUBLE exactly, including extremes and subnormals', async () => {
@@ -340,6 +836,50 @@ describe('complete query and execution paths against Snowflake', () => {
     }).rejects.toThrow();
   });
 
+  it('cancels live buffered raw queries on deadline and abort', async () => {
+    const cancelled = sql`
+      SELECT QUERY_TEXT, ERROR_CODE
+      FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION())
+      WHERE QUERY_TEXT LIKE 'SELECT SYSTEM$WAIT(10) AS RAW!_%' ESCAPE '!'
+      ORDER BY QUERY_TEXT
+    `;
+    const started = Date.now();
+    await expect(
+      db.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_DEADLINE`, { timeoutMs: 1_000 }),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    const controller = new AbortController();
+    const reason = new Error('live abort');
+    const pending = db.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_ABORT`, {
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(reason), 1_000);
+    await expect(pending).rejects.toBe(reason);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    await vi.waitFor(
+      async () =>
+        expect(await db.queryRaw(cancelled)).toEqual([
+          { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_ABORT', ERROR_CODE: '604' },
+          { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_DEADLINE', ERROR_CODE: '604' },
+        ]),
+      { timeout: 8_000, interval: 500 },
+    );
+    const pool = await createPool(integrationConfig(), { max: 1 });
+    try {
+      await expect(
+        pool.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_POOLED`, { timeoutMs: 1_000 }),
+      ).rejects.toMatchObject({ name: 'TimeoutError' });
+      await vi.waitFor(
+        async () =>
+          expect(await pool.queryRaw(cancelled)).toEqual([
+            { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_POOLED', ERROR_CODE: '604' },
+          ]),
+        { timeout: 8_000, interval: 500 },
+      );
+    } finally {
+      await pool.close();
+    }
+  });
+
   it('commits and rolls back DML on a pinned session', async () => {
     await db.transaction(async (tx) => {
       await tx.execute(insert(writes, { id: 200n, name: 'committed' }));
@@ -369,6 +909,31 @@ describe('complete query and execution paths against Snowflake', () => {
           async (tx) => (await tx.queryRaw<{ VALUE: string }[]>`SELECT 1 AS VALUE`)[0]?.VALUE,
         ),
       ).toBe('1');
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it('destroys a pooled connection whose ROLLBACK failed', async () => {
+    const pool = await createPool(integrationConfig(), { max: 1 });
+    try {
+      let aborted: string | undefined;
+      const failure = await pool
+        .transaction(async (tx) => {
+          const [row] = await tx.queryRaw<{ ID: string }[]>`SELECT CURRENT_SESSION() AS ID`;
+          aborted = row?.ID;
+          await tx.queryRaw`SELECT SYSTEM$ABORT_SESSION(${Number(aborted)})`;
+          throw new Error('aborted session fixture');
+        })
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors[0]).toHaveProperty(
+        'message',
+        'aborted session fixture',
+      );
+      const [row] = await pool.queryRaw<{ ID: string }[]>`SELECT CURRENT_SESSION() AS ID`;
+      expect(row?.ID).toBeDefined();
+      expect(row?.ID).not.toBe(aborted);
     } finally {
       await pool.close();
     }

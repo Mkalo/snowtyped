@@ -4,6 +4,7 @@ export {
   type CompiledQuery,
   type CteNode,
   compileAst,
+  type DefaultNode,
   type DeleteNode,
   type DerivedNode,
   type EqualityNode,
@@ -83,6 +84,7 @@ export { type SelectQuery, select } from './query.js';
 export {
   type AnyColumn,
   alias,
+  array,
   type BoundColumns,
   binary,
   boolean,
@@ -93,10 +95,17 @@ export {
   date,
   decimal,
   float,
+  geography,
+  geometry,
+  type IdentityOptions,
   type InferColumn,
   type InferSelection,
   integer,
+  object,
   type Selection,
+  type ServerValue,
+  type ServerValueKind,
+  type ServerValues,
   snowflakeTable,
   type Table,
   type TableOptions,
@@ -105,6 +114,8 @@ export {
   timestamp,
   timeTravel,
   variant,
+  vector,
 } from './schema.js';
 export { type FlattenOptions, flatten } from './snowflake-syntax.js';
+export type { GeoJsonGeometry, GeoPosition } from './spatial.js';
 export { type RawQuery, type SqlInterpolation, type SqlParameter, sql } from './sql.js';
