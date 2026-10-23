@@ -8,6 +8,13 @@ import * as api from '../../src/index.js';
 import * as driver from '../../src/snowflake/index.js';
 
 const document = readFileSync(new URL('../../docs/live-coverage.md', import.meta.url), 'utf8');
+const listed = new Set(
+  document
+    .split('\n')
+    .filter((line) => line.startsWith('| '))
+    .flatMap((line) => [...(line.split('|')[1] ?? '').matchAll(/`([^`]+)`/g)])
+    .map((match) => match[1]),
+);
 const methods = (value: object, prefix = '.') =>
   Object.entries(value)
     .filter(([, member]) => typeof member === 'function')
@@ -28,7 +35,7 @@ describe('live coverage document', () => {
       ...methods(driver.createClient({ execute: vi.fn() })),
       ...methods(await driver.createPool({ account: 'test' })),
     ];
-    const missing = [...new Set(names)].filter((name) => !document.includes(`\`${name}\``));
+    const missing = [...new Set(names)].filter((name) => !listed.has(name));
     expect(missing).toEqual([]);
   });
 });

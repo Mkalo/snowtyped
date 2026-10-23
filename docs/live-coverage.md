@@ -5,9 +5,9 @@ and returned values against Snowflake. Files are under `tests/integration/`. Eve
 file creates its own `SFLIB_TEST_<uuid>` schema through `tests/support/snowflake.ts`
 and drops it afterwards.
 
-Every public runtime export and builder method must appear here in backticks;
-`tests/unit/live-coverage.test.ts` enforces that. A feature with server semantics
-needs a live row. Type-only contracts, invalid construction, client-side guards,
+Every public runtime export and builder method must appear in backticks in the
+first column of a table below; `tests/unit/live-coverage.test.ts` enforces that.
+A feature with server semantics needs a live row. Type-only contracts, invalid construction, client-side guards,
 and packaging stay in type, unit, and package tests and are listed under
 exclusions with the reason.
 
@@ -92,10 +92,13 @@ exclusions with the reason.
 
 ## Known gaps
 
-Live tests that would fail today are tracked as bugs instead of asserting wrong
-behavior:
+Open bugs on main whose live tests would fail today. Each issue asks for its live
+test, and the fix adds it instead of this suite asserting the wrong behavior:
 - NULL into VARIANT/BINARY and mixed NULL rows in multi-row inserts: #40 (PR #47).
-- FLOAT values needing more than 15 significant digits: #50.
-- `timeTravel` timestamps with a non-UTC offset: #51.
-- MERGE from a CTE source: #52.
-- ORDER BY a projected window over an aggregate: #56.
+- Pooled connection reused after a failed transaction ROLLBACK: #41 (PR #45).
+- FLOAT values needing more than 15 significant digits: #50 (PR #59).
+- `timeTravel` timestamps with a non-UTC offset: #51 (PR #61).
+- MERGE from a CTE source: #52 (PR #62).
+- VARIANT and JSON path numbers beyond double precision are rounded: #53 (PR #43).
+- ORDER BY a projected window over an aggregate: #56 (PR #65).
+- Pool keeps handing out terminated connections: #57 (PR #64).
