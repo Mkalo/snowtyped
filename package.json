@@ -82,7 +82,7 @@
     "check:changesets": "node scripts/check-changesets.mjs",
     "test:versioning": "vitest run --config vitest.tooling.config.ts tests/tooling/versioning.test.ts",
     "test:release": "vitest run --config vitest.tooling.config.ts tests/tooling/release",
-    "version:packages": "changeset version && pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile && biome format --write package.json",
+    "version:packages": "changeset version && pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile && biome format --write package.json CHANGELOG.md",
     "build": "tsdown",
     "dev": "tsdown --watch",
     "lint": "biome check .",

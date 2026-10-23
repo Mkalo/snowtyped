@@ -63,7 +63,7 @@ Empty changesets alone do not create a PR. Runs regenerate the branch from main,
 so keep it free of manual edits. Nothing auto-merges or publishes from that PR.
 
 `pnpm version:packages` runs Changesets, refreshes the lockfile with pinned pnpm
-and lifecycle scripts disabled, and formats the manifest. A root version-only
+and lifecycle scripts disabled, and formats the manifest and changelog. A root version-only
 change can leave this lockfile unchanged. Review the version, changelog, consumed
 changesets, and frozen-install result together. Rehearse locally in disposable state.
 
