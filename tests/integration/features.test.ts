@@ -14,7 +14,10 @@ import {
   eq,
   flatten,
   float,
+  type GeoJsonGeometry,
   generateSchema,
+  geography,
+  geometry,
   gt,
   gte,
   inArray,
@@ -37,6 +40,7 @@ import {
   timeTravel,
   update,
   variant,
+  vector,
 } from '../../src/index.js';
 import { createPool } from '../../src/snowflake/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
@@ -119,6 +123,18 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const spatial = snowflakeTable(
+    'SPATIAL',
+    {
+      id: integer('ID').notNull(),
+      location: geography('LOCATION').notNull(),
+      shape: geometry('SHAPE', { srid: 4326 }),
+      plain: geometry('PLAIN'),
+      embedding: vector('EMBEDDING', 'float', 3),
+      counts: vector('COUNTS', 'int', 2).notNull(),
+    },
+    namespace,
+  );
   const name = (table: { node: { parts: readonly string[] } }) =>
     sql.identifier(...(table.node.parts as [string, ...string[]]));
 
@@ -169,6 +185,9 @@ describe('complete query and execution paths against Snowflake', () => {
     );
     await db.queryRaw(
       sql`CREATE TABLE ${name(docs)} (ID NUMBER(38,0) NOT NULL, TAGS ARRAY NOT NULL, ITEMS ARRAY, META OBJECT, EXTRA OBJECT)`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(spatial)} (ID NUMBER(38,0) NOT NULL, LOCATION GEOGRAPHY NOT NULL, SHAPE GEOMETRY, PLAIN GEOMETRY, EMBEDDING VECTOR(FLOAT, 3), COUNTS VECTOR(INT, 2) NOT NULL)`,
     );
   });
   afterAll(() => fixture.cleanup());
@@ -461,6 +480,133 @@ describe('complete query and execution paths against Snowflake', () => {
     } finally {
       await db.queryRaw(sql`DROP TABLE ${name(structured)}`);
     }
+  });
+
+  it('round-trips GEOGRAPHY, GEOMETRY, and VECTOR columns exactly', async () => {
+    const precise: GeoJsonGeometry = {
+      type: 'Point',
+      coordinates: [0.30000000000000004, 45.123456789012344],
+    };
+    const polygon: GeoJsonGeometry = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 0],
+        ],
+      ],
+    };
+    const collection: GeoJsonGeometry = {
+      type: 'GeometryCollection',
+      geometries: [
+        { type: 'Point', coordinates: [1, 2, 3] },
+        {
+          type: 'MultiLineString',
+          coordinates: [
+            [
+              [0, 0, 0],
+              [1, 1, 0.5],
+            ],
+          ],
+        },
+      ],
+    };
+    await db.execute(
+      insert(spatial, [
+        { id: 1n, location: precise, shape: precise, embedding: [0.1, -2, 3.4e38], counts: [1, 2] },
+        {
+          id: 2n,
+          location: { type: 'Point', coordinates: [1, 2, 3, 4] },
+          shape: null,
+          plain: collection,
+          embedding: null,
+          counts: [2147483647, -2147483648],
+        },
+      ]),
+    );
+    await db.execute(
+      update(spatial, { location: polygon, plain: polygon }).where(eq(spatial.columns.id, 2n)),
+    );
+    await db.execute(
+      mergeInto(spatial, staged, eq(spatial.columns.id, staged.columns.id)).whenNotMatchedInsert({
+        id: staged.columns.id,
+        location: { type: 'MultiPoint', coordinates: [[1, 2]] },
+        counts: [0, 0],
+      }),
+    );
+    const rows = (await db.execute(select(spatial).orderBy(asc(spatial.columns.id)))).rows;
+    expect(rows).toEqual([
+      {
+        id: 1n,
+        location: precise,
+        shape: precise,
+        plain: null,
+        embedding: [Math.fround(0.1), -2, Math.fround(3.4e38)],
+        counts: [1, 2],
+      },
+      {
+        id: 2n,
+        location: polygon,
+        shape: null,
+        plain: polygon,
+        embedding: null,
+        counts: [2147483647, -2147483648],
+      },
+      ...[100n, 101n].map((id) => ({
+        id,
+        location: { type: 'MultiPoint', coordinates: [[1, 2]] },
+        shape: null,
+        plain: null,
+        embedding: null,
+        counts: [0, 0],
+      })),
+    ]);
+    await db.execute(update(spatial, { plain: collection }).where(eq(spatial.columns.id, 100n)));
+    const nearest = await db.execute(
+      select(spatial, { id: spatial.columns.id, plain: spatial.columns.plain })
+        .where(eq(spatial.columns.embedding, [Math.fround(0.1), -2, Math.fround(3.4e38)]))
+        .orderBy(asc(spatial.columns.id)),
+    );
+    expect(nearest.rows).toEqual([{ id: 1n, plain: null }]);
+    expect(
+      (
+        await db.execute(
+          select(spatial, { plain: spatial.columns.plain }).where(eq(spatial.columns.id, 100n)),
+        )
+      ).rows,
+    ).toEqual([{ plain: collection }]);
+    await expect(
+      db.execute(select(spatial).where(eq(spatial.columns.location, precise as GeoJsonGeometry))),
+    ).rejects.toThrow("Invalid argument types for function '='");
+    expect(() => insert(spatial, { id: 3n, location: precise, counts: [1, 2, 3] })).toThrow(
+      'VECTOR(INT, 2)',
+    );
+    await db.queryRaw(
+      sql`UPDATE ${name(spatial)} SET SHAPE = TO_GEOMETRY('POINT(1 2)') WHERE ID = ${101}`,
+    );
+    await expect(db.execute(select(spatial))).rejects.toThrow('GEOMETRY with SRID 4326');
+    await db.queryRaw(
+      sql`UPDATE ${name(spatial)} SET SHAPE = TO_GEOMETRY('POINT(1 2)', 4326) WHERE ID = ${101}`,
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { shape: spatial.columns.shape }).where(eq(spatial.columns.id, 101n)),
+        )
+      ).rows,
+    ).toEqual([{ shape: { type: 'Point', coordinates: [1, 2] } }]);
+
+    const tables = await introspect(db, namespace);
+    const code = generateSchema(tables.filter((table) => table.name === 'SPATIAL'));
+    for (const declaration of [
+      '"LOCATION": geography("LOCATION").notNull()',
+      '"SHAPE": geometry("SHAPE")',
+      '"EMBEDDING": vector("EMBEDDING", "float", 3)',
+      '"COUNTS": vector("COUNTS", "int", 2).notNull()',
+    ])
+      expect(code).toContain(declaration);
   });
 
   it('streams schema-validated results and raw rows', async () => {

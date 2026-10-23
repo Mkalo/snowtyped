@@ -65,8 +65,13 @@ The compiler serializes exact numeric and temporal outputs after the native quer
 | `variant('PAYLOAD')`                    | `unknown`                 | JSON without an assumed shape               |
 | `array('TAGS')`                         | `unknown[]`               | Semi-structured ARRAY                       |
 | `object('META')`                        | `Record<string, unknown>` | Semi-structured OBJECT                      |
+| `geography('LOCATION')`                 | `GeoJsonGeometry`         | GeoJSON geometry, exact coordinates         |
+| `geometry('SHAPE', { srid: 4326 })`     | `GeoJsonGeometry`         | Exact coordinates; SRID checked (default 0) |
+| `vector('EMBEDDING', 'float', 768)`     | `number[]`                | FLOAT32 or INT32 elements, fixed dimension  |
 
 Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. Likewise `array('TAGS', z.string())` declares element values and `object('META', z.object({ ok: z.boolean() }))` declares an OBJECT shape. A type parameter alone cannot establish a JSON shape. The declaration is checked at runtime, and read/write types are inferred from it. Structured `ARRAY(type)`, `OBJECT(...)`, and `MAP` columns are not supported yet, and code generation rejects them.
+
+Spatial values are GeoJSON geometry objects; Features, `bbox`, and `crs` members are rejected. GEOMETRY results must carry the declared SRID. Snowflake does not support `=` on spatial values. VECTOR writes must match the declared dimension; FLOAT elements are stored as FLOAT32, so results return the nearest FLOAT32 value.
 
 Declare physical constraints with `integer('QTY', { precision: 9 })`, `decimal('BALANCE', { precision: 12, scale: 2 })`, `text('CODE', { length: 3 })`, `binary('HASH', { length: 32 })`, `time('CLOCK', { precision: 3 })`, or `timestamp('AT', 'ltz', { precision: 6 })`. INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including extra scale or fractional seconds that Snowflake would silently round or truncate; zeros that do not change the value are accepted. VARCHAR length counts code points and BINARY length counts bytes. Predicate literals are not constrained. Other database constraints remain database-enforced; declarations should match the physical schema.
 

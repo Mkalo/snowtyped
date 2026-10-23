@@ -13,7 +13,9 @@ export type WireType =
   | 'timestamp_ntz'
   | 'timestamp_ltz'
   | 'timestamp_tz'
-  | 'variant';
+  | 'variant'
+  | 'geography'
+  | 'geometry';
 export interface SourceReference {
   readonly id: symbol;
   readonly name: string;
@@ -81,7 +83,8 @@ export interface CastNode {
     | 'TIMESTAMP_LTZ'
     | 'TIMESTAMP_TZ'
     | 'ARRAY'
-    | 'OBJECT';
+    | 'OBJECT'
+    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`;
 }
 export type ExpressionNode =
   | IdentifierNode
@@ -289,6 +292,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   function wire(value: string, type?: WireType): string {
     if (!type) return value;
     if (type === 'variant') return `TO_JSON(${value})`;
+    if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
+    if (type === 'geometry') return `ST_ASEWKB(${value})`;
     const formats: Partial<Record<WireType, string>> = {
       date: 'YYYY-MM-DD',
       time: 'HH24:MI:SS.FF9',
