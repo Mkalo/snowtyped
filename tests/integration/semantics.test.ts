@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import {
+  array,
   asc,
   count,
   date,
@@ -16,6 +17,7 @@ import {
   jsonPath,
   lower,
   lt,
+  object,
   over,
   rowNumber,
   select,
@@ -26,6 +28,7 @@ import {
   timestamp,
   update,
   variant,
+  vector,
 } from '../../src/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
 
@@ -140,6 +143,49 @@ describe('semantic validation accepts valid Snowflake behavior', () => {
     expect((await db.execute(projected)).rows.map((row) => row.grp)).toEqual(['a', 'B', 'A']);
     const hidden = select(facts, { grp: c.grp, n: count() }).groupBy(c.grp).orderBy(desc(rank));
     expect((await db.execute(hidden)).rows.map((row) => row.grp)).toEqual(['a', 'B', 'A']);
+  });
+
+  it('compares, indexes, groups, and orders semi-structured and VECTOR values', async () => {
+    const docs = snowflakeTable(
+      'DOCS',
+      {
+        id: integer('ID').notNull(),
+        list: array('LIST', z.number()).notNull(),
+        doc: object('DOC').notNull(),
+        embedding: vector('EMBEDDING', 'int', 2).notNull(),
+        json: variant('JSON').notNull(),
+      },
+      { database, schema: fixture.schemaName },
+    );
+    const d = docs.columns;
+    await db.queryRaw(
+      sql`CREATE TABLE ${sql.identifier(...(docs.node.parts as [string, ...string[]]))} (ID NUMBER(38,0) NOT NULL, LIST ARRAY NOT NULL, DOC OBJECT NOT NULL, EMBEDDING VECTOR(INT, 2) NOT NULL, JSON VARIANT NOT NULL)`,
+    );
+    await db.execute(
+      insert(docs, [
+        { id: 1n, list: [1, 2], doc: { k: 'b' }, embedding: [1, 2], json: [1, 2] },
+        { id: 2n, list: [1, 2], doc: { k: 'a' }, embedding: [3, 4], json: {} },
+        { id: 3n, list: [3], doc: { k: 'c' }, embedding: [1, 2], json: [3] },
+      ]),
+    );
+    const paths = select(docs, { first: jsonPath(d.list, 0), key: jsonPath(d.doc, 'k') })
+      .where(eq(d.list, d.json))
+      .orderBy(asc(d.id));
+    expect((await db.execute(paths)).rows).toEqual([
+      { first: 1, key: 'b' },
+      { first: 3, key: 'c' },
+    ]);
+    const grouped = select(docs, { list: d.list, n: count() })
+      .groupBy(d.list)
+      .orderBy(desc(count()));
+    expect((await db.execute(grouped)).rows).toEqual([
+      { list: [1, 2], n: 2n },
+      { list: [3], n: 1n },
+    ]);
+    const vectors = select(docs, { id: d.id })
+      .where(eq(d.embedding, d.embedding))
+      .orderBy(asc(d.doc));
+    expect((await db.execute(vectors)).rows).toEqual([{ id: 2n }, { id: 1n }, { id: 3n }]);
   });
 
   it('assigns across compatible SQL types', async () => {

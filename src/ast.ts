@@ -13,7 +13,9 @@ export type WireType =
   | 'timestamp_ntz'
   | 'timestamp_ltz'
   | 'timestamp_tz'
-  | 'variant';
+  | 'variant'
+  | 'geography'
+  | 'geometry';
 export interface SourceReference {
   readonly id: symbol;
   readonly name: string;
@@ -58,11 +60,37 @@ export interface InNode {
   readonly values: readonly ExpressionNode[];
   readonly negate: boolean;
 }
+export type IntervalUnit =
+  | 'YEAR'
+  | 'QUARTER'
+  | 'MONTH'
+  | 'WEEK'
+  | 'DAY'
+  | 'HOUR'
+  | 'MINUTE'
+  | 'SECOND'
+  | 'MILLISECOND';
+export interface FrameBoundaryNode {
+  readonly bound:
+    | 'UNBOUNDED PRECEDING'
+    | 'PRECEDING'
+    | 'CURRENT ROW'
+    | 'FOLLOWING'
+    | 'UNBOUNDED FOLLOWING';
+  readonly offset?: number;
+  readonly unit?: IntervalUnit;
+}
+export interface WindowFrameNode {
+  readonly units: 'ROWS' | 'RANGE';
+  readonly start: FrameBoundaryNode;
+  readonly end: FrameBoundaryNode;
+}
 export interface WindowNode {
   readonly kind: 'window';
   readonly value: FunctionNode;
   readonly partitionBy: readonly ExpressionNode[];
   readonly orderBy: readonly OrderNode[];
+  readonly frame?: WindowFrameNode;
 }
 export interface JsonPathNode {
   readonly kind: 'json-path';
@@ -81,7 +109,10 @@ export interface CastNode {
     | 'TIME'
     | 'TIMESTAMP_NTZ'
     | 'TIMESTAMP_LTZ'
-    | 'TIMESTAMP_TZ';
+    | 'TIMESTAMP_TZ'
+    | 'ARRAY'
+    | 'OBJECT'
+    | `VECTOR(${'INT' | 'FLOAT'}, ${number})`;
 }
 export type ExpressionNode =
   | IdentifierNode
@@ -161,11 +192,16 @@ export interface SelectNode {
   readonly offset?: number;
   readonly with?: readonly CteNode[];
 }
+export interface DefaultNode {
+  readonly kind: 'default';
+  /** A typed NULL for the shared source row, needed where a bare NULL cannot join a UNION. */
+  readonly placeholder?: ExpressionNode;
+}
 export interface InsertNode {
   readonly kind: 'insert';
   readonly table: IdentifierNode;
   readonly columns: readonly IdentifierNode[];
-  readonly rows: readonly (readonly ExpressionNode[])[];
+  readonly rows: readonly (readonly (ExpressionNode | DefaultNode)[])[];
 }
 export interface UpdateNode {
   readonly kind: 'update';
@@ -253,6 +289,9 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           node.orderBy.length
             ? `ORDER BY ${node.orderBy.map((value) => order(value, qualify)).join(', ')}`
             : '',
+          node.frame
+            ? `${node.frame.units} BETWEEN ${boundary(node.frame.start)} AND ${boundary(node.frame.end)}`
+            : '',
         ]
           .filter(Boolean)
           .join(' ')})`;
@@ -274,6 +313,10 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     const key = JSON.stringify(value);
     return node.projections.find((projection) => JSON.stringify(projection.column) === key);
   }
+  function boundary(node: FrameBoundaryNode): string {
+    if (node.offset === undefined) return node.bound;
+    return `${node.unit ? `INTERVAL '${node.offset} ${node.unit}'` : node.offset} ${node.bound}`;
+  }
   function source(node: RelationNode): string {
     switch (node.kind) {
       case 'identifier':
@@ -293,6 +336,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
   function wire(value: string, type?: WireType): string {
     if (!type) return value;
     if (type === 'variant') return `TO_JSON(${value})`;
+    if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
+    if (type === 'geometry') return `ST_ASEWKB(${value})`;
     if (type === 'float') {
       // Text conversion keeps at most 16 digits, so send an exact integer significand and a
       // binary exponent instead. The scale is split to stay finite for subnormals.
@@ -381,13 +426,31 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       .map(({ column, value }) => `${quoteIdentifier(column)} = ${expression(value, qualified)}`)
       .join(', ');
   }
+  function insertStatement(node: InsertNode): string {
+    const target = `${quoteIdentifier(node.table)} (${node.columns.map(quoteIdentifier).join(', ')})`;
+    if (!node.rows.some((row) => row.some((value) => value.kind === 'default')))
+      return `INSERT INTO ${target} ${node.rows.map((row) => `SELECT ${row.map((value) => expression(value as ExpressionNode)).join(', ')}`).join(' UNION ALL ')}`;
+    // VALUES rejects expressions such as PARSE_JSON, so rows with differing omitted columns
+    // become one conditional multi-table insert whose branches use DEFAULT per row shape.
+    const shapes: string[] = [];
+    const sources = node.rows.map((row) => {
+      const shape = row
+        .map((value, index) =>
+          value.kind === 'default' ? 'DEFAULT' : quoteIdentifier(identifier(`__sflib_${index}`)),
+        )
+        .join(', ');
+      if (!shapes.includes(shape)) shapes.push(shape);
+      return `SELECT ${shapes.indexOf(shape)} AS "__sflib_shape", ${row.map((value, index) => `${value.kind !== 'default' ? expression(value) : value.placeholder ? expression(value.placeholder) : 'NULL'} AS ${quoteIdentifier(identifier(`__sflib_${index}`))}`).join(', ')}`;
+    });
+    return `INSERT ALL ${shapes.map((shape, index) => `WHEN "__sflib_shape" = ${index} THEN INTO ${target} VALUES (${shape})`).join(' ')} ${sources.join(' UNION ALL ')}`;
+  }
   let sql: string;
   switch (statement.kind) {
     case 'select':
       sql = selectStatement(statement, true);
       break;
     case 'insert':
-      sql = `INSERT INTO ${quoteIdentifier(statement.table)} (${statement.columns.map(quoteIdentifier).join(', ')}) ${statement.rows.map((row) => `SELECT ${row.map((value) => expression(value)).join(', ')}`).join(' UNION ALL ')}`;
+      sql = insertStatement(statement);
       break;
     case 'update':
       sql = `UPDATE ${quoteIdentifier(statement.table)} SET ${assignments(statement.assignments, false)}${statement.where ? ` WHERE ${expression(statement.where)}` : ''}`;

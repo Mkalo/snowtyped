@@ -51,20 +51,27 @@ Schema declarations determine both result types and runtime validation. Users do
 
 The compiler serializes exact numeric and temporal outputs after the native query's joins, grouping, window filtering, DISTINCT, ordering, and pagination. Nested sources retain their native SQL types; numeric sorting remains numeric. SDK NULL sentinels are normalized using result-column metadata, preserving a text value that happens to equal `NULL`.
 
-| Declaration                             | Non-null output | Notes                                       |
-| --------------------------------------- | --------------- | ------------------------------------------- |
-| `text('NAME')`                          | `string`        | Text                                        |
-| `integer('ID')`                         | `bigint`        | Exact integral NUMBER                       |
-| `decimal('BALANCE')`                    | `string`        | Exact fixed-point decimal text              |
-| `float('VALUE')`                        | `number`        | Finite floating-point values                |
-| `boolean('ACTIVE')`                     | `boolean`       | No truthiness coercion                      |
-| `date('DAY')`                           | `string`        | Calendar date                               |
-| `time('CLOCK')`                         | `string`        | Time with up to nine fractional digits      |
-| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`        | Nanoseconds retained; LTZ/TZ include offset |
-| `binary('DATA')`                        | `Uint8Array`    | SDK Buffers are accepted                    |
-| `variant('PAYLOAD')`                    | `unknown`       | JSON without an assumed shape               |
+| Declaration                             | Non-null output           | Notes                                       |
+| --------------------------------------- | ------------------------- | ------------------------------------------- |
+| `text('NAME')`                          | `string`                  | Text                                        |
+| `integer('ID')`                         | `bigint`                  | Exact integral NUMBER                       |
+| `decimal('BALANCE')`                    | `string`                  | Exact fixed-point decimal text              |
+| `float('VALUE')`                        | `number`                  | Finite floating-point values                |
+| `boolean('ACTIVE')`                     | `boolean`                 | No truthiness coercion                      |
+| `date('DAY')`                           | `string`                  | Calendar date                               |
+| `time('CLOCK')`                         | `string`                  | Time with up to nine fractional digits      |
+| `timestamp('AT', 'ntz' / 'ltz' / 'tz')` | `string`                  | Nanoseconds retained; LTZ/TZ include offset |
+| `binary('DATA')`                        | `Uint8Array`              | SDK Buffers are accepted                    |
+| `variant('PAYLOAD')`                    | `unknown`                 | JSON without an assumed shape               |
+| `array('TAGS')`                         | `unknown[]`               | Semi-structured ARRAY                       |
+| `object('META')`                        | `Record<string, unknown>` | Semi-structured OBJECT                      |
+| `geography('LOCATION')`                 | `GeoJsonGeometry`         | GeoJSON geometry, exact coordinates         |
+| `geometry('SHAPE', { srid: 4326 })`     | `GeoJsonGeometry`         | Exact coordinates; SRID checked (default 0) |
+| `vector('EMBEDDING', 'float', 768)`     | `number[]`                | FLOAT32 or INT32 elements, fixed dimension  |
 
-Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. A type parameter alone cannot establish a VARIANT shape. The declaration is checked at runtime, and read/write types are inferred from it.
+Declare a structured JSON shape at the column, for example `variant('PAYLOAD', z.object({ items: z.array(z.number()) }))`. Likewise `array('TAGS', z.string())` declares element values and `object('META', z.object({ ok: z.boolean() }))` declares an OBJECT shape. A type parameter alone cannot establish a JSON shape. The declaration is checked at runtime, and read/write types are inferred from it. JSON numbers that a JavaScript number cannot hold exactly, such as integers beyond 2^53, reject the result instead of being rounded. Structured `ARRAY(type)`, `OBJECT(...)`, and `MAP` columns are not supported yet, and code generation rejects them.
+
+Spatial values are GeoJSON geometry objects; Features, `bbox`, and `crs` members are rejected. GEOMETRY results must carry the declared SRID. Snowflake does not support `=` on spatial values. VECTOR writes must match the declared dimension; FLOAT elements are stored as FLOAT32, so results return the nearest FLOAT32 value.
 
 Declare physical constraints with `integer('QTY', { precision: 9 })`, `decimal('BALANCE', { precision: 12, scale: 2 })`, `text('CODE', { length: 3 })`, `binary('HASH', { length: 32 })`, `time('CLOCK', { precision: 3 })`, or `timestamp('AT', 'ltz', { precision: 6 })`. INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including extra scale or fractional seconds that Snowflake would silently round or truncate; zeros that do not change the value are accepted. VARCHAR length counts code points and BINARY length counts bytes. Predicate literals are not constrained. Other database constraints remain database-enforced; declarations should match the physical schema.
 
@@ -74,7 +81,7 @@ Declare physical constraints with `integer('QTY', { precision: 9 })`, `decimal('
 
 Supported helpers include `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `and`, `or`, `not`, `isNull`, `isNotNull`, `inArray`, `like`, `ilike`, `lower`, `upper`, `count`, `sum`, `min`, and `max`. `asc`/`desc` accept optional `FIRST`/`LAST` null ordering. Empty membership lists compile to a constant false (or true for negated membership).
 
-Every expression carries its SQL type as `dataType`. Comparisons accept a literal of the left operand's type or an expression of a comparable SQL type: numeric types with each other, DATE with timestamps, and VARIANT with anything. TEXT, DECIMAL, DATE, TIME, and timestamps share `string` but are not comparable with each other. `like`, `ilike`, `lower`, and `upper` need TEXT or VARIANT, `sum` needs a numeric type, predicates must be BOOLEAN, and UPDATE/MERGE expression values follow the comparison rule. These checks apply at compile time and at runtime. Literals compared with a `jsonPath` are bound as JSON.
+Every expression carries its SQL type as `dataType`. Comparisons accept a literal of the left operand's type or an expression of a comparable SQL type: numeric types with each other, DATE with timestamps, and VARIANT with anything except GEOGRAPHY and GEOMETRY, which cannot be compared at all. TEXT, DECIMAL, DATE, TIME, and timestamps share `string` but are not comparable with each other. `like`, `ilike`, `lower`, and `upper` need TEXT or VARIANT, `sum` needs a numeric type, `min` and `max` reject ARRAY, OBJECT, VECTOR, and spatial values, `jsonPath` needs VARIANT, ARRAY, or OBJECT, spatial values cannot be GROUP BY, ORDER BY, or PARTITION BY keys, predicates must be BOOLEAN, and UPDATE/MERGE expression values follow the comparison rule. These checks apply at compile time and at runtime. Literals compared with a `jsonPath` are bound as JSON.
 
 ```ts
 const query = select(customers)
@@ -97,6 +104,11 @@ const rank = rowNumber({
   orderBy: [desc(orders.columns.amount)],
 });
 const latest = select(orders, { id: orders.columns.id, rank }).qualify(eq(rank, 1n));
+const running = over(sum(orders.columns.amount), {
+  partitionBy: [orders.columns.customerId],
+  orderBy: [asc(orders.columns.id)],
+  frame: rowsBetween('UNBOUNDED PRECEDING', 'CURRENT ROW'),
+});
 
 const items = flatten(jsonPath(events.columns.payload, 'items'), 'items');
 const expanded = select(events)
@@ -108,7 +120,7 @@ const prices = select(trades)
   .select({ at: trades.columns.at, price: quotes.columns.price });
 ```
 
-`over(aggregate, options)` supports aggregate windows. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
+`over(aggregate, options)` supports aggregate windows. An explicit `frame` (`rowsBetween(start, end)` or `rangeBetween(start, end)`) requires ORDER BY and an aggregate; ranking functions such as `rowNumber` reject frames. Boundaries are `'UNBOUNDED PRECEDING'`, `'CURRENT ROW'`, `'UNBOUNDED FOLLOWING'`, `{ preceding: n }`, or `{ following: n }`, and the start cannot follow the end. ROWS offsets are nonnegative integers. RANGE offsets need exactly one ORDER BY expression: numeric offsets for a numeric or date key, or `{ preceding: n, unit: 'DAY' }` intervals for a date or timestamp key. Empty frames yield NULL aggregates and zero counts. Snowflake's frame-size limits remain database-enforced. QUALIFY requires a window in the projection or predicate. FLATTEN exposes its fixed output columns and supports `path`, `outer`, `recursive`, and `mode`. Its input can refer only to preceding sources. ASOF's right side is nullable and supports an optional key-match predicate.
 
 `timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset (`2026-10-22T15:00:00-07:00`) is honored and a string without one is read in the session `TIMEZONE`. Database retention and supported selector rules still apply.
 
@@ -126,7 +138,7 @@ await db.execute(
 );
 ```
 
-INSERT accepts one row or an array of rows. Required columns must be present; omitted nullable columns become SQL NULL. UPDATE accepts typed literal values and expressions from its table. MERGE supports matched update/delete and unmatched insert. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
+INSERT accepts one row or an array of rows. Required columns must be present. Omitted columns are left out of the statement, so Snowflake applies their DEFAULT, identity, or NULL; explicit `null` stays NULL. Rows that omit different columns compile to one conditional `INSERT ALL` that uses DEFAULT per row; Snowflake consumes identity and sequence values for every branch, so such inserts leave gaps. Declare server-populated columns with `.serverDefault(sql?)` or `.identity({ start, increment, order }?)` to make them optional on insert even when `.notNull()`. `.virtual(sql?)` marks a computed `AS (expr)` column, which is read-only: insert, update, and MERGE types exclude it and reject it at runtime. These modifiers are metadata only; they do not emit DDL. UPDATE accepts typed literal values and expressions from its table. MERGE supports matched update/delete and unmatched insert. Statements return `{ affectedRows, queryId }`. UPDATE and DELETE without `.where()` affect all rows. There is no emulated RETURNING clause.
 
 ## Raw tagged queries
 
@@ -191,11 +203,11 @@ Await running operations and close cursors before starting a transaction on a si
 
 ## Introspection
 
-`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Generated declarations carry NUMBER precision/scale, VARCHAR length, and TIME/TIMESTAMP precision when they differ from Snowflake's defaults; INFORMATION_SCHEMA does not report BINARY length. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
+`await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' })` reads visible columns through INFORMATION_SCHEMA. `generateSchema(tables)` returns TypeScript source using exact names and stable `table0`, `table1`, ... exports. Generated declarations carry NUMBER precision/scale, VARCHAR length, and TIME/TIMESTAMP precision when they differ from Snowflake's defaults; INFORMATION_SCHEMA does not report BINARY length. Column defaults, identity settings, and virtual column expressions become `.serverDefault()`, `.identity()`, and `.virtual()` modifiers. Review and save generated declarations in your project. Unsupported data types fail explicitly; the tool does not silently invent codecs or schemas for them. Access is limited by the connection's role.
 
 ## Scope and distribution
 
-The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, advanced frames, default/generated columns, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 

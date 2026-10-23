@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import {
+  type AnyExpression,
   alias,
   and,
+  array,
   asc,
   binary,
   count,
@@ -13,7 +15,10 @@ import {
   eq,
   flatten,
   float,
+  type GeoJsonGeometry,
   generateSchema,
+  geography,
+  geometry,
   gt,
   gte,
   inArray,
@@ -24,6 +29,7 @@ import {
   jsonPath,
   lower,
   mergeInto,
+  object,
   rowNumber,
   select,
   snowflakeTable,
@@ -35,6 +41,7 @@ import {
   timeTravel,
   update,
   variant,
+  vector,
 } from '../../src/index.js';
 import { createPool } from '../../src/snowflake/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
@@ -106,6 +113,29 @@ describe('complete query and execution paths against Snowflake', () => {
     },
     namespace,
   );
+  const docs = snowflakeTable(
+    'DOCS',
+    {
+      id: integer('ID').notNull(),
+      tags: array('TAGS', z.string()).notNull(),
+      items: array('ITEMS'),
+      meta: object('META', z.strictObject({ ok: z.boolean(), note: z.string().nullable() })),
+      extra: object('EXTRA'),
+    },
+    namespace,
+  );
+  const spatial = snowflakeTable(
+    'SPATIAL',
+    {
+      id: integer('ID').notNull(),
+      location: geography('LOCATION').notNull(),
+      shape: geometry('SHAPE', { srid: 4326 }),
+      plain: geometry('PLAIN'),
+      embedding: vector('EMBEDDING', 'float', 3),
+      counts: vector('COUNTS', 'int', 2).notNull(),
+    },
+    namespace,
+  );
   const nullable = snowflakeTable(
     'NULLABLE_TYPES',
     {
@@ -170,6 +200,12 @@ describe('complete query and execution paths against Snowflake', () => {
     );
     await db.queryRaw(
       sql`CREATE TABLE ${name(constrained)} (ID NUMBER(3,0) NOT NULL, AMOUNT NUMBER(5,2), CODE VARCHAR(3), DATA BINARY(2), CLOCK TIME(3), AT_VALUE TIMESTAMP_LTZ(0))`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(docs)} (ID NUMBER(38,0) NOT NULL, TAGS ARRAY NOT NULL, ITEMS ARRAY, META OBJECT, EXTRA OBJECT)`,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(spatial)} (ID NUMBER(38,0) NOT NULL, LOCATION GEOGRAPHY NOT NULL, SHAPE GEOMETRY, PLAIN GEOMETRY, EMBEDDING VECTOR(FLOAT, 3), COUNTS VECTOR(INT, 2) NOT NULL)`,
     );
     await db.queryRaw(
       sql`CREATE TABLE ${name(nullable)} (ID NUMBER(38,0) NOT NULL, DATA BINARY, PAYLOAD VARIANT, AT_VALUE TIMESTAMP_NTZ(9), DAY DATE)`,
@@ -454,6 +490,251 @@ describe('complete query and execution paths against Snowflake', () => {
       '"DATA": binary("DATA")',
       '"CLOCK": time("CLOCK", { precision: 3 })',
       '"AT_VALUE": timestamp("AT_VALUE", "ltz", { precision: 0 })',
+    ])
+      expect(code).toContain(declaration);
+  });
+
+  it('round-trips semi-structured ARRAY and OBJECT columns', async () => {
+    await db.execute(
+      insert(docs, [
+        { id: 1n, tags: [], items: null, meta: null },
+        {
+          id: 2n,
+          tags: ['a', 'b'],
+          items: [1, null, { nested: [true] }],
+          meta: { ok: true, note: null },
+          extra: { empty: {} },
+        },
+      ]),
+    );
+    await db.execute(
+      update(docs, { items: ['updated'], meta: { ok: false, note: 'x' } }).where(
+        eq(docs.columns.id, 1n),
+      ),
+    );
+    await db.execute(
+      mergeInto(docs, staged, eq(docs.columns.id, staged.columns.id)).whenNotMatchedInsert({
+        id: staged.columns.id,
+        tags: ['merged'],
+        extra: { k: 1 },
+      }),
+    );
+    const rows = (await db.execute(select(docs).orderBy(asc(docs.columns.id)))).rows;
+    expect(rows).toEqual([
+      { id: 1n, tags: [], items: ['updated'], meta: { ok: false, note: 'x' }, extra: null },
+      {
+        id: 2n,
+        tags: ['a', 'b'],
+        items: [1, null, { nested: [true] }],
+        meta: { ok: true, note: null },
+        extra: { empty: {} },
+      },
+      { id: 100n, tags: ['merged'], items: null, meta: null, extra: { k: 1 } },
+      { id: 101n, tags: ['merged'], items: null, meta: null, extra: { k: 1 } },
+    ]);
+    const matched = await db.execute(
+      select(docs)
+        .select({ id: docs.columns.id })
+        .where(eq(docs.columns.meta, { ok: true, note: null })),
+    );
+    expect(matched.rows).toEqual([{ id: 2n }]);
+    const items = select(docs)
+      .select({ items: docs.columns.items })
+      .where(eq(docs.columns.id, 100n));
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = PARSE_JSON(${'[1.50, 2.5e-3, 9007199254740991, 1e300]'}) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([
+      { items: [1.5, 0.0025, 9007199254740991, 1e300] },
+    ]);
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = ARRAY_CONSTRUCT(1, NULL, ${'undefined'}) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([{ items: [1, null, 'undefined'] }]);
+    await db.queryRaw(
+      sql`UPDATE ${name(docs)} SET ITEMS = ARRAY_CONSTRUCT(5e-324::DOUBLE, PARSE_JSON(${'1e-310'}), PI()) WHERE ID = ${100}`,
+    );
+    expect((await db.execute(items)).rows).toEqual([{ items: [5e-324, 1e-310, Math.PI] }]);
+    for (const json of ['[12345678901234567890]', '[0.1234567890123456789]']) {
+      await db.queryRaw(
+        sql`UPDATE ${name(docs)} SET ITEMS = PARSE_JSON(${json}) WHERE ID = ${100}`,
+      );
+      await expect(db.execute(items)).rejects.toThrow('does not fit a JavaScript number');
+    }
+    await db.queryRaw(sql`UPDATE ${name(docs)} SET TAGS = ARRAY_CONSTRUCT(1) WHERE ID = ${101}`);
+    await expect(db.execute(select(docs))).rejects.toThrow();
+
+    const structured = snowflakeTable('STRUCTURED', { id: integer('ID') }, namespace);
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(structured)} (ID NUMBER, SA ARRAY(NUMBER), SO OBJECT(city VARCHAR))`,
+    );
+    try {
+      const tables = await introspect(db, namespace);
+      const code = generateSchema(tables.filter((table) => table.name === 'DOCS'));
+      for (const declaration of [
+        '"TAGS": array("TAGS").notNull()',
+        '"ITEMS": array("ITEMS")',
+        '"META": object("META")',
+      ])
+        expect(code).toContain(declaration);
+      const table = tables.find((entry) => entry.name === 'STRUCTURED');
+      expect(table?.columns.map((column) => column.dataType)).toEqual([
+        'NUMBER',
+        'ARRAY(NUMBER)',
+        'OBJECT(CITY VARCHAR)',
+      ]);
+      expect(() => generateSchema(tables.filter((entry) => entry.name === 'STRUCTURED'))).toThrow(
+        'ARRAY(NUMBER)',
+      );
+    } finally {
+      await db.queryRaw(sql`DROP TABLE ${name(structured)}`);
+    }
+  });
+
+  it('round-trips GEOGRAPHY, GEOMETRY, and VECTOR columns exactly', async () => {
+    const precise: GeoJsonGeometry = {
+      type: 'Point',
+      coordinates: [0.30000000000000004, 45.123456789012344],
+    };
+    const polygon: GeoJsonGeometry = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 0],
+        ],
+      ],
+    };
+    const collection: GeoJsonGeometry = {
+      type: 'GeometryCollection',
+      geometries: [
+        { type: 'Point', coordinates: [1, 2, 3] },
+        {
+          type: 'MultiLineString',
+          coordinates: [
+            [
+              [0, 0, 0],
+              [1, 1, 0.5],
+            ],
+          ],
+        },
+      ],
+    };
+    await db.execute(
+      insert(spatial, [
+        { id: 1n, location: precise, shape: precise, embedding: [0.1, -2, 3.4e38], counts: [1, 2] },
+        {
+          id: 2n,
+          location: { type: 'Point', coordinates: [1, 2, 3, 4] },
+          shape: null,
+          plain: collection,
+          embedding: null,
+          counts: [2147483647, -2147483648],
+        },
+      ]),
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { location: spatial.columns.location }).where(eq(spatial.columns.id, 2n)),
+        )
+      ).rows,
+    ).toEqual([{ location: { type: 'Point', coordinates: [1, 2, 3, 4] } }]);
+    await db.execute(
+      update(spatial, { location: polygon, plain: polygon }).where(eq(spatial.columns.id, 2n)),
+    );
+    await db.execute(
+      mergeInto(spatial, staged, eq(spatial.columns.id, staged.columns.id)).whenNotMatchedInsert({
+        id: staged.columns.id,
+        location: { type: 'MultiPoint', coordinates: [[1, 2]] },
+        counts: [0, 0],
+      }),
+    );
+    const rows = (await db.execute(select(spatial).orderBy(asc(spatial.columns.id)))).rows;
+    expect(rows).toEqual([
+      {
+        id: 1n,
+        location: precise,
+        shape: precise,
+        plain: null,
+        embedding: [Math.fround(0.1), -2, Math.fround(3.4e38)],
+        counts: [1, 2],
+      },
+      {
+        id: 2n,
+        location: polygon,
+        shape: null,
+        plain: polygon,
+        embedding: null,
+        counts: [2147483647, -2147483648],
+      },
+      ...[100n, 101n].map((id) => ({
+        id,
+        location: { type: 'MultiPoint', coordinates: [[1, 2]] },
+        shape: null,
+        plain: null,
+        embedding: null,
+        counts: [0, 0],
+      })),
+    ]);
+    await db.execute(
+      update(spatial, { embedding: [-6.727404335356611e-17, 0, 1] }).where(
+        eq(spatial.columns.id, 101n),
+      ),
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { embedding: spatial.columns.embedding }).where(
+            eq(spatial.columns.id, 101n),
+          ),
+        )
+      ).rows,
+    ).toEqual([{ embedding: [Math.fround(-6.727404335356611e-17), 0, 1] }]);
+    await db.execute(update(spatial, { plain: collection }).where(eq(spatial.columns.id, 100n)));
+    const nearest = await db.execute(
+      select(spatial, { id: spatial.columns.id, plain: spatial.columns.plain })
+        .where(eq(spatial.columns.embedding, [Math.fround(0.1), -2, Math.fround(3.4e38)]))
+        .orderBy(asc(spatial.columns.id)),
+    );
+    expect(nearest.rows).toEqual([{ id: 1n, plain: null }]);
+    expect(
+      (
+        await db.execute(
+          select(spatial, { plain: spatial.columns.plain }).where(eq(spatial.columns.id, 100n)),
+        )
+      ).rows,
+    ).toEqual([{ plain: collection }]);
+    expect(() => eq(spatial.columns.location as AnyExpression, precise)).toThrow(
+      '= does not accept GEOGRAPHY expressions.',
+    );
+    expect(() => insert(spatial, { id: 3n, location: precise, counts: [1, 2, 3] })).toThrow(
+      'VECTOR(INT, 2)',
+    );
+    await db.queryRaw(
+      sql`UPDATE ${name(spatial)} SET SHAPE = TO_GEOMETRY('POINT(1 2)') WHERE ID = ${101}`,
+    );
+    await expect(db.execute(select(spatial))).rejects.toThrow('GEOMETRY with SRID 4326');
+    await db.queryRaw(
+      sql`UPDATE ${name(spatial)} SET SHAPE = TO_GEOMETRY('POINT(1 2)', 4326) WHERE ID = ${101}`,
+    );
+    expect(
+      (
+        await db.execute(
+          select(spatial, { shape: spatial.columns.shape }).where(eq(spatial.columns.id, 101n)),
+        )
+      ).rows,
+    ).toEqual([{ shape: { type: 'Point', coordinates: [1, 2] } }]);
+
+    const tables = await introspect(db, namespace);
+    const code = generateSchema(tables.filter((table) => table.name === 'SPATIAL'));
+    for (const declaration of [
+      '"LOCATION": geography("LOCATION").notNull()',
+      '"SHAPE": geometry("SHAPE")',
+      '"EMBEDDING": vector("EMBEDDING", "float", 3)',
+      '"COUNTS": vector("COUNTS", "int", 2).notNull()',
     ])
       expect(code).toContain(declaration);
   });

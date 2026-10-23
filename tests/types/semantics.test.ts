@@ -2,6 +2,8 @@ import { expectTypeOf } from 'vitest';
 import * as z from 'zod';
 import {
   and,
+  array,
+  asc,
   binary,
   boolean,
   count,
@@ -9,7 +11,10 @@ import {
   decimal,
   eq,
   float,
+  geography,
+  geometry,
   gt,
+  inArray,
   integer,
   jsonPath,
   like,
@@ -18,7 +23,9 @@ import {
   max,
   mergeInto,
   min,
+  object,
   over,
+  rowNumber,
   select,
   snowflakeTable,
   sum,
@@ -28,6 +35,7 @@ import {
   update,
   upper,
   variant,
+  vector,
 } from '../../src/index.js';
 
 const t = snowflakeTable('T', {
@@ -115,3 +123,45 @@ mergeInto(t, u, eq(c.id, u.columns.id)).whenNotMatchedInsert({
   id: u.columns.id,
   day: u.columns.day,
 });
+
+const s = snowflakeTable('S', {
+  list: array('LIST'),
+  doc: object('DOC'),
+  place: geography('PLACE'),
+  shape: geometry('SHAPE'),
+  embedding: vector('EMBEDDING', 'float', 2),
+  json: variant('JSON'),
+});
+const d = s.columns;
+eq(d.list, d.json);
+eq(d.json, d.doc);
+eq(d.embedding, d.embedding);
+eq(d.place, null);
+jsonPath(d.list, 0);
+jsonPath(d.doc, 'a');
+min(d.json);
+select(s, { list: d.list }).groupBy(d.list).orderBy(asc(d.doc));
+// @ts-expect-error ARRAY cannot be compared with OBJECT.
+eq(d.list, d.doc);
+// @ts-expect-error ARRAY cannot be compared with TEXT.
+eq(d.list, c.name);
+// @ts-expect-error GEOGRAPHY values cannot be compared.
+eq(d.place, d.place);
+// @ts-expect-error A typed VARIANT cannot be compared with GEOMETRY.
+eq(c.label, d.shape);
+// @ts-expect-error IN does not accept GEOGRAPHY.
+inArray(d.place, []);
+// @ts-expect-error MIN does not accept ARRAY.
+min(d.list);
+// @ts-expect-error MAX does not accept VECTOR.
+max(d.embedding);
+// @ts-expect-error MIN does not accept GEOMETRY.
+min(d.shape);
+// @ts-expect-error JSON paths do not accept VECTOR.
+jsonPath(d.embedding, 0);
+// @ts-expect-error GEOGRAPHY cannot be an ORDER BY key.
+asc(d.place);
+// @ts-expect-error GEOMETRY cannot be a GROUP BY key.
+select(s).groupBy(d.shape);
+// @ts-expect-error GEOGRAPHY cannot be a PARTITION BY key.
+rowNumber({ partitionBy: [d.place] });

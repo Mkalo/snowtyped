@@ -4,6 +4,7 @@ import type { ExpressionNode } from '../../src/ast.js';
 import { type AnyExpression, expression, type Predicate } from '../../src/expressions.js';
 import {
   and,
+  array,
   asc,
   binary,
   boolean,
@@ -14,6 +15,8 @@ import {
   desc,
   eq,
   float,
+  geography,
+  geometry,
   gt,
   gte,
   ilike,
@@ -29,6 +32,7 @@ import {
   min,
   ne,
   not,
+  object,
   or,
   over,
   rowNumber,
@@ -41,6 +45,7 @@ import {
   update,
   upper,
   variant,
+  vector,
 } from '../../src/index.js';
 
 const t = snowflakeTable('T', {
@@ -161,6 +166,62 @@ describe('SQL type domains', () => {
     expect(() => upper(loose(c.id))).toThrow('UPPER does not accept INTEGER');
     expect(() => sum(loose(c.name))).toThrow('SUM does not accept TEXT');
     expect(() => sum(loose(c.day))).toThrow('SUM does not accept DATE');
+  });
+
+  it('applies Snowflake rules for semi-structured, spatial, and VECTOR types', () => {
+    const s = snowflakeTable('S', {
+      list: array('LIST'),
+      doc: object('DOC'),
+      place: geography('PLACE'),
+      shape: geometry('SHAPE'),
+      embedding: vector('EMBEDDING', 'int', 2),
+      json: variant('JSON'),
+    });
+    const d = s.columns;
+    expect(eq(d.list, d.json).dataType).toBe('boolean');
+    expect(eq(d.doc, d.json).dataType).toBe('boolean');
+    expect(eq(d.embedding, d.embedding).dataType).toBe('boolean');
+    expect(jsonPath(d.list, 0).dataType).toBe('variant');
+    expect(jsonPath(d.doc, 'a').dataType).toBe('variant');
+    expect(
+      select(s, { list: d.list, n: count() }).groupBy(d.list).orderBy(asc(d.list)).compile().sql,
+    ).toContain('GROUP BY "LIST" ORDER BY "list" ASC');
+    expect(() => eq(d.list, loose(d.doc))).toThrow('Cannot compare ARRAY with OBJECT expressions.');
+    expect(() => eq(d.list, loose(text('NAME')))).toThrow(
+      'Cannot compare ARRAY with TEXT expressions.',
+    );
+    expect(() => eq(loose(d.place), loose(d.place))).toThrow(
+      'Cannot compare GEOGRAPHY with GEOGRAPHY expressions.',
+    );
+    expect(eq(d.place, null).expression).toMatchObject({ operator: 'IS NULL' });
+    expect(() => lt(loose(d.shape), loose({ type: 'Point', coordinates: [0, 0] }))).toThrow(
+      '< does not accept GEOMETRY',
+    );
+    expect(() => eq(loose(d.json), loose(d.place))).toThrow(
+      'Cannot compare VARIANT with GEOGRAPHY expressions.',
+    );
+    expect(() => inArray(loose(d.place), [])).toThrow('IN does not accept GEOGRAPHY');
+    for (const [value, type] of [
+      [d.list, 'ARRAY'],
+      [d.doc, 'OBJECT'],
+      [d.embedding, 'VECTOR'],
+      [d.shape, 'GEOMETRY'],
+    ] as const) {
+      expect(() => min(loose(value))).toThrow(`MIN does not accept ${type} expressions.`);
+      expect(() => max(loose(value))).toThrow(`MAX does not accept ${type} expressions.`);
+    }
+    expect(() => jsonPath(loose(d.embedding), 0)).toThrow(
+      'JSON path access does not accept VECTOR',
+    );
+    expect(() => asc(loose(d.place))).toThrow('ORDER BY does not accept GEOGRAPHY');
+    expect(() => desc(loose(d.shape))).toThrow('ORDER BY does not accept GEOMETRY');
+    expect(() => select(s).groupBy(loose(d.place))).toThrow('GROUP BY does not accept GEOGRAPHY');
+    expect(() => rowNumber({ partitionBy: [loose(d.shape)] })).toThrow(
+      'PARTITION BY does not accept GEOMETRY',
+    );
+    expect(() => update(s, { list: loose(d.doc) })).toThrow(
+      'Cannot assign a OBJECT expression to ARRAY column list.',
+    );
   });
 
   it('requires BOOLEAN predicates in every predicate position', () => {

@@ -26,9 +26,10 @@ CI runs the library checks on Linux and Windows with Node 22 and 24.
   derived tables, and CTEs. See [queries](/guides/queries/).
 - SQL type checks for comparisons, functions, predicates, and assignments, and grouping and
   aggregate/window placement checks before execution. See [queries](/guides/queries/).
-- Window functions, QUALIFY, FLATTEN, ASOF JOIN, and time travel. See
+- Window functions with ROWS and RANGE frames, QUALIFY, FLATTEN, ASOF JOIN, and time travel. See
   [Snowflake syntax](/guides/snowflake-syntax/).
-- INSERT, UPDATE, DELETE, and MERGE. See [mutations](/guides/mutations/).
+- INSERT, UPDATE, DELETE, and MERGE, with server defaults, identity, and virtual columns. See
+  [mutations](/guides/mutations/).
 - Parameterized raw SQL. See [raw SQL](/guides/raw-sql/).
 - Execution, streaming, cancellation, transactions, and pooling. See
   [execution](/guides/execution/). The production scenarios that gate a stable release
@@ -40,7 +41,7 @@ CI runs the library checks on Linux and Windows with Node 22 and 24.
 ## Not first-class in this alpha
 
 MATCH_RECOGNIZE, PIVOT/UNPIVOT, recursive CTEs, set operations, complex nested relation projections,
-advanced window frames, default/generated columns, migrations, DDL builders, and ORM relation
-loading are not modeled. A public third-party AST registration protocol is not implemented.
+migrations, DDL builders, and ORM relation loading are not modeled. A public third-party AST
+registration protocol is not implemented.
 
 [Raw SQL](/guides/raw-sql/) can execute Snowflake syntax beyond the modeled builder surface.

@@ -10,11 +10,14 @@ import {
 } from './ast.js';
 import {
   type AnyExpression,
+  assertNotType,
   assertPredicate,
   type Expression,
   type ExpressionDataType,
+  type KeyType,
   type Ordering,
   type Predicate,
+  spatialTypes,
 } from './expressions.js';
 import {
   type AnyColumn,
@@ -30,7 +33,7 @@ export type ScopedSelection<S extends string> = Readonly<
   Record<string, Expression<unknown, S, string>>
 >;
 export type DerivedColumns<S extends Selection, N extends string, Nullable extends string> = {
-  [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N, ExpressionDataType<S[K]>>;
+  [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N, 'none', ExpressionDataType<S[K]>>;
 };
 export interface SelectQuery<
   S extends Selection,
@@ -75,7 +78,7 @@ export interface SelectQuery<
     on?: Predicate<Scope | N>,
   ): SelectQuery<S, Scope | N, Nullable | N>;
   groupBy(
-    ...values: readonly Expression<unknown, Scope, string>[]
+    ...values: readonly Expression<unknown, Scope, string, KeyType>[]
   ): SelectQuery<S, Scope, Nullable>;
   having(predicate: Predicate<Scope>): SelectQuery<S, Scope, Nullable>;
   qualify(predicate: Predicate<Scope>): SelectQuery<S, Scope, Nullable>;
@@ -104,6 +107,9 @@ export function assertScope(
   const available = new Set(refs.map((ref) => ref.id));
   if (values.some((value) => value.refs.some((ref) => !available.has(ref.id))))
     throw new TypeError('Expression does not belong to the available table scope.');
+}
+function derivedServerValue(): never {
+  throw new TypeError('Server values can only be declared on base table columns.');
 }
 function validateSelection(selection: Selection, tables: readonly Table[]): void {
   const entries = Object.entries(selection);
@@ -220,7 +226,11 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
 ): SelectQuery<S, Scope, Nullable> {
   const refs = state.tables.map((table) => table.ref);
   function next(patch: Partial<State>, ast: Partial<SelectNode> = {}) {
-    return build({ ...state, ...patch, ast: Object.freeze({ ...state.ast, ...ast }) });
+    return build({
+      ...state,
+      ...patch,
+      ast: Object.freeze({ ...state.ast, ...ast }),
+    });
   }
   function join(kind: JoinNode['kind'], table: Table, on?: Predicate, match?: Predicate) {
     if (refs.some((ref) => ref.id === table.ref.id || ref.name === table.ref.name))
@@ -295,9 +305,13 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
           valueSchema: value.nullRefs.some((ref) => state.nullable.has(ref.id))
             ? value.valueSchema.nullable()
             : value.valueSchema,
+          serverValue: null,
           notNull() {
             return this as Column<unknown, true>;
           },
+          serverDefault: derivedServerValue,
+          identity: derivedServerValue,
+          virtual: derivedServerValue,
         });
         return [key, col];
       }),
@@ -349,6 +363,7 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
       assertScope(values, refs);
       if (values.some((value) => value.phase !== 'scalar'))
         throw new TypeError('GROUP BY requires scalar expressions.');
+      for (const value of values) assertNotType(value, spatialTypes, 'GROUP BY');
       return next({}, { groupBy: Object.freeze(values.map((value) => value.expression)) });
     },
     orderBy(...values: Ordering[]) {

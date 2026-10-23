@@ -15,51 +15,91 @@ describe('schema introspection and code generation', () => {
         TABLE_NAME: 'T',
         COLUMN_NAME: 'ID',
         DATA_TYPE: 'NUMBER',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'NO',
         NUMERIC_PRECISION: '38',
         NUMERIC_SCALE: '0',
         CHARACTER_MAXIMUM_LENGTH: null,
         DATETIME_PRECISION: null,
+        COLUMN_DEFAULT: null,
+        IS_IDENTITY: 'NO',
+        IDENTITY_START: null,
+        IDENTITY_INCREMENT: null,
+        IDENTITY_ORDERED: null,
+        KIND: 'COLUMN',
+        EXPRESSION: null,
       },
       {
         TABLE_SCHEMA: 'S',
         TABLE_NAME: 'T',
         COLUMN_NAME: 'Name"',
         DATA_TYPE: 'TEXT',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'YES',
         NUMERIC_PRECISION: null,
         NUMERIC_SCALE: null,
         CHARACTER_MAXIMUM_LENGTH: '16777216',
         DATETIME_PRECISION: null,
+        COLUMN_DEFAULT: null,
+        IS_IDENTITY: 'NO',
+        IDENTITY_START: null,
+        IDENTITY_INCREMENT: null,
+        IDENTITY_ORDERED: null,
+        KIND: 'COLUMN',
+        EXPRESSION: null,
       },
       {
         TABLE_SCHEMA: 'S',
         TABLE_NAME: 'T',
         COLUMN_NAME: 'AT',
         DATA_TYPE: 'TIMESTAMP_TZ',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'YES',
         NUMERIC_PRECISION: null,
         NUMERIC_SCALE: null,
         CHARACTER_MAXIMUM_LENGTH: null,
         DATETIME_PRECISION: '3',
+        COLUMN_DEFAULT: null,
+        IS_IDENTITY: 'NO',
+        IDENTITY_START: null,
+        IDENTITY_INCREMENT: null,
+        IDENTITY_ORDERED: null,
+        KIND: 'COLUMN',
+        EXPRESSION: null,
       },
       {
         TABLE_SCHEMA: 'S',
         TABLE_NAME: 'OTHER',
         COLUMN_NAME: 'ID',
         DATA_TYPE: 'NUMBER',
+        DATA_TYPE_ALIAS: null,
         IS_NULLABLE: 'NO',
         NUMERIC_PRECISION: '38',
         NUMERIC_SCALE: '2',
         CHARACTER_MAXIMUM_LENGTH: null,
         DATETIME_PRECISION: null,
+        COLUMN_DEFAULT: null,
+        IS_IDENTITY: 'NO',
+        IDENTITY_START: null,
+        IDENTITY_INCREMENT: null,
+        IDENTITY_ORDERED: null,
+        KIND: 'COLUMN',
+        EXPRESSION: null,
       },
     ]);
     const client = { queryRaw } as unknown as SnowflakeClient;
     const tables = await introspect(client, { database: 'Odd.DB', schema: "S'; --" });
     expect(tables).toHaveLength(2);
     expect(tables[0]?.columns).toEqual([
-      { name: 'ID', dataType: 'NUMBER', nullable: false, precision: 38, scale: 0, length: null },
+      {
+        name: 'ID',
+        dataType: 'NUMBER',
+        nullable: false,
+        precision: 38,
+        scale: 0,
+        length: null,
+        serverValue: null,
+      },
       {
         name: 'Name"',
         dataType: 'TEXT',
@@ -67,6 +107,7 @@ describe('schema introspection and code generation', () => {
         precision: null,
         scale: null,
         length: 16777216,
+        serverValue: null,
       },
       {
         name: 'AT',
@@ -75,6 +116,7 @@ describe('schema introspection and code generation', () => {
         precision: 3,
         scale: null,
         length: null,
+        serverValue: null,
       },
     ]);
     expect(tables[1]?.columns[0]).toMatchObject({ precision: 38, scale: 2 });
@@ -91,6 +133,159 @@ describe('schema introspection and code generation', () => {
     expect(code).toContain('"ID": integer("ID").notNull()');
     expect(code).toContain('"AT": timestamp("AT", "tz", { precision: 3 })');
     expect(code).toContain('"ID": decimal("ID", { precision: 38, scale: 2 }).notNull()');
+  });
+
+  it('distinguishes semi-structured ARRAY and OBJECT from structured types', async () => {
+    const row = (name: string, type: string, alias: string | null) => ({
+      TABLE_SCHEMA: 'S',
+      TABLE_NAME: 'T',
+      COLUMN_NAME: name,
+      DATA_TYPE: type,
+      DATA_TYPE_ALIAS: alias,
+      IS_NULLABLE: 'YES',
+      NUMERIC_PRECISION: null,
+      NUMERIC_SCALE: null,
+      CHARACTER_MAXIMUM_LENGTH: null,
+      DATETIME_PRECISION: null,
+      COLUMN_DEFAULT: null,
+      IS_IDENTITY: 'NO',
+      IDENTITY_START: null,
+      IDENTITY_INCREMENT: null,
+      IDENTITY_ORDERED: null,
+      KIND: 'COLUMN',
+      EXPRESSION: null,
+    });
+    const client = {
+      queryRaw: async () => [
+        row('A', 'ARRAY', 'ARRAY'),
+        row('O', 'OBJECT', 'OBJECT'),
+        row('SA', 'ARRAY', 'ARRAY(NUMBER)'),
+        row('SO', 'OBJECT', 'OBJECT(CITY VARCHAR)'),
+      ],
+    } as unknown as SnowflakeClient;
+    const [table] = await introspect(client, { database: 'DB' });
+    if (!table) throw new Error('Expected a table.');
+    expect(table.columns.map((column) => column.dataType)).toEqual([
+      'ARRAY',
+      'OBJECT',
+      'ARRAY(NUMBER)',
+      'OBJECT(CITY VARCHAR)',
+    ]);
+    const code = generateSchema([{ ...table, columns: table.columns.slice(0, 2) }]);
+    expect(code).toContain("import { array, object, snowflakeTable } from 'snowtyped';");
+    expect(code).toContain('"A": array("A"),');
+    expect(code).toContain('"O": object("O"),');
+    for (const column of table.columns.slice(2))
+      expect(() => generateSchema([{ ...table, columns: [column] }])).toThrow(
+        `Unsupported Snowflake type for code generation: ${column.dataType}`,
+      );
+  });
+
+  it('reads default, identity, and virtual column metadata into declarations', async () => {
+    const base = {
+      TABLE_SCHEMA: 'S',
+      TABLE_NAME: 'T',
+      DATA_TYPE: 'NUMBER',
+      IS_NULLABLE: 'YES',
+      NUMERIC_PRECISION: '38',
+      NUMERIC_SCALE: '0',
+      DATA_TYPE_ALIAS: null,
+      CHARACTER_MAXIMUM_LENGTH: null,
+      DATETIME_PRECISION: null,
+      COLUMN_DEFAULT: null,
+      IS_IDENTITY: 'NO',
+      IDENTITY_START: null,
+      IDENTITY_INCREMENT: null,
+      IDENTITY_ORDERED: null,
+      KIND: 'COLUMN',
+      EXPRESSION: null,
+    };
+    const client = {
+      queryRaw: async () => [
+        {
+          ...base,
+          COLUMN_NAME: 'ID',
+          IS_NULLABLE: 'NO',
+          IS_IDENTITY: 'YES',
+          IDENTITY_START: '10',
+          IDENTITY_INCREMENT: '5',
+          IDENTITY_ORDERED: 'YES',
+        },
+        { ...base, COLUMN_NAME: 'SEQ', IS_IDENTITY: 'YES' },
+        { ...base, COLUMN_NAME: 'STATUS', DATA_TYPE: 'TEXT', COLUMN_DEFAULT: "'new'" },
+        { ...base, COLUMN_NAME: 'DOUBLED', KIND: 'VIRTUAL_COLUMN', EXPRESSION: 'ID * 2' },
+        { ...base, COLUMN_NAME: 'PART', KIND: 'PARTITION_COLUMN' },
+      ],
+    } as unknown as SnowflakeClient;
+    const tables = await introspect(client, { database: 'DB' });
+    expect(tables[0]?.columns.map((column) => column.serverValue)).toEqual([
+      { kind: 'identity', start: 10, increment: 5, order: true },
+      { kind: 'identity' },
+      { kind: 'default', expression: "'new'" },
+      { kind: 'virtual', expression: 'ID * 2' },
+      { kind: 'virtual' },
+    ]);
+    const code = generateSchema(tables);
+    expect(code).toContain(
+      '"ID": integer("ID").notNull().identity({ start: 10, increment: 5, order: true }),',
+    );
+    expect(code).toContain('"SEQ": integer("SEQ").identity(),');
+    expect(code).toContain('"STATUS": text("STATUS").serverDefault("\'new\'"),');
+    expect(code).toContain('"DOUBLED": integer("DOUBLED").virtual("ID * 2"),');
+    expect(code).toContain('"PART": integer("PART").virtual(),');
+  });
+
+  it('generates spatial and VECTOR declarations from type aliases', async () => {
+    const row = (name: string, type: string, alias: string) => ({
+      TABLE_SCHEMA: 'S',
+      TABLE_NAME: 'T',
+      COLUMN_NAME: name,
+      DATA_TYPE: type,
+      DATA_TYPE_ALIAS: alias,
+      IS_NULLABLE: name === 'G' ? 'NO' : 'YES',
+      NUMERIC_PRECISION: null,
+      NUMERIC_SCALE: null,
+      CHARACTER_MAXIMUM_LENGTH: null,
+      DATETIME_PRECISION: null,
+      COLUMN_DEFAULT: null,
+      IS_IDENTITY: 'NO',
+      IDENTITY_START: null,
+      IDENTITY_INCREMENT: null,
+      IDENTITY_ORDERED: null,
+      KIND: 'COLUMN',
+      EXPRESSION: null,
+    });
+    const client = {
+      queryRaw: async () => [
+        row('G', 'GEOGRAPHY', 'GEOGRAPHY'),
+        row('M', 'GEOMETRY', 'GEOMETRY'),
+        row('V', 'VECTOR', 'VECTOR(FLOAT, 4)'),
+        row('W', 'VECTOR', 'VECTOR(INT, 16)'),
+      ],
+    } as unknown as SnowflakeClient;
+    const [table] = await introspect(client, { database: 'DB' });
+    if (!table) throw new Error('Expected a table.');
+    expect(table.columns.map((column) => column.dataType)).toEqual([
+      'GEOGRAPHY',
+      'GEOMETRY',
+      'VECTOR(FLOAT, 4)',
+      'VECTOR(INT, 16)',
+    ]);
+    const code = generateSchema([table]);
+    expect(code).toContain(
+      "import { geography, geometry, snowflakeTable, vector } from 'snowtyped';",
+    );
+    for (const declaration of [
+      '"G": geography("G").notNull(),',
+      '"M": geometry("M"),',
+      '"V": vector("V", "float", 4),',
+      '"W": vector("W", "int", 16),',
+    ])
+      expect(code).toContain(declaration);
+    for (const dataType of ['VECTOR', 'VECTOR(DOUBLE, 2)'])
+      expect(() =>
+        generateSchema([{ ...table, columns: [{ ...table.columns[0], dataType } as never] }]),
+      ).toThrow(`Unsupported Snowflake type for code generation: ${dataType}`);
   });
 
   it('rejects invalid driver metadata', async () => {
@@ -139,6 +334,8 @@ describe('schema introspection and code generation', () => {
       'time',
       'timestamp',
       'variant',
+      'array',
+      'object',
       'binary',
     ])
       expect(code).toContain(`${name}(`);
@@ -156,7 +353,7 @@ describe('schema introspection and code generation', () => {
           columns: [
             {
               name: 'V',
-              dataType: 'GEOGRAPHY',
+              dataType: 'MAP',
               nullable: false,
               precision: null,
               scale: null,

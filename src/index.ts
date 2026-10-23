@@ -3,13 +3,16 @@ export {
   type CompiledQuery,
   type CteNode,
   compileAst,
+  type DefaultNode,
   type DeleteNode,
   type DerivedNode,
   type EqualityNode,
   type ExpressionNode,
   type FlattenNode,
+  type FrameBoundaryNode,
   type IdentifierNode,
   type InsertNode,
+  type IntervalUnit,
   identifier,
   type JoinNode,
   type MergeNode,
@@ -22,6 +25,7 @@ export {
   type TableNode,
   type TemporalNode,
   type UpdateNode,
+  type WindowFrameNode,
   type WireType,
 } from './ast.js';
 export {
@@ -32,6 +36,8 @@ export {
   desc,
   type Expression,
   eq,
+  type FrameBoundary,
+  type FramedWindowOptions,
   gt,
   gte,
   type InferExpression,
@@ -52,9 +58,13 @@ export {
   or,
   over,
   type Predicate,
+  type RangeBoundary,
+  rangeBetween,
   rowNumber,
+  rowsBetween,
   sum,
   upper,
+  type WindowFrame,
 } from './expressions.js';
 export {
   generateSchema,
@@ -77,6 +87,7 @@ export { type SelectQuery, select } from './query.js';
 export {
   type AnyColumn,
   alias,
+  array,
   type BoundColumns,
   binary,
   boolean,
@@ -87,10 +98,17 @@ export {
   date,
   decimal,
   float,
+  geography,
+  geometry,
+  type IdentityOptions,
   type InferColumn,
   type InferSelection,
   integer,
+  object,
   type Selection,
+  type ServerValue,
+  type ServerValueKind,
+  type ServerValues,
   snowflakeTable,
   type Table,
   type TableOptions,
@@ -99,6 +117,8 @@ export {
   timestamp,
   timeTravel,
   variant,
+  vector,
 } from './schema.js';
 export { type FlattenOptions, flatten } from './snowflake-syntax.js';
+export type { GeoJsonGeometry, GeoPosition } from './spatial.js';
 export { type RawQuery, type SqlInterpolation, type SqlParameter, sql } from './sql.js';
