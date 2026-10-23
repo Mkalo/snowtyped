@@ -29,9 +29,7 @@ const expected = {
     ),
   },
   'snowtyped/snowflake': {
-    values: names(
-      'createClient createPool',
-    ),
+    values: names('createClient createPool'),
     types: names(
       'ExecuteOptions MutationResult PoolOptions PooledClient QueryResult SnowflakeClient',
     ),
