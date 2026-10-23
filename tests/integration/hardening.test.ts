@@ -307,7 +307,13 @@ describe('production scenarios against Snowflake', () => {
       }
     }
     try {
+      const started = Date.now();
       await Promise.all(Array.from({ length: 12 }, (_, index) => worker(index)));
+      const total = Object.values(completed).reduce((sum, value) => sum + value, 0);
+      console.info(
+        `sustained: ${total} operations in ${((Date.now() - started) / 1_000).toFixed(1)}s`,
+        completed,
+      );
       expect(peak).toBe(4);
       expect(completed.transaction).toBeGreaterThan(0);
       expect(await ledgerRows('soak')).toHaveLength(completed.transaction);
