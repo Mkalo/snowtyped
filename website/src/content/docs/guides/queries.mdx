@@ -11,6 +11,7 @@ import firstQuery from '../../../snippets/first-query.ts?raw';
 import grouping from '../../../snippets/grouping.ts?raw';
 import joins from '../../../snippets/joins.ts?raw';
 import nested from '../../../snippets/nested.ts?raw';
+import relations from '../../../snippets/relations.ts?raw';
 import recursiveCtes from '../../../snippets/recursive-ctes.ts?raw';
 import setOperations from '../../../snippets/set-operations.ts?raw';
 import subqueries from '../../../snippets/subqueries.ts?raw';
@@ -98,10 +99,41 @@ an object, with each entry nullable as usual. Include the joined table's NOT NUL
 object collapse.
 
 Nested objects are rebuilt per result row, so a one-to-many join still returns one row per child,
-and `.limit()` and `.offset()` count those joined rows. Execution, streaming, pools, and
+and `.limit()` and `.offset()` count those joined rows; [relations](#relations) load
+children per parent instead. Execution, streaming, pools, and
 transactions decode nested rows the same way. A query with a nested projection cannot be a derived
 table, CTE, set operand, subquery, or INSERT source, and nested paths cannot repeat another
 projection alias.
+
+## Relations
+
+`one(table, { from, to })` and `many(table, { from, to })` declare that a parent row has at most
+one, or any number of, rows of `table` whose `to` column equals the parent's `from` key. The
+optional third argument shapes the related query: project, filter, join, order, or nest further
+relations with `withRelations`. `withRelations(query, { name: relation })` adds each relation as a
+property of the parent rows: an array for `many`, an object or `null` for `one`.
+
+<Snippet code={relations} />
+
+Loading is predictable. The parent query runs once and keeps its own `.limit()`, `.offset()`,
+grouping, and row count; then each relation runs one query per batch of up to 1,000 distinct
+parent keys (`{ batchSize }` changes that), as `WHERE to IN (...)` added to the related query's
+own filter. Nested relations repeat this per level. `db.execute()` returns every statement's ID in
+`queryIds`, parent first. Duplicate parent rows each get the children of their key, and a NULL key
+gets `[]` or `null`. A `one` relation that matches several rows for one key throws.
+
+Keys must be INTEGER, DECIMAL, TEXT, or DATE columns or scalar expressions of one shared SQL type;
+DECIMAL keys match by value regardless of scale, and TEXT keys match exactly. A key the parent query does not project is added
+as a hidden column and removed from the rows, except in DISTINCT queries, which must project it;
+grouped queries must group by it. Related queries cannot use `.limit()` or `.offset()`, which would
+cut across parents; for a per-parent limit, use `.qualify()` with `rowNumber()` partitioned by the
+`to` key. Any window in a related query should be partitioned by that key, because each batch only
+sees its own parents' rows.
+
+`db.stream()` reads parents in batches of `batchSize` and loads each batch's children before
+yielding it. Statements run on the same connection, inside a transaction when called on its
+client. Snowflake isolates each statement separately (READ COMMITTED), so the parent and related
+queries can observe changes committed between them, even inside a transaction.
 
 ## Grouping and pagination
 

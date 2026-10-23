@@ -180,6 +180,18 @@ export {
   type UnionRow,
 } from './query.js';
 export {
+  type LoadedQuery,
+  type LoadedRow,
+  type LoadOptions,
+  many,
+  one,
+  type Relation,
+  type RelationCardinality,
+  type RelationKeyType,
+  type RelationRow,
+  withRelations,
+} from './relations.js';
+export {
   type AnyColumn,
   alias,
   array,

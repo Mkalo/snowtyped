@@ -1,5 +1,6 @@
 export {
   createClient,
+  type LoadedResult,
   type MutationResult,
   type QueryResult,
   type SnowflakeClient,
