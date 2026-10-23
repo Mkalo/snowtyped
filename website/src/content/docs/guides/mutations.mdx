@@ -40,8 +40,9 @@ Snowflake consumes identity and sequence values for every branch, so such insert
 <Snippet code={sourcedWrites} />
 
 - `insertFrom(target, query)` maps each selected name to a target column. The selected row type,
-  including nullability from outer joins, must fit the target. Required columns without a server
-  value must be selected, and virtual columns cannot be.
+  including nullability from outer joins, must fit the target, and each selected SQL type must be
+  assignable to its column. Required columns without a server value must be selected, and virtual
+  columns cannot be.
 - `updateFrom(target, source, on, values)` and `deleteUsing(target, source, on)` require a join
   predicate. `.where()` adds filters to it, so a forgotten filter cannot cross join every row.
 - Sources are base tables, derived queries (`.as()`), or CTEs (`.asCte()`). DML has no WITH

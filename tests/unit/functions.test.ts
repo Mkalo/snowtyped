@@ -169,7 +169,7 @@ describe('averages and arithmetic', () => {
       exact: add(id, amount),
       ratio: div(sum(amount), count()),
     };
-    const compiled = select(t, selection).compile();
+    const compiled = select(t, selection).groupBy(id, amount, ratio).compile();
     for (const fragment of [
       'AVG("ID")',
       '("ID" + CAST(? AS NUMBER(38,0)))',
@@ -234,8 +234,8 @@ describe('averages and arithmetic', () => {
     expect(inArray(add(id, price), [null]).expression).toMatchObject({
       values: [{ kind: 'parameter', value: null }],
     });
-    expect(() => add(label, 'x')).toThrow('Numeric helpers');
-    expect(() => avg(day)).toThrow('Numeric helpers');
+    expect(() => add(label as never, 'x' as never)).toThrow('Numeric helpers');
+    expect(() => avg(day as never)).toThrow('Numeric helpers');
     expect(() => add(amount, `0.${'1'.repeat(38)}`)).toThrow('37 fractional digits');
     expect(() => add(id, 1 as never)).toThrow();
   });
@@ -257,7 +257,7 @@ describe('COALESCE and CASE', () => {
     expect(compiled.sql).toContain('COALESCE("NAME", "LABEL")');
     expect(compiled.sql).toContain('COALESCE("PRICE", CAST(? AS NUMBER(38,0)))');
     expect(compiled.sql).toContain('COALESCE("DATA", TO_BINARY(?, ?))');
-    expect(compiled.binds).toEqual(['x', '0', false, '01', 'HEX', 'a', 1, '{"a":1}']);
+    expect(compiled.binds).toEqual(['x', '0', false, '01', 'HEX', 'a', '"1"', '{"a":1}']);
     expect(selection.decimal.wireType).toBe('decimal');
     expect(selection.text.readSchema.safeParse(null).success).toBe(false);
     expect(selection.literal.readSchema.safeParse(null).success).toBe(false);
@@ -284,7 +284,9 @@ describe('COALESCE and CASE', () => {
       }).success,
     ).toBe(false);
     expect(coalesce(count(), id).phase).toBe('aggregate');
-    expect(() => coalesce(day, label)).toThrow('COALESCE values must share one SQL domain.');
+    expect(() => coalesce(day, label as never)).toThrow(
+      'COALESCE values must share one SQL domain.',
+    );
     expect(() => (coalesce as (value: unknown) => unknown)(name)).toThrow('at least two');
     expect(() => coalesce(id, 'x' as never)).toThrow();
   });
@@ -323,7 +325,7 @@ describe('COALESCE and CASE', () => {
     const scoped = caseWhen(isNull(o.columns.name), label).else('y');
     expect(scoped.refs).toEqual([o.ref, t.ref]);
     expect(scoped.nullRefs).toEqual([t.ref]);
-    expect(() => caseWhen(gt(id, 1n), day).else(label)).toThrow(
+    expect(() => caseWhen(gt(id, 1n), day).else(label as never)).toThrow(
       'CASE values must share one SQL domain.',
     );
     expect(() => caseWhen(gt(id, 1n), 'x').else(1n as never)).toThrow();
@@ -371,10 +373,10 @@ describe('string and date helpers', () => {
       expect(invalid).toThrow('SUBSTR');
     expect(() => substring(label, 1, 0.5)).toThrow('SUBSTR');
     for (const invalid of [
-      () => concat(label, day),
-      () => trim(day),
-      () => length(amount),
-      () => substring(at, 1),
+      () => concat(label, day as never),
+      () => trim(day as never),
+      () => length(amount as never),
+      () => substring(at as never, 1),
     ])
       expect(invalid).toThrow('String helpers require text expressions.');
   });
@@ -429,8 +431,8 @@ describe('string and date helpers', () => {
     expect(() => datePart('hour', day)).toThrow('does not apply to date values');
     expect(() => datePart('millisecond' as never, at)).toThrow('DATE_PART');
     expect(() => dateTrunc('decade' as never, day)).toThrow('Unsupported date part: decade.');
-    expect(() => dateTrunc('day', label)).toThrow('Date helpers require');
-    expect(() => dateDiff('day', day, label)).toThrow('Date helpers require');
+    expect(() => dateTrunc('day', label as never)).toThrow('Date helpers require');
+    expect(() => dateDiff('day', day, label as never)).toThrow('Date helpers require');
     expect(() => dateDiff('hour', day, clock)).toThrow('dateDiff cannot mix time values');
     expect(() => dateDiff('hour', clock, at)).toThrow('dateDiff cannot mix time values');
     expect(dateDiff('hour', clock, clock).wireType).toBe('integer');
@@ -487,7 +489,7 @@ describe('ranking and offset windows', () => {
         .groupBy(name)
         .compile().sql,
     ).toContain('LAG(SUM("AMOUNT"), ?) OVER (ORDER BY "NAME" ASC)');
-    expect(() => lag(day, { orderBy: [asc(id)], default: label })).toThrow(
+    expect(() => lag(day, { orderBy: [asc(id)], default: label as never })).toThrow(
       'LAG values must share one SQL domain.',
     );
     for (const value of [-1, 1.5])
@@ -499,10 +501,12 @@ describe('ranking and offset windows', () => {
 describe('derived result codecs', () => {
   it('decodes derived results with the unconstrained domain instead of the input schema', () => {
     const short = expression(label.expression, z.string().max(2), {
+      dataType: 'text',
       refs: label.refs,
       valueSchema: z.string(),
     });
     const stamp = expression(at.expression, z.string().regex(/^[^.]*$/), {
+      dataType: 'timestamp_ntz',
       refs: at.refs,
       valueSchema: z.string(),
       wireType: 'timestamp_ntz',
@@ -511,6 +515,7 @@ describe('derived result codecs', () => {
       data.expression,
       z.instanceof(Uint8Array).refine((v) => !v.length),
       {
+        dataType: 'binary',
         refs: data.refs,
         valueSchema: z.instanceof(Uint8Array),
       },

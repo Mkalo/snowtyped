@@ -16,13 +16,20 @@ import {
 } from './ast.js';
 import {
   type AnyExpression,
+  assertComparable,
+  assertNotType,
+  assertPredicate,
+  type ComparableType,
   type Expression,
+  type ExpressionDataType,
   type ExpressionScope,
   expression,
   type InferExpression,
+  type KeyType,
   type Ordering,
   type Predicate,
   scalarParameter,
+  spatialTypes,
 } from './expressions.js';
 import {
   type AnyColumn,
@@ -30,6 +37,7 @@ import {
   bindTable,
   type Column,
   type ColumnMap,
+  type DataType,
   type InferSelection,
   type Selection,
   type Table,
@@ -39,7 +47,7 @@ export type ScopedSelection<S extends string> = Readonly<
   Record<string, Expression<unknown, S, string>>
 >;
 export type DerivedColumns<S extends Selection, N extends string, Nullable extends string> = {
-  [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N>;
+  [K in keyof S]: Column<InferSelection<S, Nullable>[K], true, N, 'none', ExpressionDataType<S[K]>>;
 };
 type TableName<T> = T extends Table<ColumnMap, infer N> ? N : never;
 interface Uncorrelated {
@@ -56,15 +64,30 @@ type SetMismatch<L, R> =
           ? never
           : K;
     }[keyof L & keyof R];
+type TypeMismatch<L, R> = {
+  [K in keyof L & keyof R]: DataType extends L[K] | R[K]
+    ? never
+    : [L[K]] extends [R[K]]
+      ? [R[K]] extends [L[K]]
+        ? never
+        : K
+      : K;
+}[keyof L & keyof R];
 export interface SetOperand {
   readonly kind: 'select' | 'set';
   readonly rowType?: object;
+  readonly sqlTypes?: object;
 }
 export type OperandRow<Q> = Q extends { readonly rowType?: infer R } ? R : never;
-/** Branches match by projection alias; each alias needs the same domain in both branches. */
-export type CompatibleOperand<L, R> = [SetMismatch<L, R>] extends [never]
+export type OperandTypes<Q> = Q extends { readonly sqlTypes?: infer T } ? T : never;
+export type SelectionTypes<S extends Selection> = { [K in keyof S]: ExpressionDataType<S[K]> };
+type ColumnType<T, K> = K extends keyof T ? (T[K] extends DataType ? T[K] : DataType) : DataType;
+/** Branches match by projection alias; each alias needs the same SQL type in both branches. */
+export type CompatibleOperand<L, R, LT = object, RT = object> = [
+  SetMismatch<L, R> | TypeMismatch<LT, RT>,
+] extends [never]
   ? unknown
-  : { readonly incompatibleSetColumns: SetMismatch<L, R> };
+  : { readonly incompatibleSetColumns: SetMismatch<L, R> | TypeMismatch<LT, RT> };
 export type UnionRow<L, R> = { [K in keyof L]: L[K] | R[K & keyof R] };
 export type IntersectRow<L, R> = {
   [K in keyof L]: null extends R[K & keyof R] ? L[K] : Present<L[K]>;
@@ -83,9 +106,13 @@ type UndeclaredNull<Contract, R> = {
     : never;
 }[keyof Contract & keyof R];
 /** The recursive branch must produce rows of the contract that its self-reference reads. */
-export type RecursiveOperand<Contract, R> = ([RecursiveMismatch<Contract, R>] extends [never]
+export type RecursiveOperand<Contract, R, CT = object, RT = object> = ([
+  RecursiveMismatch<Contract, R> | TypeMismatch<CT, RT>,
+] extends [never]
   ? unknown
-  : { readonly incompatibleRecursiveColumns: RecursiveMismatch<Contract, R> }) &
+  : {
+      readonly incompatibleRecursiveColumns: RecursiveMismatch<Contract, R> | TypeMismatch<CT, RT>;
+    }) &
   ([UndeclaredNull<Contract, R>] extends [never]
     ? unknown
     : { readonly undeclaredNullableColumns: UndeclaredNull<Contract, R> });
@@ -95,33 +122,36 @@ export type RecursiveRow<Row, Nullable extends PropertyKey = never> = {
 export type RecursiveName<N extends string> =
   N extends Uppercase<N> ? unknown : { readonly recursiveCteNamesMustBeUppercase: N };
 export type SetScope = '__sflib_result';
-export type SetColumns<Row, N extends string = SetScope> = {
-  [K in keyof Row]: Column<Row[K], true, N>;
+export type SetColumns<Row, N extends string = SetScope, Types = object> = {
+  [K in keyof Row]: Column<Row[K], true, N, 'none', ColumnType<Types, K>>;
 };
-interface SetOperations<Row> {
+interface SetOperations<Row, Types> {
   union<Q extends SetOperand>(
-    other: Q & CompatibleOperand<Row, OperandRow<Q>>,
-  ): SetQuery<UnionRow<Row, OperandRow<Q>>>;
+    other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
+  ): SetQuery<UnionRow<Row, OperandRow<Q>>, Types>;
   unionAll<Q extends SetOperand>(
-    other: Q & CompatibleOperand<Row, OperandRow<Q>>,
-  ): SetQuery<UnionRow<Row, OperandRow<Q>>>;
+    other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
+  ): SetQuery<UnionRow<Row, OperandRow<Q>>, Types>;
   intersect<Q extends SetOperand>(
-    other: Q & CompatibleOperand<Row, OperandRow<Q>>,
-  ): SetQuery<IntersectRow<Row, OperandRow<Q>>>;
-  except<Q extends SetOperand>(other: Q & CompatibleOperand<Row, OperandRow<Q>>): SetQuery<Row>;
+    other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
+  ): SetQuery<IntersectRow<Row, OperandRow<Q>>, Types>;
+  except<Q extends SetOperand>(
+    other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
+  ): SetQuery<Row, Types>;
 }
-export interface SetQuery<Row> extends SetOperations<Row> {
+export interface SetQuery<Row, Types = object> extends SetOperations<Row, Types> {
   readonly kind: 'set';
   readonly ast: SetOperationNode;
-  readonly columns: SetColumns<Row>;
-  readonly selection: SetColumns<Row>;
+  readonly columns: SetColumns<Row, SetScope, Types>;
+  readonly selection: SetColumns<Row, SetScope, Types>;
   readonly nullableSources: ReadonlySet<symbol>;
   readonly rowType?: Row;
-  orderBy(...values: readonly Ordering<SetScope>[]): SetQuery<Row>;
-  limit(value: number): SetQuery<Row>;
-  offset(value: number): SetQuery<Row>;
-  as<const N extends string>(name: N): Table<SetColumns<Row, N>, N>;
-  asCte<const N extends string>(name: N): Table<SetColumns<Row, N>, N>;
+  readonly sqlTypes?: Types;
+  orderBy(...values: readonly Ordering<SetScope>[]): SetQuery<Row, Types>;
+  limit(value: number): SetQuery<Row, Types>;
+  offset(value: number): SetQuery<Row, Types>;
+  as<const N extends string>(name: N): Table<SetColumns<Row, N, Types>, N>;
+  asCte<const N extends string>(name: N): Table<SetColumns<Row, N, Types>, N>;
   compile(): CompiledQuery;
 }
 /** Outer names the enclosing sources a correlated subquery may reference. */
@@ -130,7 +160,7 @@ export interface SelectQuery<
   Scope extends string = string,
   Nullable extends string = never,
   Outer extends string = never,
-> extends SetOperations<InferSelection<S, Nullable>> {
+> extends SetOperations<InferSelection<S, Nullable>, SelectionTypes<S>> {
   readonly kind: 'select';
   readonly ast: SelectNode;
   readonly selection: S;
@@ -140,6 +170,7 @@ export interface SelectQuery<
   readonly nullableScopeType?: Nullable;
   readonly outerScopeType?: Outer;
   readonly rowType?: InferSelection<S, Nullable>;
+  readonly sqlTypes?: SelectionTypes<S>;
   where(predicate: Predicate<Scope | Outer>): SelectQuery<S, Scope, Nullable, Outer>;
   select<const Next extends ScopedSelection<Scope | Outer>>(
     selection: Next,
@@ -175,7 +206,7 @@ export interface SelectQuery<
     on?: Predicate<Scope | N | Outer>,
   ): SelectQuery<S, Scope | N, Nullable | N, Outer>;
   groupBy(
-    ...values: readonly Expression<unknown, Scope | Outer, string>[]
+    ...values: readonly Expression<unknown, Scope | Outer, string, KeyType>[]
   ): SelectQuery<S, Scope, Nullable, Outer>;
   having(predicate: Predicate<Scope | Outer>): SelectQuery<S, Scope, Nullable, Outer>;
   qualify(predicate: Predicate<Scope | Outer>): SelectQuery<S, Scope, Nullable, Outer>;
@@ -232,6 +263,111 @@ function validateSelection(selection: Selection): readonly AnyExpression[] {
   }
   return Object.values(selection);
 }
+function children(node: ExpressionNode): readonly ExpressionNode[] {
+  switch (node.kind) {
+    case 'identifier':
+    case 'reference':
+    case 'parameter':
+    case 'date-part':
+      return [];
+    case 'binary':
+    case 'arithmetic':
+      return [node.left, node.right];
+    case 'case':
+      return [
+        ...node.branches.flatMap((branch) => [branch.when, branch.result]),
+        ...(node.otherwise ? [node.otherwise] : []),
+      ];
+    case 'logical':
+      return node.operands;
+    case 'unary':
+      return [node.operand];
+    case 'function':
+      return node.args;
+    case 'in':
+      return [node.operand, ...node.values];
+    case 'window':
+      // OVER's own function is not a group aggregate; only its inputs must be grouped values.
+      return [
+        ...node.value.args,
+        ...node.partitionBy,
+        ...node.orderBy.map((item) => item.expression),
+      ];
+    case 'subquery':
+    case 'exists':
+      // A subquery groups its own rows; its correlated columns are the outer query's inputs.
+      return [];
+    case 'in-subquery':
+      return [node.operand];
+    case 'json-path':
+    case 'cast':
+      return [node.value];
+    default:
+      throw new TypeError('Unsupported expression AST node.');
+  }
+}
+function isAggregate(node: ExpressionNode): boolean {
+  return node.kind === 'function' && node.role === 'aggregate';
+}
+function containsAggregate(node: ExpressionNode): boolean {
+  return isAggregate(node) || children(node).some(containsAggregate);
+}
+function containsWindow(node: ExpressionNode): boolean {
+  return node.kind === 'window' || children(node).some(containsWindow);
+}
+function sameNode(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left !== 'object' || typeof right !== 'object' || !left || !right) return false;
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) =>
+      sameNode((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]),
+    )
+  );
+}
+function assertGrouped(
+  node: ExpressionNode,
+  keys: readonly ExpressionNode[],
+  outer: ReadonlySet<symbol>,
+): void {
+  if (keys.some((key) => sameNode(key, node))) return;
+  // Outer columns are constant within a correlated subquery.
+  if (node.kind === 'reference' && outer.has(node.source.id)) return;
+  if (node.kind === 'reference' || node.kind === 'identifier') {
+    const name =
+      node.kind === 'reference'
+        ? `${quoteIdentifier(node.source.qualifier)}.${quoteIdentifier(node.column)}`
+        : quoteIdentifier(node);
+    throw new TypeError(`${name} must appear in GROUP BY or inside an aggregate function.`);
+  }
+  if (isAggregate(node)) {
+    if (children(node).some(containsAggregate))
+      throw new TypeError('Aggregate functions cannot be nested without OVER.');
+    return;
+  }
+  for (const child of children(node)) assertGrouped(child, keys, outer);
+}
+/** Snowflake groups a query with GROUP BY or any aggregate outside a window function's own call. */
+function assertGrouping(ast: SelectNode, outer: ReadonlySet<symbol>): void {
+  const values = [
+    ...ast.projections.map((item) => item.column),
+    ...(ast.having ? [ast.having] : []),
+    ...(ast.qualify ? [ast.qualify] : []),
+  ];
+  const orders = (ast.orderBy ?? []).map((item) => item.expression);
+  if (!ast.groupBy?.length && ![...values, ...orders].some(containsAggregate)) return;
+  for (const value of [...values, ...orders]) assertGrouped(value, ast.groupBy ?? [], outer);
+  // Only the wire wrapper can order by a hidden alias; otherwise the window must be projected.
+  if (
+    !ast.projections.some((item) => item.wireType) &&
+    orders.some(
+      (order) =>
+        containsWindow(order) && !ast.projections.some((item) => sameNode(item.column, order)),
+    )
+  )
+    throw new TypeError('Grouped queries must project window functions used in ORDER BY.');
+}
 function projections(selection: Selection) {
   return Object.freeze(
     Object.entries(selection).map(([alias, value]) =>
@@ -249,17 +385,6 @@ interface Output {
   readonly read: z.ZodType;
   readonly value: z.ZodType;
   readonly nullable: boolean;
-}
-const untypedDomains = [
-  ['boolean', true],
-  ['text', ''],
-  ['binary', new Uint8Array()],
-] as const;
-function domain(expression: AnyExpression): string | undefined {
-  return (
-    expression.wireType ??
-    untypedDomains.find(([, probe]) => expression.valueSchema.safeParse(probe).success)?.[0]
-  );
 }
 interface Operand {
   readonly ast: QueryNode;
@@ -290,7 +415,6 @@ function outputColumn(key: string, output: Output): AnyColumn {
   return Object.freeze({
     ...output.source,
     node: identifier(key),
-    dataType: 'text',
     required: true,
     constraints: Object.freeze({}),
     encodeWrite: output.source.encode,
@@ -386,8 +510,10 @@ function combine(
     keys.map((key) => {
       const l = left.outputs[key] as Output;
       const r = right.outputs[key] as Output;
-      if (domain(l.source) !== domain(r.source))
-        throw new TypeError(`Set operation column ${key} combines different domains.`);
+      if (l.source.dataType !== r.source.dataType)
+        throw new TypeError(
+          `Set operation column ${key} combines different domains: ${l.source.dataType.toUpperCase()} and ${r.source.dataType.toUpperCase()}.`,
+        );
       return [
         key,
         {
@@ -473,6 +599,7 @@ const states = new WeakMap<object, State>();
 function checkedAst(state: State): SelectNode {
   if (state.ast.qualify && !state.hasWindow && !state.qualifyWindow)
     throw new TypeError('QUALIFY requires a window function.');
+  assertGrouping(state.ast, new Set(state.outer.map((table) => table.ref.id)));
   return state.ast;
 }
 
@@ -488,7 +615,11 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
       throw new TypeError('A subquery can only correlate with its immediately enclosing query.');
   }
   function next(patch: Partial<State>, ast: Partial<SelectNode> = {}) {
-    return build({ ...state, ...patch, ast: Object.freeze({ ...state.ast, ...ast }) });
+    return build({
+      ...state,
+      ...patch,
+      ast: Object.freeze({ ...state.ast, ...ast }),
+    });
   }
   function uncorrelated() {
     if (state.outer.length)
@@ -504,10 +635,12 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
       throw new TypeError('FLATTEN must use lateralJoin.');
     if (kind === 'LATERAL' && table.source.kind !== 'flatten')
       throw new TypeError('lateralJoin requires FLATTEN.');
-    scoped([...(on ? [on] : []), ...(match ? [match] : [])], [table.ref]);
+    const predicates = [...(on ? [on] : []), ...(match ? [match] : [])];
+    scoped(predicates, [table.ref]);
+    for (const value of predicates) assertPredicate(value, 'JOIN');
     if (table.dependencies.some((ref) => !refs.some((availableRef) => availableRef.id === ref.id)))
       throw new TypeError('Lateral input must refer to a preceding source.');
-    if (on?.phase !== undefined && on.phase !== 'scalar')
+    if (predicates.some((value) => value.phase !== 'scalar'))
       throw new TypeError('Join predicates must be scalar.');
     if (
       match &&
@@ -539,6 +672,7 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
   }
   function predicateClause(key: 'where' | 'having' | 'qualify', value: Predicate) {
     scoped([value]);
+    assertPredicate(value, key.toUpperCase());
     if (key === 'where' && value.phase !== 'scalar')
       throw new TypeError('WHERE requires scalar expressions; use HAVING or QUALIFY.');
     if (key === 'having' && value.phase === 'window')
@@ -591,6 +725,7 @@ function build<S extends Selection, Scope extends string, Nullable extends strin
       scoped(values);
       if (values.some((value) => value.phase !== 'scalar'))
         throw new TypeError('GROUP BY requires scalar expressions.');
+      for (const value of values) assertNotType(value, spatialTypes, 'GROUP BY');
       return next({}, { groupBy: Object.freeze(values.map((value) => value.expression)) });
     },
     orderBy(...values: Ordering[]) {
@@ -670,10 +805,16 @@ export function recursiveCte<
   name: N & RecursiveName<N>,
   anchor: A,
   recursive: (
-    self: Table<SetColumns<RecursiveRow<OperandRow<A>, Nullable>, N>, N>,
-  ) => Q & RecursiveOperand<RecursiveRow<OperandRow<A>, Nullable>, OperandRow<Q>>,
+    self: Table<SetColumns<RecursiveRow<OperandRow<A>, Nullable>, N, OperandTypes<A>>, N>,
+  ) => Q &
+    RecursiveOperand<
+      RecursiveRow<OperandRow<A>, Nullable>,
+      OperandRow<Q>,
+      OperandTypes<A>,
+      OperandTypes<Q>
+    >,
   options?: { readonly nullable?: readonly Nullable[] },
-): Table<SetColumns<RecursiveRow<OperandRow<A>, Nullable>, N>, N>;
+): Table<SetColumns<RecursiveRow<OperandRow<A>, Nullable>, N, OperandTypes<A>>, N>;
 export function recursiveCte(
   name: string,
   anchor: unknown,
@@ -776,10 +917,12 @@ type IsSingle<K, All = K> = [K] extends [never]
     : never;
 type SingleColumn<S> =
   true extends IsSingle<keyof S> ? unknown : { readonly __subquery: 'project exactly one column' };
-type ComparableColumn<V, S extends Selection, N extends string> = [
+type ComparableColumn<E extends AnyExpression, S extends Selection, N extends string> = [
   NonNullable<InferSelection<S, N>[keyof S]>,
-] extends [NonNullable<V>]
-  ? unknown
+] extends [NonNullable<InferExpression<E>>]
+  ? [ExpressionDataType<S[keyof S]>] extends [ComparableType<ExpressionDataType<E>>]
+    ? unknown
+    : { readonly __subquery: 'project a column comparable with the operand' }
   : { readonly __subquery: 'project a column comparable with the operand' };
 interface Subquery {
   readonly outerSources: readonly SourceReference[];
@@ -799,9 +942,10 @@ function subquery(query: Subquery, single: boolean) {
 function existence<Outer extends string>(
   query: Subquery,
   negate: boolean,
-): Expression<boolean, Outer, never> {
+): Expression<boolean, Outer, never, 'boolean'> {
   const { ast, correlated } = subquery(query, false);
   return expression({ kind: 'exists', query: ast, correlated, negate }, z.boolean(), {
+    dataType: 'boolean',
     refs: correlated,
     nullRefs: [],
   });
@@ -811,7 +955,7 @@ export function exists<
   Scope extends string,
   Nullable extends string,
   Outer extends string,
->(query: SelectQuery<S, Scope, Nullable, Outer>): Expression<boolean, Outer, never> {
+>(query: SelectQuery<S, Scope, Nullable, Outer>): Expression<boolean, Outer, never, 'boolean'> {
   return existence(query, false);
 }
 export function notExists<
@@ -819,7 +963,7 @@ export function notExists<
   Scope extends string,
   Nullable extends string,
   Outer extends string,
->(query: SelectQuery<S, Scope, Nullable, Outer>): Expression<boolean, Outer, never> {
+>(query: SelectQuery<S, Scope, Nullable, Outer>): Expression<boolean, Outer, never, 'boolean'> {
   return existence(query, true);
 }
 /**
@@ -833,18 +977,29 @@ export function scalar<
   Outer extends string,
 >(
   query: SelectQuery<S, Scope, Nullable, Outer> & SingleColumn<S>,
-): Expression<InferSelection<S, Nullable>[keyof S] | null, Outer> {
+): Expression<
+  InferSelection<S, Nullable>[keyof S] | null,
+  Outer,
+  Outer,
+  ExpressionDataType<S[keyof S]>
+> {
   const { state, ast, correlated } = subquery(query, true);
   const value = Object.values(state.selection)[0] as AnyExpression;
   if (correlated.length && (value.phase !== 'aggregate' || ast.groupBy?.length))
     throw new TypeError('A correlated scalar subquery must project an aggregate without GROUP BY.');
   const node: ExpressionNode = { kind: 'subquery', query: ast, correlated };
   return expression(node, value.readSchema.nullable(), {
+    dataType: value.dataType,
     valueSchema: value.valueSchema.nullable(),
     refs: correlated,
     ...(value.wireType ? { wireType: value.wireType } : {}),
     encode: (item) => (item === null ? scalarParameter(null) : value.encode(item)),
-  }) as Expression<InferSelection<S, Nullable>[keyof S] | null, Outer>;
+  }) as Expression<
+    InferSelection<S, Nullable>[keyof S] | null,
+    Outer,
+    Outer,
+    ExpressionDataType<S[keyof S]>
+  >;
 }
 export function inSubquery<
   E extends AnyExpression,
@@ -856,13 +1011,15 @@ export function inSubquery<
   value: E,
   query: SelectQuery<S, Scope, Nullable, Outer> &
     SingleColumn<S> &
-    ComparableColumn<InferExpression<E>, S, Nullable>,
+    ComparableColumn<E, S, Nullable>,
   negate = false,
 ): Predicate<ExpressionScope<E> | Outer> {
-  const { ast, correlated } = subquery(query, true);
+  const { state, ast, correlated } = subquery(query, true);
+  assertNotType(value, spatialTypes, 'IN');
+  assertComparable(value, Object.values(state.selection)[0] as AnyExpression);
   return expression(
     { kind: 'in-subquery', operand: value.expression, query: ast, correlated, negate },
     z.boolean().nullable(),
-    { refs: [...new Set([...value.refs, ...correlated])], phase: value.phase },
+    { dataType: 'boolean', refs: [...new Set([...value.refs, ...correlated])], phase: value.phase },
   );
 }

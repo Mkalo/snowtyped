@@ -179,7 +179,7 @@ describe('composable expressions and clauses', () => {
   });
 
   it('keeps expression defaults safe and rejects unsupported runtime parameters', () => {
-    const literal = expression(scalarParameter(1), z.number());
+    const literal = expression(scalarParameter(1), z.number(), { dataType: 'float' });
     expect(literal.encode(2)).toEqual({ kind: 'parameter', value: 2 });
     expect(() => scalarParameter({})).toThrow('Unsupported');
     expect(() => scalarParameter(Infinity)).toThrow('Unsupported');

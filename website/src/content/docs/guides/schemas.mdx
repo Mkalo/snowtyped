@@ -82,8 +82,10 @@ factories, and `array`, `object`, and `map` nest them.
 Elements, fields, and MAP values are nullable unless declared `.notNull()`. OBJECT values must have
 exactly the declared keys. MAP values are JavaScript `Map`s keyed by `string` or `bigint`, and MAP
 keys must be VARCHAR or NUMBER with scale 0. NUMBER elements stay exact, and decimals are padded to
-their declared scale. Writes cast to the declared type. FLOAT, temporal, binary, and semi-structured
-elements are not supported yet.
+their declared scale. Writes cast to the declared type. Snowflake compares and assigns a structured
+value only with the same structured type, never with VARIANT. The checks know a column is
+structured but not its element types, so Snowflake still rejects mismatched element types. FLOAT,
+temporal, binary, and semi-structured elements are not supported yet.
 
 ## Spatial and vector columns
 

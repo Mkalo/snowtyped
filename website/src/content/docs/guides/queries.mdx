@@ -41,13 +41,27 @@ again replaces that clause on the new query.
 Literal values become bind parameters. An empty `inArray` list compiles to a constant false, or
 true for a negated membership test.
 
+Every expression carries its SQL type as `dataType`. A comparison accepts a literal of the left
+operand's type, or an expression of a comparable SQL type: numeric types with each other, DATE with
+timestamps, VARIANT with anything except structured and spatial types, and structured ARRAY, OBJECT,
+and MAP values only with structured values. GEOGRAPHY and GEOMETRY cannot be compared at all. TEXT,
+DECIMAL, DATE, TIME, and timestamps all decode as `string` but cannot be compared with each other.
+`like`, `ilike`, `lower`, and `upper` need TEXT or VARIANT; `sum` needs a numeric type; `min` and
+`max` reject ARRAY, OBJECT, VECTOR, structured, and spatial values; `jsonPath` needs VARIANT or a
+semi-structured or structured ARRAY or OBJECT; spatial values cannot be GROUP BY, ORDER BY, or
+PARTITION BY keys; predicates must be BOOLEAN; and UPDATE, MERGE, and INSERT ... SELECT values
+follow the comparison rule. These checks run at compile time and again at runtime. Literals compared
+with a `jsonPath` are bound as JSON.
+
 <Snippet code={expressions} />
 
 Arithmetic keeps integer operands as `bigint`, except that integer division yields an exact
 decimal; any FLOAT operand yields `number`. Literal operands are bound and cast to the left
 operand's domain. `coalesce(value, ...fallbacks)` is non-null when any argument is non-null, and
 `caseWhen(predicate, value).when(...).else(value)` is nullable without `.else()`. COALESCE and CASE
-values share one domain. `cast(value, type)` converts to any scalar domain except VARIANT and
+values share one SQL type, so TEXT and DATE cannot be mixed, and CASE conditions must be BOOLEAN.
+Arithmetic needs numeric types, the string helpers need TEXT, and the date helpers need DATE, TIME,
+or timestamp values. `cast(value, type)` converts to any scalar domain except VARIANT and
 BINARY (`'decimal'` takes precision and scale) and keeps the input's nullability. The date helpers
 take a lowercase date part and reject parts that do not apply to DATE or TIME inputs; adding a time
 part to a DATE yields TIMESTAMP_NTZ.
@@ -72,8 +86,11 @@ Use `.groupBy(...)`, `.having(predicate)`, `.orderBy(...)`, `.distinct()`, `.lim
 <Snippet code={grouping} />
 
 Counts decode as `bigint`. Sums decode as exact decimal strings and are nullable, because a sum
-over an empty group is NULL. Grouping legality beyond the supported expression and scope checks is
-enforced by Snowflake. With `.distinct()`, order expressions must be projected.
+over an empty group is NULL. A query with `.groupBy()` or any aggregate rejects
+columns that are neither grouping keys nor aggregated, and nested aggregates outside `over()`.
+Grouping keys match structurally, so `groupBy(lower(name))` allows `lower(name)` but not `name`.
+In a grouped query whose projections are all text, boolean, or binary, a window function in
+`.orderBy()` must also be projected. With `.distinct()`, order expressions must be projected.
 
 ## Derived tables and CTEs
 
@@ -86,7 +103,8 @@ joining a CTE includes its definition automatically.
 ## Set operations
 
 `.union()`, `.unionAll()`, `.intersect()`, and `.except()` combine queries whose projections have
-the same aliases and domains. Branches are aligned by alias, not position.
+the same aliases and SQL types, checked at compile time and at runtime. Branches are aligned by
+alias, not position, and the combined columns keep their SQL type.
 
 <Snippet code={setOperations} />
 
@@ -106,9 +124,9 @@ join, or combine like any other.
 
 <Snippet code={recursiveCtes} />
 
-The anchor's projection is the row contract: `self` and the result have its types. The recursive
-branch must produce the same aliases and domains, and it cannot add NULLs to a column unless that
-column is listed in `nullable`. Snowflake only treats uppercase names (`A-Z`, digits, `_`, `$`) as
+The anchor's projection is the row contract: `self` and the result have its types and SQL types.
+The recursive branch must produce the same aliases and SQL types, and it cannot add NULLs to a
+column unless that column is listed in `nullable`. Snowflake only treats uppercase names (`A-Z`, digits, `_`, `$`) as
 recursive, so other names are rejected.
 
 The recursive branch is one SELECT with scalar projections, filters, and joins. It must reference
@@ -136,3 +154,8 @@ because an empty result reads as NULL; an uncorrelated scalar subquery returning
 at execution. Snowflake only evaluates correlated scalar subqueries that are ungrouped aggregates,
 rejects LIMIT and OFFSET in correlated subqueries, and resolves correlations only against the
 immediately enclosing query. The builder rejects those forms before execution.
+
+A scalar subquery keeps its column's SQL type, `exists` and `inSubquery` are BOOLEAN, and the
+`inSubquery` operand needs an SQL type comparable with the projected column. In a grouped
+correlated subquery, columns of the enclosing query count as constants, so they don't need to be
+grouping keys.

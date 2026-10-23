@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  type AnyExpression,
   asc,
   count,
   date,
@@ -139,7 +138,7 @@ describe('explicit window frames', () => {
       t.columns.ratio,
       t.columns.day,
       total,
-    ] as AnyExpression[])
+    ] as Parameters<typeof asc>[0][])
       expect(over(total, { orderBy: [asc(column)], frame: numeric }).phase).toBe('window');
     for (const column of [t.columns.day, t.columns.ntz, t.columns.ltz, t.columns.tz])
       expect(over(total, { orderBy: [desc(column)], frame: interval }).phase).toBe('window');
@@ -148,11 +147,13 @@ describe('explicit window frames', () => {
       t.columns.clock,
       t.columns.ntz,
       lower(t.columns.name),
-    ] as AnyExpression[])
+    ] as Parameters<typeof asc>[0][])
       expect(() => over(total, { orderBy: [asc(column)], frame: numeric })).toThrow(
         'Numeric RANGE offsets require one numeric or date ORDER BY expression.',
       );
-    for (const column of [t.columns.id, t.columns.clock, t.columns.name] as AnyExpression[])
+    for (const column of [t.columns.id, t.columns.clock, t.columns.name] as Parameters<
+      typeof asc
+    >[0][])
       expect(() => over(total, { orderBy: [asc(column)], frame: interval })).toThrow(
         'Interval RANGE offsets require one date or timestamp ORDER BY expression.',
       );
@@ -180,8 +181,12 @@ describe('explicit window frames', () => {
     expect(() => rowNumber(unchecked({ orderBy: byId, frame }))).toThrow(
       'Window frames require an aggregate function',
     );
-    expect(() => over(t.columns.amount, { orderBy: byId, frame })).toThrow('aggregate function');
-    expect(() => over(over(total), { orderBy: byId, frame })).toThrow('aggregate function');
+    expect(() => over(t.columns.amount, { orderBy: byId, frame })).toThrow(
+      'OVER requires an aggregate or window function.',
+    );
+    expect(() => over(over(total), { orderBy: byId, frame })).toThrow(
+      'OVER requires an aggregate or window function.',
+    );
   });
 
   it('rejects boundaries that are out of order or malformed', () => {
