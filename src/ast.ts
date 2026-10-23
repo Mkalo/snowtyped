@@ -379,7 +379,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       sql = `DELETE FROM ${quoteIdentifier(statement.table)}${statement.where ? ` WHERE ${expression(statement.where)}` : ''}`;
       break;
     case 'merge':
-      sql = `MERGE INTO ${source(statement.target)} USING ${source(statement.source)} ON ${expression(statement.on, true)}`;
+      // A CTE has no WITH clause to live in here, so inline its query as a derived source.
+      sql = `MERGE INTO ${source(statement.target)} USING ${source(statement.source.kind === 'cte' ? { kind: 'derived', query: statement.source.query, alias: statement.source.name } : statement.source)} ON ${expression(statement.on, true)}`;
       if (statement.deleteMatched) sql += ' WHEN MATCHED THEN DELETE';
       if (statement.matched)
         sql += ` WHEN MATCHED THEN UPDATE SET ${assignments(statement.matched, true)}`;

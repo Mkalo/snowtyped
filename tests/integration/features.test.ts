@@ -269,6 +269,29 @@ describe('complete query and execution paths against Snowflake', () => {
     expect((await db.execute(select(writes))).rows).toHaveLength(1);
   });
 
+  it('merges from CTE sources, including nested CTEs', async () => {
+    const target = snowflakeTable(
+      'MERGE_TARGET',
+      { id: integer('ID').notNull(), name: text('NAME').notNull() },
+      namespace,
+    );
+    await db.queryRaw(
+      sql`CREATE TABLE ${name(target)} (ID NUMBER(38,0) NOT NULL, NAME VARCHAR NOT NULL)`,
+    );
+    await db.execute(insert(target, { id: 100n, name: 'old' }));
+    const inner = select(staged).where(gte(staged.columns.id, 100n)).asCte('INNER_SRC');
+    const source = select(inner).asCte('SRC');
+    await db.execute(
+      mergeInto(target, source, eq(target.columns.id, source.columns.id))
+        .whenMatchedUpdate({ name: source.columns.name })
+        .whenNotMatchedInsert({ id: source.columns.id, name: source.columns.name }),
+    );
+    expect((await db.execute(select(target).orderBy(asc(target.columns.id)))).rows).toEqual([
+      { id: 100n, name: 'updated' },
+      { id: 101n, name: 'inserted' },
+    ]);
+  });
+
   it('round-trips floating, temporal, binary, and shaped JSON columns', async () => {
     await db.execute(
       insert(types, {

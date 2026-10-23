@@ -406,6 +406,19 @@ describe('all declared scalar domains and DML', () => {
     expect(() => update(select(target).as('d') as Table, { id: 1n })).toThrow('base table');
   });
 
+  it('inlines a CTE MERGE source as a derived query with its binds', () => {
+    const target = snowflakeTable('TARGET', { id: integer('ID').notNull(), label: text('LABEL') });
+    const staged = snowflakeTable('STAGED', { id: integer('ID').notNull(), label: text('LABEL') });
+    const source = select(staged).where(gt(staged.columns.id, 1n)).asCte('SRC');
+    const merge = mergeInto(target, source, eq(target.columns.id, source.columns.id))
+      .whenMatchedUpdate({ label: source.columns.label })
+      .compile();
+    expect(merge).toEqual({
+      sql: 'MERGE INTO "TARGET" AS "TARGET" USING (SELECT "ID" AS "id", "LABEL" AS "label" FROM "STAGED" WHERE ("ID" > ?)) AS "SRC" ON ("TARGET"."ID" = "SRC"."id") WHEN MATCHED THEN UPDATE SET "LABEL" = "SRC"."label"',
+      binds: ['1'],
+    });
+  });
+
   it('retains compatibility for low-level legacy equality and cast nodes', () => {
     const valid = select(a).ast;
     expect(() => compileAst({ kind: 'unsupported' } as unknown as StatementNode)).toThrow(
