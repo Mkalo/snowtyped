@@ -38,6 +38,20 @@ export type DataType =
   | 'geometry'
   | 'vector'
   | 'structured';
+export interface ServerValues {
+  readonly none: null;
+  readonly default: { readonly kind: 'default'; readonly expression?: string };
+  readonly identity: {
+    readonly kind: 'identity';
+    readonly start?: number;
+    readonly increment?: number;
+    readonly order?: boolean;
+  };
+  readonly virtual: { readonly kind: 'virtual'; readonly expression?: string };
+}
+export type ServerValueKind = keyof ServerValues;
+export type ServerValue = NonNullable<ServerValues[ServerValueKind]>;
+export type IdentityOptions = Omit<ServerValues['identity'], 'kind'>;
 export interface ColumnConstraints {
   readonly precision?: number;
   readonly scale?: number;
@@ -45,17 +59,26 @@ export interface ColumnConstraints {
   readonly dimension?: number;
   readonly srid?: number;
 }
-export interface Column<T, Required extends boolean = false, Scope extends string = string>
-  extends Expression<ColumnValue<T, Required>, Scope> {
+export interface Column<
+  T,
+  Required extends boolean = false,
+  Scope extends string = string,
+  Server extends ServerValueKind = 'none',
+> extends Expression<ColumnValue<T, Required>, Scope> {
   readonly node: IdentifierNode;
   readonly dataType: DataType;
   readonly required: Required;
   readonly constraints: ColumnConstraints;
+  readonly serverValue: ServerValues[Server];
   encodeWrite(value: ColumnValue<T, Required>): ExpressionNode;
-  notNull(): Column<T, true, Scope>;
+  notNull(): Column<T, true, Scope, Server>;
+  serverDefault(expression?: string): Column<T, Required, Scope, 'default'>;
+  identity(options?: IdentityOptions): Column<T, Required, Scope, 'identity'>;
+  virtual(expression?: string): Column<T, Required, Scope, 'virtual'>;
 }
-export type AnyColumn = Column<unknown, boolean, string>;
-export type InferColumn<C> = C extends Column<infer T, infer R, string> ? ColumnValue<T, R> : never;
+export type AnyColumn = Column<unknown, boolean, string, ServerValueKind>;
+export type InferColumn<C> =
+  C extends Column<infer T, infer R, string, ServerValueKind> ? ColumnValue<T, R> : never;
 export type ColumnMap = Readonly<Record<string, AnyColumn>>;
 export type Selection = Readonly<Record<string, AnyExpression>>;
 export type InferSelection<S extends Selection, Nullable extends string = never> = {
@@ -64,7 +87,9 @@ export type InferSelection<S extends Selection, Nullable extends string = never>
     | (Extract<ExpressionNullScope<S[K]>, Nullable> extends never ? never : null);
 };
 export type BoundColumns<C extends ColumnMap, Name extends string> = {
-  [K in keyof C]: C[K] extends Column<infer T, infer R, string> ? Column<T, R, Name> : never;
+  [K in keyof C]: C[K] extends Column<infer T, infer R, string, infer S>
+    ? Column<T, R, Name, S>
+    : never;
 };
 interface Constraint<T> {
   readonly constraints: ColumnConstraints;
@@ -72,12 +97,27 @@ interface Constraint<T> {
   check?(value: T): boolean;
 }
 
+function serverExpression(kind: 'default' | 'virtual', expression: string | undefined) {
+  if (expression !== undefined && !expression.trim())
+    throw new TypeError('Server value expressions cannot be empty.');
+  return Object.freeze({ kind, ...(expression === undefined ? {} : { expression }) });
+}
+function identityValue(options: IdentityOptions) {
+  for (const key of ['start', 'increment'] as const) {
+    const value = options[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || (key === 'increment' && !value)))
+      throw new TypeError(
+        'Identity start and increment must be safe integers, and increment cannot be zero.',
+      );
+  }
+  return Object.freeze({ kind: 'identity' as const, ...options });
+}
 const writeSchemas = new WeakMap<AnyColumn, z.ZodType>();
 /** The constrained schema a required column validates INSERT, UPDATE, and MERGE values with. */
 export function writeSchema<T>(value: Column<T, true>): z.ZodType<T> {
   return writeSchemas.get(value as AnyColumn) as z.ZodType<T>;
 }
-export function column<T, R extends boolean>(
+export function column<T, R extends boolean, S extends ServerValueKind = 'none'>(
   name: string,
   dataType: DataType,
   read: z.ZodType<T>,
@@ -85,7 +125,8 @@ export function column<T, R extends boolean>(
   required: R,
   constraint?: Constraint<T>,
   write?: (value: T | null) => ExpressionNode,
-): Column<T, R> {
+  serverValue: ServerValue | null = null,
+): Column<T, R, string, S> {
   const constrained = (schema: z.ZodType<T>) =>
     constraint?.check
       ? schema.refine(constraint.check, `Value does not fit ${constraint.type}.`)
@@ -98,24 +139,26 @@ export function column<T, R extends boolean>(
   const node = identifier(name);
   function encode(parsed: ColumnValue<T, R>): ExpressionNode {
     if (write) return write(parsed);
-    if (dataType === 'variant' && parsed !== null) return parseJson(dataType, parsed);
+    // NULL goes through the same wrapper so it carries the column type; a bare NULL
+    // bind is VARCHAR, which Snowflake rejects for VARIANT and BINARY in INSERT ... SELECT.
+    if (dataType === 'variant') return parseJson(dataType, parsed);
     if (dataType === 'array' || dataType === 'object')
       return Object.freeze({
         kind: 'cast',
         value: parseJson(dataType, parsed),
         target: dataType === 'array' ? 'ARRAY' : 'OBJECT',
       });
-    if (dataType === 'binary' && parsed !== null) {
-      const bytes = parsed as Uint8Array;
+    if (dataType === 'binary')
       return Object.freeze({
         kind: 'function',
         name: 'TO_BINARY',
         args: Object.freeze([
-          scalarParameter(Buffer.from(bytes).toString('hex')),
+          scalarParameter(
+            parsed === null ? null : Buffer.from(parsed as Uint8Array).toString('hex'),
+          ),
           scalarParameter('HEX'),
         ]),
       });
-    }
     return scalarParameter(parsed);
   }
   const wireType: WireType | undefined = ['text', 'boolean', 'binary'].includes(dataType)
@@ -123,7 +166,7 @@ export function column<T, R extends boolean>(
     : ['array', 'object', 'vector'].includes(dataType)
       ? 'variant'
       : (dataType as WireType);
-  const result: Column<T, R> = Object.freeze({
+  const result = Object.freeze({
     ...expression(node, readSchema, {
       valueSchema,
       ...(wireType ? { wireType } : {}),
@@ -133,9 +176,44 @@ export function column<T, R extends boolean>(
     dataType,
     required,
     constraints: Object.freeze({ ...constraint?.constraints }),
+    serverValue: serverValue as ServerValues[S],
     encodeWrite: (input: ColumnValue<T, R>) => encode(writeSchema.parse(input)),
-    notNull: () => column(name, dataType, read, value, true, constraint, write),
-  });
+    notNull: () =>
+      column<T, true, S>(name, dataType, read, value, true, constraint, write, serverValue),
+    serverDefault: (expression?: string) =>
+      column<T, R, 'default'>(
+        name,
+        dataType,
+        read,
+        value,
+        required,
+        constraint,
+        write,
+        serverExpression('default', expression),
+      ),
+    identity: (options: IdentityOptions = {}) =>
+      column<T, R, 'identity'>(
+        name,
+        dataType,
+        read,
+        value,
+        required,
+        constraint,
+        write,
+        identityValue(options),
+      ),
+    virtual: (expression?: string) =>
+      column<T, R, 'virtual'>(
+        name,
+        dataType,
+        read,
+        value,
+        required,
+        constraint,
+        write,
+        serverExpression('virtual', expression),
+      ),
+  }) as Column<T, R, string, S>;
   writeSchemas.set(result as AnyColumn, writeSchema);
   return result;
 }
@@ -247,11 +325,19 @@ export function decimal(
 export function boolean(name: string): Column<boolean> {
   return column(name, 'boolean', z.boolean(), z.boolean(), false);
 }
+/** Decodes `<significand>p<exponent>` wire text; plain numeric text is also accepted. */
+function decodeFloat(value: string): number {
+  const match = /^(-?\d+)p(-?\d+)$/.exec(value);
+  if (!match) return Number(value);
+  const exponent = Number(match[2]);
+  const half = Math.trunc(exponent / 2);
+  return Number(match[1]) * 2 ** half * 2 ** (exponent - half);
+}
 export function float(name: string): Column<number> {
   return column(
     name,
     'float',
-    z.string().transform(Number).pipe(z.number().finite()),
+    z.string().transform(decodeFloat).pipe(z.number().finite()),
     z.number().finite(),
     false,
   );
@@ -404,18 +490,21 @@ export interface TableOptions {
   readonly database?: string;
 }
 
-export function bindColumn<T, R extends boolean, N extends string>(
-  value: Column<T, R>,
+export function bindColumn<T, R extends boolean, N extends string, S extends ServerValueKind>(
+  value: Column<T, R, string, S>,
   ref: SourceReference,
-): Column<T, R, N> {
+): Column<T, R, N, S> {
   return Object.freeze({
     ...value,
     phase: 'scalar',
     expression: Object.freeze({ kind: 'reference', source: ref, column: value.node }),
     refs: Object.freeze([ref]),
     nullRefs: Object.freeze([ref]),
-    notNull: () => bindColumn<T, true, N>(value.notNull(), ref),
-  }) as Column<T, R, N>;
+    notNull: () => bindColumn(value.notNull(), ref),
+    serverDefault: (expression?: string) => bindColumn(value.serverDefault(expression), ref),
+    identity: (options?: IdentityOptions) => bindColumn(value.identity(options), ref),
+    virtual: (expression?: string) => bindColumn(value.virtual(expression), ref),
+  }) as Column<T, R, N, S>;
 }
 export function bindTable<C extends ColumnMap, N extends string>(
   node: IdentifierNode,

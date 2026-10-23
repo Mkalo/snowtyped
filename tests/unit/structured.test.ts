@@ -100,8 +100,11 @@ describe('structured ARRAY, OBJECT, and MAP columns', () => {
       },
       { id: 2n, scores: [] },
     ]).compile();
+    const casts =
+      'CAST(PARSE_JSON(?) AS ARRAY(NUMBER(38,0))) AS "__sflib_1", CAST(PARSE_JSON(?) AS OBJECT("city" VARCHAR, "Zip ""Code""" NUMBER(5,0), "ok" BOOLEAN)) AS "__sflib_2", CAST(PARSE_JSON(?) AS MAP(VARCHAR(3), NUMBER(10,2))) AS "__sflib_3", CAST(PARSE_JSON(?) AS MAP(NUMBER(38,0), ARRAY(VARCHAR))) AS "__sflib_4"';
+    expect(rows.sql).toContain('VALUES ("__sflib_0", "__sflib_1", DEFAULT, DEFAULT, DEFAULT)');
     expect(rows.sql).toContain(
-      'SELECT ?, CAST(PARSE_JSON(?) AS ARRAY(NUMBER(38,0))), CAST(PARSE_JSON(?) AS OBJECT("city" VARCHAR, "Zip ""Code""" NUMBER(5,0), "ok" BOOLEAN)), CAST(PARSE_JSON(?) AS MAP(VARCHAR(3), NUMBER(10,2))), CAST(PARSE_JSON(?) AS MAP(NUMBER(38,0), ARRAY(VARCHAR))) UNION ALL',
+      `SELECT 0 AS "__sflib_shape", ? AS "__sflib_0", ${casts} UNION ALL SELECT 1 AS "__sflib_shape", ? AS "__sflib_0", ${casts}`,
     );
     expect(rows.binds).toEqual([
       '1',
@@ -126,7 +129,7 @@ describe('structured ARRAY, OBJECT, and MAP columns', () => {
       mergeInto(table, staged, eq(table.columns.id, staged.columns.id))
         .whenNotMatchedInsert({ id: staged.columns.id, scores: [1n] })
         .compile().binds,
-    ).toEqual(['[1]', null, null, null]);
+    ).toEqual(['[1]']);
     for (const values of [
       { scores: [1.5 as unknown as bigint] },
       { scores: ['1' as unknown as bigint] },

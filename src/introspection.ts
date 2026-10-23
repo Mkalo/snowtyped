@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import type { ServerValue } from './schema.js';
 import type { SnowflakeClient } from './snowflake/client.js';
 import { sql } from './sql.js';
 
@@ -9,6 +10,7 @@ export interface IntrospectedColumn {
   readonly precision: number | null;
   readonly scale: number | null;
   readonly length: number | null;
+  readonly serverValue?: ServerValue | null;
   /** The `SHOW COLUMNS` type of a structured ARRAY, OBJECT, or MAP column. */
   readonly structure?: StructureMetadata;
 }
@@ -37,6 +39,13 @@ const metadata = () =>
         NUMERIC_SCALE: z.string().nullable(),
         CHARACTER_MAXIMUM_LENGTH: z.string().nullable(),
         DATETIME_PRECISION: z.string().nullable(),
+        COLUMN_DEFAULT: z.string().nullable(),
+        IS_IDENTITY: z.enum(['YES', 'NO']),
+        IDENTITY_START: z.string().nullable(),
+        IDENTITY_INCREMENT: z.string().nullable(),
+        IDENTITY_ORDERED: z.enum(['YES', 'NO']).nullable(),
+        KIND: z.string(),
+        EXPRESSION: z.string().nullable(),
       }),
     ),
   );
@@ -47,12 +56,31 @@ const structureMetadata = () =>
   z.compile(z.looseObject({ type: z.string(), nullable: z.boolean() }));
 const containerType = /^(?:ARRAY|OBJECT|MAP)\b/i;
 
+function serverValue(row: z.infer<ReturnType<typeof metadata>>[number]): ServerValue | null {
+  if (row.KIND !== 'COLUMN')
+    return Object.freeze({
+      kind: 'virtual',
+      ...(row.EXPRESSION === null ? {} : { expression: row.EXPRESSION }),
+    });
+  if (row.IS_IDENTITY === 'YES')
+    return Object.freeze({
+      kind: 'identity',
+      ...(row.IDENTITY_START === null ? {} : { start: Number(row.IDENTITY_START) }),
+      ...(row.IDENTITY_INCREMENT === null ? {} : { increment: Number(row.IDENTITY_INCREMENT) }),
+      ...(row.IDENTITY_ORDERED === null ? {} : { order: row.IDENTITY_ORDERED === 'YES' }),
+    });
+  return row.COLUMN_DEFAULT === null
+    ? null
+    : Object.freeze({ kind: 'default', expression: row.COLUMN_DEFAULT });
+}
+
 export async function introspect(
   client: Pick<SnowflakeClient, 'queryRaw'>,
   options: { readonly database: string; readonly schema?: string },
 ): Promise<readonly IntrospectedTable[]> {
   const rows = metadata().parse(
-    await client.queryRaw(sql`SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATA_TYPE_ALIAS, IS_NULLABLE, NUMERIC_PRECISION, NUMERIC_SCALE, CHARACTER_MAXIMUM_LENGTH, DATETIME_PRECISION
+    await client.queryRaw(sql`SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATA_TYPE_ALIAS, IS_NULLABLE, NUMERIC_PRECISION, NUMERIC_SCALE, CHARACTER_MAXIMUM_LENGTH, DATETIME_PRECISION,
+      COLUMN_DEFAULT, IS_IDENTITY, IDENTITY_START, IDENTITY_INCREMENT, IDENTITY_ORDERED, KIND, EXPRESSION
     FROM ${sql.identifier(options.database, 'INFORMATION_SCHEMA', 'COLUMNS')}
     WHERE TABLE_SCHEMA <> ${'INFORMATION_SCHEMA'} ${options.schema === undefined ? sql.unsafe('') : sql`AND TABLE_SCHEMA = ${options.schema}`}
     ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`),
@@ -83,6 +111,7 @@ export async function introspect(
         precision: numeric(row.NUMERIC_PRECISION ?? row.DATETIME_PRECISION),
         scale: numeric(row.NUMERIC_SCALE),
         length: numeric(row.CHARACTER_MAXIMUM_LENGTH),
+        serverValue: serverValue(row),
       }),
     );
   }
@@ -152,6 +181,17 @@ function structureDeclaration(type: StructureMetadata, key = false): string {
       throw new TypeError(`Unsupported structured element type for code generation: ${type.type}`);
   }
   return type.nullable || key ? declaration : `${declaration}.notNull()`;
+}
+
+function serverModifier(value: ServerValue | null | undefined): string {
+  if (!value) return '';
+  if (value.kind === 'identity') {
+    const { kind: _, ...options } = value;
+    const entries = Object.entries(options).map(([key, option]) => `${key}: ${option}`);
+    return `.identity(${entries.length ? `{ ${entries.join(', ')} }` : ''})`;
+  }
+  const method = value.kind === 'default' ? 'serverDefault' : 'virtual';
+  return `.${method}(${value.expression === undefined ? '' : JSON.stringify(value.expression)})`;
 }
 
 export function generateSchema(tables: readonly IntrospectedTable[]): string {
@@ -237,7 +277,7 @@ export function generateSchema(tables: readonly IntrospectedTable[]): string {
         }
       }
       imports.add(factoryName);
-      return `  ${JSON.stringify(column.name)}: ${factoryName}(${args.join(', ')})${column.nullable ? '' : '.notNull()'},`;
+      return `  ${JSON.stringify(column.name)}: ${factoryName}(${args.join(', ')})${column.nullable ? '' : '.notNull()'}${serverModifier(column.serverValue)},`;
     });
     return `export const table${index} = snowflakeTable(${JSON.stringify(table.name)}, {\n${columns.join('\n')}\n}, { database: ${JSON.stringify(table.database)}, schema: ${JSON.stringify(table.schema)} });`;
   });

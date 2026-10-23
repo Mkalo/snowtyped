@@ -1,0 +1,3 @@
+saveExact: true
+engineStrict: true
+strictPeerDependencies: true

@@ -37,6 +37,12 @@ export interface BinaryNode {
   readonly left: ExpressionNode;
   readonly right: ExpressionNode;
 }
+export interface ArithmeticNode {
+  readonly kind: 'arithmetic';
+  readonly operator: '+' | '-' | '*' | '/';
+  readonly left: ExpressionNode;
+  readonly right: ExpressionNode;
+}
 export interface LogicalNode {
   readonly kind: 'logical';
   readonly operator: 'AND' | 'OR';
@@ -53,17 +59,63 @@ export interface FunctionNode {
   readonly args: readonly ExpressionNode[];
   readonly distinct?: boolean;
 }
+export interface CaseNode {
+  readonly kind: 'case';
+  readonly branches: readonly { readonly when: ExpressionNode; readonly result: ExpressionNode }[];
+  readonly otherwise?: ExpressionNode;
+}
+export interface DatePartNode {
+  readonly kind: 'date-part';
+  readonly part:
+    | 'YEAR'
+    | 'QUARTER'
+    | 'MONTH'
+    | 'WEEK'
+    | 'DAY'
+    | 'HOUR'
+    | 'MINUTE'
+    | 'SECOND'
+    | 'MILLISECOND'
+    | 'MICROSECOND'
+    | 'NANOSECOND';
+}
 export interface InNode {
   readonly kind: 'in';
   readonly operand: ExpressionNode;
   readonly values: readonly ExpressionNode[];
   readonly negate: boolean;
 }
+export type IntervalUnit =
+  | 'YEAR'
+  | 'QUARTER'
+  | 'MONTH'
+  | 'WEEK'
+  | 'DAY'
+  | 'HOUR'
+  | 'MINUTE'
+  | 'SECOND'
+  | 'MILLISECOND';
+export interface FrameBoundaryNode {
+  readonly bound:
+    | 'UNBOUNDED PRECEDING'
+    | 'PRECEDING'
+    | 'CURRENT ROW'
+    | 'FOLLOWING'
+    | 'UNBOUNDED FOLLOWING';
+  readonly offset?: number;
+  readonly unit?: IntervalUnit;
+}
+export interface WindowFrameNode {
+  readonly units: 'ROWS' | 'RANGE';
+  readonly start: FrameBoundaryNode;
+  readonly end: FrameBoundaryNode;
+}
 export interface WindowNode {
   readonly kind: 'window';
   readonly value: ExpressionNode;
   readonly partitionBy: readonly ExpressionNode[];
   readonly orderBy: readonly OrderNode[];
+  readonly frame?: WindowFrameNode;
 }
 export interface JsonPathNode {
   readonly kind: 'json-path';
@@ -75,7 +127,7 @@ export interface CastNode {
   readonly value: ExpressionNode;
   readonly target:
     | 'VARCHAR'
-    | 'NUMBER(38,0)'
+    | `NUMBER(${number},${number})`
     | 'DOUBLE'
     | 'BOOLEAN'
     | 'DATE'
@@ -93,9 +145,12 @@ export type ExpressionNode =
   | ReferenceNode
   | ParameterNode
   | BinaryNode
+  | ArithmeticNode
   | LogicalNode
   | UnaryNode
   | FunctionNode
+  | CaseNode
+  | DatePartNode
   | InNode
   | WindowNode
   | JsonPathNode
@@ -123,7 +178,7 @@ export interface TableNode {
 }
 export interface DerivedNode {
   readonly kind: 'derived';
-  readonly query: SelectNode;
+  readonly query: QueryNode;
   readonly alias: IdentifierNode;
 }
 export interface FlattenNode {
@@ -138,9 +193,50 @@ export interface FlattenNode {
 export interface CteNode {
   readonly kind: 'cte';
   readonly name: IdentifierNode;
-  readonly query: SelectNode;
+  readonly query: QueryNode;
+  /** Present on recursive definitions; the recursive branch reads the CTE through it. */
+  readonly self?: SelfReferenceNode;
 }
-export type RelationNode = IdentifierNode | TableNode | DerivedNode | FlattenNode | CteNode;
+export type PivotLiteral = string | number | boolean;
+export interface PivotNode {
+  readonly kind: 'pivot';
+  readonly source: SelectNode;
+  readonly aggregate: 'SUM' | 'MIN' | 'MAX' | 'COUNT';
+  readonly value: IdentifierNode;
+  readonly for: IdentifierNode;
+  /** Snowflake names pivot columns from literal SQL text, so values cannot be bound. */
+  readonly values:
+    | readonly PivotLiteral[]
+    | { readonly kind: 'any'; readonly direction?: 'ASC' | 'DESC' };
+  readonly default?: ExpressionNode;
+  readonly alias: IdentifierNode;
+  /** Every output column; without it, explicit IN lists mangle quoted grouping names. */
+  readonly columns?: readonly IdentifierNode[];
+}
+export interface UnpivotNode {
+  readonly kind: 'unpivot';
+  readonly source: SelectNode;
+  readonly value: IdentifierNode;
+  readonly name: IdentifierNode;
+  readonly columns: readonly IdentifierNode[];
+  readonly includeNulls: boolean;
+  readonly alias: IdentifierNode;
+}
+/** Valid only while compiling the recursive branch of the CTE that owns it. */
+export interface SelfReferenceNode {
+  readonly kind: 'self-reference';
+  readonly name: IdentifierNode;
+  readonly columns: readonly string[];
+}
+export type RelationNode =
+  | IdentifierNode
+  | TableNode
+  | DerivedNode
+  | FlattenNode
+  | CteNode
+  | PivotNode
+  | UnpivotNode
+  | SelfReferenceNode;
 export interface JoinNode {
   readonly kind: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL' | 'CROSS' | 'ASOF' | 'LATERAL';
   readonly source: RelationNode;
@@ -166,39 +262,81 @@ export interface SelectNode {
   readonly offset?: number;
   readonly with?: readonly CteNode[];
 }
+export type SetOperator = 'UNION' | 'UNION ALL' | 'INTERSECT' | 'EXCEPT';
+/** Operands are always parenthesized, so the tree, not keyword precedence, defines grouping. */
+export interface SetOperationNode {
+  readonly kind: 'set-operation';
+  readonly operator: SetOperator;
+  readonly left: QueryNode;
+  readonly right: QueryNode;
+  readonly columns: readonly { readonly alias: string; readonly wireType?: WireType }[];
+  readonly orderBy?: readonly OrderNode[];
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly with?: readonly CteNode[];
+}
+export type QueryNode = SelectNode | SetOperationNode;
+export interface DefaultNode {
+  readonly kind: 'default';
+  /** A typed NULL for the shared source row, needed where a bare NULL cannot join a UNION. */
+  readonly placeholder?: ExpressionNode;
+}
 export interface InsertNode {
   readonly kind: 'insert';
   readonly table: IdentifierNode;
   readonly columns: readonly IdentifierNode[];
-  readonly rows: readonly (readonly ExpressionNode[])[];
+  readonly rows: readonly (readonly (ExpressionNode | DefaultNode)[])[];
+  readonly query?: SelectNode;
+}
+export interface AssignmentNode {
+  readonly column: IdentifierNode;
+  readonly value: ExpressionNode;
 }
 export interface UpdateNode {
   readonly kind: 'update';
   readonly table: IdentifierNode;
-  readonly assignments: readonly {
-    readonly column: IdentifierNode;
-    readonly value: ExpressionNode;
-  }[];
+  readonly alias?: IdentifierNode;
+  readonly assignments: readonly AssignmentNode[];
+  readonly from?: RelationNode;
   readonly where?: ExpressionNode;
 }
 export interface DeleteNode {
   readonly kind: 'delete';
   readonly table: IdentifierNode;
+  readonly alias?: IdentifierNode;
+  readonly using?: RelationNode;
   readonly where?: ExpressionNode;
 }
+export type MergeBranchNode =
+  | {
+      readonly kind: 'matched-update';
+      readonly condition?: ExpressionNode;
+      readonly assignments: readonly AssignmentNode[];
+    }
+  | { readonly kind: 'matched-delete'; readonly condition?: ExpressionNode }
+  | {
+      readonly kind: 'not-matched-insert';
+      readonly condition?: ExpressionNode;
+      readonly columns: readonly IdentifierNode[];
+      readonly values: readonly ExpressionNode[];
+    };
 export interface MergeNode {
   readonly kind: 'merge';
   readonly target: TableNode;
   readonly source: RelationNode;
   readonly on: ExpressionNode;
-  readonly matched?: readonly { readonly column: IdentifierNode; readonly value: ExpressionNode }[];
+  readonly branches?: readonly MergeBranchNode[];
+  /** @deprecated Use `branches`. */
+  readonly matched?: readonly AssignmentNode[];
+  /** @deprecated Use `branches`. */
   readonly insert?: {
     readonly columns: readonly IdentifierNode[];
     readonly values: readonly ExpressionNode[];
   };
+  /** @deprecated Use `branches`. */
   readonly deleteMatched?: boolean;
 }
-export type StatementNode = SelectNode | InsertNode | UpdateNode | DeleteNode | MergeNode;
+export type StatementNode = QueryNode | InsertNode | UpdateNode | DeleteNode | MergeNode;
 export interface CompiledQuery {
   readonly sql: string;
   readonly binds: readonly BindValue[];
@@ -222,6 +360,7 @@ export function quoteIdentifier(node: IdentifierNode): string {
 /** A new context per statement prevents binds leaking across reusable queries. */
 export function compileAst(statement: StatementNode): CompiledQuery {
   const binds: BindValue[] = [];
+  const active = new Set<SelfReferenceNode>();
   function parameter(value: BindValue): string {
     binds.push(value);
     return '?';
@@ -235,6 +374,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       case 'parameter':
         return parameter(node.value);
       case 'binary':
+      case 'arithmetic':
         return `(${expression(node.left, qualify)} ${node.operator} ${expression(node.right, qualify)})`;
       case 'logical':
         return `(${node.operands.map((item) => expression(item, qualify)).join(` ${node.operator} `)})`;
@@ -244,6 +384,10 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           : `(${expression(node.operand, qualify)} ${node.operator})`;
       case 'function':
         return `${node.name}(${node.distinct ? 'DISTINCT ' : ''}${node.args.length ? node.args.map((arg) => expression(arg, qualify)).join(', ') : node.name === 'COUNT' ? '*' : ''})`;
+      case 'case':
+        return `CASE ${node.branches.map((branch) => `WHEN ${expression(branch.when, qualify)} THEN ${expression(branch.result, qualify)}`).join(' ')}${node.otherwise ? ` ELSE ${expression(node.otherwise, qualify)}` : ''} END`;
+      case 'date-part':
+        return node.part;
       case 'in':
         return node.values.length === 0
           ? node.negate
@@ -257,6 +401,9 @@ export function compileAst(statement: StatementNode): CompiledQuery {
             : '',
           node.orderBy.length
             ? `ORDER BY ${node.orderBy.map((value) => order(value, qualify)).join(', ')}`
+            : '',
+          node.frame
+            ? `${node.frame.units} BETWEEN ${boundary(node.frame.start)} AND ${boundary(node.frame.end)}`
             : '',
         ]
           .filter(Boolean)
@@ -272,18 +419,53 @@ export function compileAst(statement: StatementNode): CompiledQuery {
         throw new TypeError('Unsupported expression AST node.');
     }
   }
-  function order(node: OrderNode, qualify: boolean): string {
-    return `${expression(node.expression, qualify)} ${node.direction}${node.nulls ? ` NULLS ${node.nulls}` : ''}`;
+  function order(node: OrderNode, qualify: boolean, rendered?: string): string {
+    return `${rendered ?? expression(node.expression, qualify)} ${node.direction}${node.nulls ? ` NULLS ${node.nulls}` : ''}`;
+  }
+  function projectionOf(node: SelectNode, value: ExpressionNode) {
+    const key = JSON.stringify(value);
+    return node.projections.find((projection) => JSON.stringify(projection.column) === key);
+  }
+  function boundary(node: FrameBoundaryNode): string {
+    if (node.offset === undefined) return node.bound;
+    return `${node.unit ? `INTERVAL '${node.offset} ${node.unit}'` : node.offset} ${node.bound}`;
+  }
+  function literal(value: PivotLiteral): string {
+    if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) throw new TypeError('PIVOT values must be finite numbers.');
+      return String(value);
+    }
+    if (value.includes('\0')) throw new TypeError('PIVOT values cannot contain NUL.');
+    return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "''")}'`;
+  }
+  function pivotValues(node: PivotNode): string {
+    if ('kind' in node.values) {
+      const { direction } = node.values;
+      return `ANY${direction ? ` ORDER BY ${quoteIdentifier(node.for)} ${direction}` : ''}`;
+    }
+    return node.values.map(literal).join(', ');
   }
   function source(node: RelationNode): string {
     switch (node.kind) {
       case 'identifier':
         return quoteIdentifier(node);
       case 'table':
-        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
+        return `${quoteIdentifier(node.name)}${node.temporal ? ` ${node.temporal.mode} (${node.temporal.selector} => ${parameter(node.temporal.value)}${node.temporal.selector === 'TIMESTAMP' ? '::TIMESTAMP_TZ' : ''})` : ''}${node.alias ? ` AS ${quoteIdentifier(node.alias)}` : ''}`;
       case 'derived':
-        return `(${selectStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
+        return `(${queryStatement(node.query)}) AS ${quoteIdentifier(node.alias)}`;
       case 'cte':
+        return quoteIdentifier(node.name);
+      case 'pivot': {
+        if (!['SUM', 'MIN', 'MAX', 'COUNT'].includes(node.aggregate))
+          throw new TypeError('Unsupported PIVOT aggregate.');
+        return `(${selectStatement(node.source)}) PIVOT (${node.aggregate}(${quoteIdentifier(node.value)}) FOR ${quoteIdentifier(node.for)} IN (${pivotValues(node)})${node.default ? ` DEFAULT ON NULL (${expression(node.default)})` : ''}) AS ${quoteIdentifier(node.alias)}${node.columns ? ` (${node.columns.map(quoteIdentifier).join(', ')})` : ''}`;
+      }
+      case 'unpivot':
+        return `(${selectStatement(node.source)}) UNPIVOT${node.includeNulls ? ' INCLUDE NULLS' : ''} (${quoteIdentifier(node.value)} FOR ${quoteIdentifier(node.name)} IN (${node.columns.map(quoteIdentifier).join(', ')})) AS ${quoteIdentifier(node.alias)}`;
+      case 'self-reference':
+        if (!active.has(node))
+          throw new TypeError('A recursive CTE reference is only valid in its recursive branch.');
         return quoteIdentifier(node.name);
       case 'flatten':
         return `FLATTEN(INPUT => ${expression(node.input, true)}, PATH => ${parameter(node.path)}, OUTER => ${node.outer ? 'TRUE' : 'FALSE'}, RECURSIVE => ${node.recursive ? 'TRUE' : 'FALSE'}, MODE => '${node.mode}') AS ${quoteIdentifier(node.alias)}`;
@@ -297,6 +479,12 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (type === 'geography') return `TO_JSON(ST_ASGEOJSON(${value}))`;
     if (type === 'geometry') return `ST_ASEWKB(${value})`;
     if (type === 'structured') return `TO_JSON(CAST(${value} AS VARIANT))`;
+    if (type === 'float') {
+      // Text conversion keeps at most 16 digits, so send an exact integer significand and a
+      // binary exponent instead. The scale is split to stay finite for subnormals.
+      const scale = `(60 - FLOOR(LOG(2, ABS(${value}))))`;
+      return `CASE WHEN ABS(${value}) > 0 AND ABS(${value}) < 'inf'::DOUBLE THEN TO_VARCHAR((${value} * POW(2, FLOOR(${scale} / 2)) * POW(2, ${scale} - FLOOR(${scale} / 2)))::NUMBER(38, 0)) || 'p' || TO_VARCHAR(-${scale}) ELSE TO_VARCHAR(${value}) END`;
+    }
     const formats: Partial<Record<WireType, string>> = {
       date: 'YYYY-MM-DD',
       time: 'HH24:MI:SS.FF9',
@@ -307,6 +495,51 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     const format = formats[type];
     return `TO_VARCHAR(${value}${format ? `, '${format}'` : ''})`;
   }
+  function definition(cte: CteNode): string {
+    if (!cte.self) return `${quoteIdentifier(cte.name)} AS (${queryStatement(cte.query)})`;
+    const { with: _, ...query } = cte.query;
+    active.add(cte.self);
+    const body = queryStatement(query as QueryNode);
+    active.delete(cte.self);
+    return `${quoteIdentifier(cte.name)} (${cte.self.columns.map((column) => quoteIdentifier(identifier(column))).join(', ')}) AS (${body})`;
+  }
+  function withClause(ctes: readonly CteNode[] | undefined): string {
+    if (!ctes?.length) return '';
+    const ordered: CteNode[] = [];
+    // Snowflake cannot see a WITH nested in a recursive definition, so its CTEs precede it.
+    const add = (cte: CteNode) => {
+      if (ordered.includes(cte)) return;
+      if (cte.self) cte.query.with?.forEach(add);
+      if (ordered.some((item) => quoteIdentifier(item.name) === quoteIdentifier(cte.name)))
+        throw new TypeError('One WITH clause cannot define different CTEs with the same name.');
+      ordered.push(cte);
+    };
+    ctes.forEach(add);
+    return `WITH ${ordered.some((cte) => cte.self) ? 'RECURSIVE ' : ''}${ordered.map(definition).join(', ')} `;
+  }
+  function queryStatement(node: QueryNode, wireOutput = false): string {
+    return node.kind === 'select'
+      ? selectStatement(node, wireOutput)
+      : setStatement(node, wireOutput);
+  }
+  function setStatement(node: SetOperationNode, wireOutput: boolean): string {
+    let text = withClause(node.with);
+    const wrapped =
+      Boolean(node.orderBy?.length) ||
+      node.limit !== undefined ||
+      node.offset !== undefined ||
+      (wireOutput && node.columns.some((column) => column.wireType));
+    if (wrapped)
+      text += `SELECT ${node.columns.map(({ alias, wireType }) => `${wire(quoteIdentifier(identifier('__sflib_result', alias)), wireOutput ? wireType : undefined)} AS ${quoteIdentifier(identifier(alias))}`).join(', ')} FROM (`;
+    text += `(${queryStatement(node.left)}) ${node.operator} (${queryStatement(node.right)})`;
+    if (!wrapped) return text;
+    text += ') AS "__sflib_result"';
+    if (node.orderBy?.length)
+      text += ` ORDER BY ${node.orderBy.map((value) => order(value, true)).join(', ')}`;
+    if (node.limit !== undefined) text += ` LIMIT ${node.limit}`;
+    if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
+    return text;
+  }
   function selectStatement(node: SelectNode, wireOutput = false): string {
     if (wireOutput && node.projections.some((item) => item.wireType)) {
       // Serialize only after relational operations, preserving native numeric/temporal sort,
@@ -314,9 +547,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       const extras: { column: ExpressionNode; alias: string }[] = [];
       const used = new Set(node.projections.map((item) => item.alias));
       const ordering = (node.orderBy ?? []).map((item, index) => {
-        const projected = node.projections.find(
-          (projection) => JSON.stringify(projection.column) === JSON.stringify(item.expression),
-        );
+        const projected = projectionOf(node, item.expression);
         if (node.distinct && !projected)
           throw new TypeError('DISTINCT ORDER BY expressions must be projected.');
         let name = projected?.alias;
@@ -326,7 +557,7 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           used.add(name);
           extras.push({ column: item.expression, alias: name });
         }
-        return `${quoteIdentifier(identifier('__sflib_result', name))} ${item.direction}${item.nulls ? ` NULLS ${item.nulls}` : ''}`;
+        return order(item, false, quoteIdentifier(identifier('__sflib_result', name)));
       });
       const native = selectStatement(
         { ...node, projections: [...node.projections, ...extras] },
@@ -342,10 +573,16 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     }
     const qualified =
       Boolean(node.joins?.length) || node.from.kind === 'derived' || node.from.kind === 'cte';
-    let text = '';
-    if (node.with?.length)
-      text += `WITH ${node.with.map((cte) => `${quoteIdentifier(cte.name)} AS (${selectStatement(cte.query)})`).join(', ')} `;
-    text += `SELECT ${node.distinct ? 'DISTINCT ' : ''}${node.projections.map(({ column, alias, wireType }) => `${wire(expression(column, qualified), wireOutput ? wireType : undefined)} AS ${quoteIdentifier(identifier(alias))}`).join(', ')} FROM ${source(node.from)}`;
+    let text = withClause(node.with);
+    const projected = node.projections.length
+      ? node.projections
+          .map(
+            ({ column, alias, wireType }) =>
+              `${wire(expression(column, qualified), wireOutput ? wireType : undefined)} AS ${quoteIdentifier(identifier(alias))}`,
+          )
+          .join(', ')
+      : '*';
+    text += `SELECT ${node.distinct ? 'DISTINCT ' : ''}${projected} FROM ${source(node.from)}`;
     for (const join of node.joins ?? []) {
       text +=
         join.kind === 'LATERAL'
@@ -360,42 +597,101 @@ export function compileAst(statement: StatementNode): CompiledQuery {
       text += ` GROUP BY ${node.groupBy.map((value) => expression(value, qualified)).join(', ')}`;
     if (node.having) text += ` HAVING ${expression(node.having, qualified)}`;
     if (node.qualify) text += ` QUALIFY ${expression(node.qualify, qualified)}`;
-    if (node.orderBy?.length)
-      text += ` ORDER BY ${node.orderBy.map((value) => order(value, qualified)).join(', ')}`;
+    if (node.orderBy?.length) {
+      // Projected expressions order by alias (windows over aggregates are invalid repeated here);
+      // the rest are qualified because ORDER BY resolves bare names to aliases before columns.
+      const ordering = node.orderBy.map((value) => {
+        const projected = projectionOf(node, value.expression);
+        return order(value, true, projected && quoteIdentifier(identifier(projected.alias)));
+      });
+      text += ` ORDER BY ${ordering.join(', ')}`;
+    }
     if (node.limit !== undefined) text += ` LIMIT ${node.limit}`;
     if (node.offset !== undefined) text += ` OFFSET ${node.offset}`;
     return text;
   }
-  function assignments(
-    values: readonly { readonly column: IdentifierNode; readonly value: ExpressionNode }[],
-    qualified: boolean,
-  ): string {
+  // DML has no WITH clause of its own, so a CTE source is inlined as a derived query. A
+  // recursive CTE cannot be inlined, so the derived query keeps its WITH RECURSIVE.
+  function mutationSource(node: RelationNode): string {
+    if (node.kind !== 'cte') return source(node);
+    const query: QueryNode = node.self
+      ? {
+          kind: 'select',
+          from: node,
+          projections: node.self.columns.map((alias) => ({ column: identifier(alias), alias })),
+          with: [node],
+        }
+      : node.query;
+    return source({ kind: 'derived', query, alias: node.name });
+  }
+  function assignments(values: readonly AssignmentNode[], qualified: boolean): string {
     return values
       .map(({ column, value }) => `${quoteIdentifier(column)} = ${expression(value, qualified)}`)
       .join(', ');
   }
+  function insertStatement(node: InsertNode): string {
+    const target = `${quoteIdentifier(node.table)} (${node.columns.map(quoteIdentifier).join(', ')})`;
+    if (node.query) return `INSERT INTO ${target} ${selectStatement(node.query)}`;
+    if (!node.rows.some((row) => row.some((value) => value.kind === 'default')))
+      return `INSERT INTO ${target} ${node.rows.map((row) => `SELECT ${row.map((value) => expression(value as ExpressionNode)).join(', ')}`).join(' UNION ALL ')}`;
+    // VALUES rejects expressions such as PARSE_JSON, so rows with differing omitted columns
+    // become one conditional multi-table insert whose branches use DEFAULT per row shape.
+    const shapes: string[] = [];
+    const sources = node.rows.map((row) => {
+      const shape = row
+        .map((value, index) =>
+          value.kind === 'default' ? 'DEFAULT' : quoteIdentifier(identifier(`__sflib_${index}`)),
+        )
+        .join(', ');
+      if (!shapes.includes(shape)) shapes.push(shape);
+      return `SELECT ${shapes.indexOf(shape)} AS "__sflib_shape", ${row.map((value, index) => `${value.kind !== 'default' ? expression(value) : value.placeholder ? expression(value.placeholder) : 'NULL'} AS ${quoteIdentifier(identifier(`__sflib_${index}`))}`).join(', ')}`;
+    });
+    return `INSERT ALL ${shapes.map((shape, index) => `WHEN "__sflib_shape" = ${index} THEN INTO ${target} VALUES (${shape})`).join(' ')} ${sources.join(' UNION ALL ')}`;
+  }
   let sql: string;
   switch (statement.kind) {
     case 'select':
-      sql = selectStatement(statement, true);
+    case 'set-operation':
+      sql = queryStatement(statement, true);
       break;
     case 'insert':
-      sql = `INSERT INTO ${quoteIdentifier(statement.table)} (${statement.columns.map(quoteIdentifier).join(', ')}) ${statement.rows.map((row) => `SELECT ${row.map((value) => expression(value)).join(', ')}`).join(' UNION ALL ')}`;
+      sql = insertStatement(statement);
       break;
-    case 'update':
-      sql = `UPDATE ${quoteIdentifier(statement.table)} SET ${assignments(statement.assignments, false)}${statement.where ? ` WHERE ${expression(statement.where)}` : ''}`;
+    case 'update': {
+      const qualified = Boolean(statement.from);
+      sql = `UPDATE ${quoteIdentifier(statement.table)}${statement.alias ? ` AS ${quoteIdentifier(statement.alias)}` : ''} SET ${assignments(statement.assignments, qualified)}`;
+      if (statement.from) sql += ` FROM ${mutationSource(statement.from)}`;
+      if (statement.where) sql += ` WHERE ${expression(statement.where, qualified)}`;
       break;
-    case 'delete':
-      sql = `DELETE FROM ${quoteIdentifier(statement.table)}${statement.where ? ` WHERE ${expression(statement.where)}` : ''}`;
+    }
+    case 'delete': {
+      const qualified = Boolean(statement.using);
+      sql = `DELETE FROM ${quoteIdentifier(statement.table)}${statement.alias ? ` AS ${quoteIdentifier(statement.alias)}` : ''}`;
+      if (statement.using) sql += ` USING ${mutationSource(statement.using)}`;
+      if (statement.where) sql += ` WHERE ${expression(statement.where, qualified)}`;
       break;
-    case 'merge':
-      sql = `MERGE INTO ${source(statement.target)} USING ${source(statement.source)} ON ${expression(statement.on, true)}`;
-      if (statement.deleteMatched) sql += ' WHEN MATCHED THEN DELETE';
-      if (statement.matched)
-        sql += ` WHEN MATCHED THEN UPDATE SET ${assignments(statement.matched, true)}`;
-      if (statement.insert)
-        sql += ` WHEN NOT MATCHED THEN INSERT (${statement.insert.columns.map(quoteIdentifier).join(', ')}) VALUES (${statement.insert.values.map((value) => expression(value, true)).join(', ')})`;
+    }
+    case 'merge': {
+      sql = `MERGE INTO ${source(statement.target)} USING ${mutationSource(statement.source)} ON ${expression(statement.on, true)}`;
+      const branches: MergeBranchNode[] = [
+        ...(statement.deleteMatched ? [{ kind: 'matched-delete' as const }] : []),
+        ...(statement.matched
+          ? [{ kind: 'matched-update' as const, assignments: statement.matched }]
+          : []),
+        ...(statement.insert ? [{ kind: 'not-matched-insert' as const, ...statement.insert }] : []),
+        ...(statement.branches ?? []),
+      ];
+      for (const branch of branches) {
+        sql += ` WHEN ${branch.kind === 'not-matched-insert' ? 'NOT MATCHED' : 'MATCHED'}`;
+        if (branch.condition) sql += ` AND ${expression(branch.condition, true)}`;
+        if (branch.kind === 'matched-update')
+          sql += ` THEN UPDATE SET ${assignments(branch.assignments, true)}`;
+        else if (branch.kind === 'matched-delete') sql += ' THEN DELETE';
+        else
+          sql += ` THEN INSERT (${branch.columns.map(quoteIdentifier).join(', ')}) VALUES (${branch.values.map((value) => expression(value, true)).join(', ')})`;
+      }
       break;
+    }
     default:
       throw new TypeError('Unsupported statement AST node.');
   }

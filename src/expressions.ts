@@ -1,5 +1,14 @@
 import * as z from 'zod';
-import type { BinaryNode, ExpressionNode, OrderNode, SourceReference, WireType } from './ast.js';
+import type {
+  BinaryNode,
+  ExpressionNode,
+  FrameBoundaryNode,
+  IntervalUnit,
+  OrderNode,
+  SourceReference,
+  WindowFrameNode,
+  WireType,
+} from './ast.js';
 
 export interface Expression<
   T = unknown,
@@ -100,7 +109,7 @@ export const jsonText = (number: (value: number, source: string) => unknown = ex
 export function isExpression(value: unknown): value is AnyExpression {
   return typeof value === 'object' && value !== null && 'expression' in value;
 }
-function metadata(values: readonly AnyExpression[]) {
+export function metadata(values: readonly AnyExpression[]) {
   return {
     refs: [...new Set(values.flatMap((value) => value.refs))],
     phase: values.some((value) => value.phase === 'window')
@@ -375,18 +384,163 @@ export interface WindowOptions<S extends string = string> {
   readonly partitionBy?: readonly Expression<unknown, S>[];
   readonly orderBy?: readonly Ordering<S>[];
 }
+export type FrameBoundary<Offset = { readonly unit?: never }> =
+  | 'UNBOUNDED PRECEDING'
+  | 'CURRENT ROW'
+  | 'UNBOUNDED FOLLOWING'
+  | ({ readonly preceding: number } & Offset)
+  | ({ readonly following: number } & Offset);
+export type RangeBoundary = FrameBoundary<{ readonly unit?: IntervalUnit }>;
+type FrameEnd<B, Start> = Exclude<
+  B,
+  | 'UNBOUNDED PRECEDING'
+  | (Start extends 'CURRENT ROW' | { readonly following: number }
+      ? { readonly preceding: number }
+      : never)
+  | (Start extends { readonly following: number } ? 'CURRENT ROW' : never)
+>;
+export interface WindowFrame<Offset extends boolean = boolean> {
+  readonly ast: WindowFrameNode;
+  readonly offsetType?: Offset;
+}
+export type FramedWindowOptions<S extends string = string> =
+  | (WindowOptions<S> & { readonly frame?: undefined })
+  | {
+      readonly partitionBy?: readonly Expression<unknown, S>[];
+      readonly orderBy: readonly [Ordering<S>, ...Ordering<S>[]];
+      readonly frame: WindowFrame<false>;
+    }
+  | {
+      readonly partitionBy?: readonly Expression<unknown, S>[];
+      readonly orderBy: readonly [Ordering<S>];
+      readonly frame: WindowFrame;
+    };
+const bounds = [
+  'UNBOUNDED PRECEDING',
+  'PRECEDING',
+  'CURRENT ROW',
+  'FOLLOWING',
+  'UNBOUNDED FOLLOWING',
+] as const;
+const intervalUnits: readonly string[] = [
+  'YEAR',
+  'QUARTER',
+  'MONTH',
+  'WEEK',
+  'DAY',
+  'HOUR',
+  'MINUTE',
+  'SECOND',
+  'MILLISECOND',
+];
+function frameBoundary(units: WindowFrameNode['units'], value: RangeBoundary): FrameBoundaryNode {
+  if (typeof value === 'string') {
+    if (
+      value !== 'UNBOUNDED PRECEDING' &&
+      value !== 'CURRENT ROW' &&
+      value !== 'UNBOUNDED FOLLOWING'
+    )
+      throw new TypeError('Unsupported window frame boundary.');
+    return Object.freeze({ bound: value });
+  }
+  const bound = 'preceding' in value ? 'PRECEDING' : 'FOLLOWING';
+  const offset = 'preceding' in value ? value.preceding : value.following;
+  if (value.unit !== undefined) {
+    if (units === 'ROWS' || !intervalUnits.includes(value.unit))
+      throw new TypeError('Interval offsets need a supported unit and a RANGE frame.');
+    if (!Number.isSafeInteger(offset) || offset < 0)
+      throw new TypeError('Interval offsets must be nonnegative safe integers.');
+    return Object.freeze({ bound, offset, unit: value.unit });
+  }
+  if ((units === 'ROWS' ? !Number.isSafeInteger(offset) : !Number.isFinite(offset)) || offset < 0)
+    throw new TypeError(
+      `${units} offsets must be nonnegative ${units === 'ROWS' ? 'safe integers' : 'finite numbers'}.`,
+    );
+  return Object.freeze({ bound, offset });
+}
+function windowFrame(
+  units: WindowFrameNode['units'],
+  startValue: RangeBoundary,
+  endValue: RangeBoundary,
+): WindowFrame {
+  const start = frameBoundary(units, startValue);
+  const end = frameBoundary(units, endValue);
+  const first = bounds.indexOf(start.bound);
+  const last = bounds.indexOf(end.bound);
+  const from = start.offset ?? 0;
+  const to = end.offset ?? 0;
+  if (
+    start.bound === 'UNBOUNDED FOLLOWING' ||
+    end.bound === 'UNBOUNDED PRECEDING' ||
+    first > last ||
+    (first === last &&
+      start.unit === end.unit &&
+      (start.bound === 'PRECEDING' ? from < to : from > to))
+  )
+    throw new TypeError('A window frame cannot start after it ends.');
+  if (
+    start.offset !== undefined &&
+    end.offset !== undefined &&
+    (start.unit === undefined) !== (end.unit === undefined)
+  )
+    throw new TypeError('A RANGE frame cannot mix numeric and interval offsets.');
+  return Object.freeze({ ast: Object.freeze({ units, start, end }) });
+}
+export function rowsBetween<
+  const Start extends Exclude<FrameBoundary, 'UNBOUNDED FOLLOWING'>,
+  const End extends FrameEnd<FrameBoundary, Start>,
+>(start: Start, end: End): WindowFrame<false> {
+  return windowFrame('ROWS', start, end) as WindowFrame<false>;
+}
+export function rangeBetween<
+  const Start extends Exclude<RangeBoundary, 'UNBOUNDED FOLLOWING'>,
+  const End extends FrameEnd<RangeBoundary, Start>,
+>(start: Start, end: End): WindowFrame<[Start | End] extends [string] ? false : true> {
+  return windowFrame('RANGE', start, end) as WindowFrame<
+    [Start | End] extends [string] ? false : true
+  >;
+}
+const numericOrder: readonly (WireType | undefined)[] = ['integer', 'decimal', 'float', 'date'];
+const temporalOrder: readonly (WireType | undefined)[] = [
+  'date',
+  'timestamp_ntz',
+  'timestamp_ltz',
+  'timestamp_tz',
+];
 export function over<E extends AnyExpression, S extends string>(
   value: E,
-  options: WindowOptions<S> = {},
+  options: FramedWindowOptions<S> = {},
 ): Expression<InferExpression<E>, ExpressionScope<E> | S, never> {
   const partition = options.partitionBy ?? [];
-  const orders = options.orderBy ?? [];
+  const orders: readonly Ordering<S>[] = options.orderBy ?? [];
+  const frame = options.frame?.ast;
+  if (frame) {
+    if (value.phase !== 'aggregate')
+      throw new TypeError(
+        'Window frames require an aggregate function; ranking functions do not accept frames.',
+      );
+    if (!orders.length) throw new TypeError('Window frames require ORDER BY.');
+    const offsets = [frame.start, frame.end].filter((item) => item.offset !== undefined);
+    const interval = offsets.some((item) => item.unit !== undefined);
+    if (
+      frame.units === 'RANGE' &&
+      offsets.length &&
+      (orders.length > 1 ||
+        !(interval ? temporalOrder : numericOrder).includes(orders[0]?.value.wireType))
+    )
+      throw new TypeError(
+        interval
+          ? 'Interval RANGE offsets require one date or timestamp ORDER BY expression.'
+          : 'Numeric RANGE offsets require one numeric or date ORDER BY expression.',
+      );
+  }
   return expression(
     {
       kind: 'window',
       value: value.expression,
       partitionBy: Object.freeze(partition.map((item) => item.expression)),
       orderBy: Object.freeze(orders.map((item) => item.ast)),
+      ...(frame ? { frame } : {}),
     },
     value.readSchema,
     {
