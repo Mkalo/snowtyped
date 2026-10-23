@@ -1,7 +1,9 @@
 import { expectTypeOf } from 'vitest';
 import {
   alias,
+  binary,
   count,
+  decimal,
   eq,
   flatten,
   insert,
@@ -11,6 +13,8 @@ import {
   snowflakeTable,
   sql,
   text,
+  time,
+  timestamp,
   update,
   variant,
 } from '../../src/index.js';
@@ -92,3 +96,32 @@ insert(users, { id: 1n, name: 'Ada', data: {}, missing: true });
 update(users, { missing: true });
 // @ts-expect-error Update expressions must refer to the mutation's table.
 update(users, { id: other.columns.id });
+const constrained = snowflakeTable('CONSTRAINED', {
+  id: integer('ID', { precision: 10 }).notNull(),
+  amount: decimal('AMOUNT', { precision: 12, scale: 2 }).notNull(),
+  code: text('CODE', { length: 3 }),
+  data: binary('DATA', { length: 16 }),
+  clock: time('CLOCK', { precision: 3 }),
+  at: timestamp('AT', 'tz', { precision: 6 }),
+});
+expectTypeOf(db.execute(select(constrained)))
+  .resolves.toHaveProperty('rows')
+  .toEqualTypeOf<
+    readonly {
+      readonly id: bigint;
+      readonly amount: string;
+      readonly code: string | null;
+      readonly data: Uint8Array | null;
+      readonly clock: string | null;
+      readonly at: string | null;
+    }[]
+  >();
+expectTypeOf(constrained.columns.amount.constraints.scale).toEqualTypeOf<number | undefined>();
+// @ts-expect-error Length is a text or binary constraint, not a numeric one.
+integer('ID', { length: 3 });
+// @ts-expect-error Integers always have scale 0; declare a decimal for a nonzero scale.
+integer('ID', { scale: 2 });
+// @ts-expect-error Precision is not a VARCHAR constraint.
+text('NAME', { precision: 3 });
+// @ts-expect-error Constraint values are numbers.
+decimal('AMOUNT', { precision: '12' });

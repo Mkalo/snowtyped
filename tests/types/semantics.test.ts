@@ -50,6 +50,9 @@ const c = t.columns;
 
 expectTypeOf(c.tz.dataType).toEqualTypeOf<'timestamp_tz'>();
 expectTypeOf(c.ntz.dataType).toEqualTypeOf<'timestamp_ntz'>();
+expectTypeOf(timestamp('AT', 'ltz', { precision: 3 }).dataType).toEqualTypeOf<'timestamp_ltz'>();
+expectTypeOf(text('CODE', { length: 4 }).notNull().dataType).toEqualTypeOf<'text'>();
+expectTypeOf(decimal('PRICE', { precision: 10, scale: 2 }).dataType).toEqualTypeOf<'decimal'>();
 expectTypeOf(c.name.notNull().dataType).toEqualTypeOf<'text'>();
 expectTypeOf(sum(c.id).dataType).toEqualTypeOf<'decimal'>();
 expectTypeOf(sum(c.ratio).dataType).toEqualTypeOf<'float'>();

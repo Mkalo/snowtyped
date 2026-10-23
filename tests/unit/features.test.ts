@@ -217,9 +217,28 @@ describe('composable expressions and clauses', () => {
       .orderBy(desc(a.columns.name, 'LAST'), asc(lower(a.columns.name)))
       .compile();
     expect(query.sql).toBe(
-      'SELECT "NAME" AS "name" FROM "A" WHERE ("ID" = ?) ORDER BY "name" DESC NULLS LAST, LOWER("NAME") ASC',
+      'SELECT "NAME" AS "name" FROM "A" WHERE ("ID" = ?) ORDER BY "name" DESC NULLS LAST, LOWER("A"."NAME") ASC',
     );
     expect(query.binds).toEqual(['1']);
+  });
+
+  it('qualifies unprojected ORDER BY columns so projection aliases cannot capture them', () => {
+    expect(
+      select(a, { NAME: lower(a.columns.name) })
+        .orderBy(asc(a.columns.name), desc(rowNumber({ orderBy: [asc(a.columns.name)] })))
+        .compile().sql,
+    ).toBe(
+      'SELECT LOWER("NAME") AS "NAME" FROM "A" ORDER BY "A"."NAME" ASC, ROW_NUMBER() OVER (ORDER BY "A"."NAME" ASC) DESC',
+    );
+    const x = alias(a, 'X');
+    expect(
+      select(x, { ID: lower(x.columns.name) })
+        .orderBy(asc(x.columns.id))
+        .compile().sql,
+    ).toBe('SELECT LOWER("NAME") AS "ID" FROM "A" AS "X" ORDER BY "X"."ID" ASC');
+    expect(select(x, { NAME: x.columns.id }).orderBy(asc(x.columns.name)).compile().sql).toContain(
+      '"NAME" AS "__sflib_order_0" FROM "A" AS "X" ORDER BY "__sflib_order_0" ASC',
+    );
   });
 });
 

@@ -361,10 +361,11 @@ export function compileAst(statement: StatementNode): CompiledQuery {
     if (node.having) text += ` HAVING ${expression(node.having, qualified)}`;
     if (node.qualify) text += ` QUALIFY ${expression(node.qualify, qualified)}`;
     if (node.orderBy?.length) {
-      // Ordering by the alias keeps projected window functions over aggregates valid in grouped queries.
+      // Projected expressions order by alias (windows over aggregates are invalid repeated here);
+      // the rest are qualified because ORDER BY resolves bare names to aliases before columns.
       const ordering = node.orderBy.map((value) => {
         const projected = projectionOf(node, value.expression);
-        return order(value, qualified, projected && quoteIdentifier(identifier(projected.alias)));
+        return order(value, true, projected && quoteIdentifier(identifier(projected.alias)));
       });
       text += ` ORDER BY ${ordering.join(', ')}`;
     }

@@ -4,6 +4,7 @@ description: Declare Snowflake tables once and get result types and runtime vali
 ---
 
 import Snippet from '../../../components/Snippet.astro';
+import constraints from '../../../snippets/constraints.ts?raw';
 import schema from '../../../snippets/schema.ts?raw';
 import variantShape from '../../../snippets/variant-shape.ts?raw';
 
@@ -18,8 +19,8 @@ interfaces or decoders.
 - Each column builder takes the exact physical column name. Names are quoted, so case and
   punctuation are preserved.
 - Columns are nullable by default. `.notNull()` removes `null` from the inferred type.
-- Declarations should match the physical schema. Numeric precision and scale and other database
-  constraints remain enforced by Snowflake.
+- Declarations should match the physical schema. Declared precision, scale, and length are checked
+  by Snowtyped; other database constraints remain enforced by Snowflake.
 
 ## Column types
 
@@ -38,6 +39,17 @@ interfaces or decoders.
 
 See [validation and representations](/guides/validation/) for why numbers and temporal values use
 these representations.
+
+## Precision, scale, and length
+
+Declare the physical constraints of a column so values that would not fit are rejected instead of
+being rounded or truncated by Snowflake.
+
+<Snippet code={constraints} />
+
+INSERT, UPDATE, and MERGE values and decoded results are rejected when they do not fit, including
+extra scale or fractional seconds. Zeros that do not change the value are accepted. VARCHAR length
+counts code points and BINARY length counts bytes. Predicate literals are not constrained.
 
 ## Structured VARIANT columns
 

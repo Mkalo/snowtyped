@@ -76,7 +76,7 @@ function entries(table: Table, values: Readonly<Record<string, unknown>>, refs =
       }
       return Object.freeze({
         column: column.node,
-        value: isExpression(value) ? value.expression : column.encode(value),
+        value: isExpression(value) ? value.expression : column.encodeWrite(value),
       });
     }),
   );
@@ -97,7 +97,7 @@ export function insert<C extends ColumnMap>(
     return Object.freeze(
       keys.map((key) => {
         const column = table.columns[key] as AnyColumn;
-        return column.encode(Object.hasOwn(row, key) ? row[key] : null);
+        return column.encodeWrite(Object.hasOwn(row, key) ? row[key] : null);
       }),
     );
   });
