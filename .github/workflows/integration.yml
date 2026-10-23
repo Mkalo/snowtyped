@@ -32,12 +32,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Vitest starts the files that took longest last time first; without these results it guesses by file size.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: node_modules/.vite/vitest
-          key: vitest-integration-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: vitest-integration-
       - name: Write test service key
         shell: bash
         env:
