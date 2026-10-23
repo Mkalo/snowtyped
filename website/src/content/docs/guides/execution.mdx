@@ -16,7 +16,8 @@ implicit query retries are performed.
 
 ## Cancellation and deadlines
 
-`execute`, `stream`, and `streamRaw` accept `{ signal, timeoutMs }`.
+`execute`, `queryRaw`, `stream`, and `streamRaw` accept `{ signal, timeoutMs }`. Pass them to
+`queryRaw` as the second argument after a `sql` fragment.
 
 <Snippet code={executeOptions} />
 

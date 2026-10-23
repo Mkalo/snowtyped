@@ -109,6 +109,52 @@ describe('SDK-backed pool leases', () => {
     await other.close();
   });
 
+  it('rejects aborted calls before leasing and releases only after cancellation completes', async () => {
+    const driver = fakePool();
+    const db = await createPool({});
+    const controller = new AbortController();
+    expect(
+      await db.queryRaw<{ ID: string }[]>(sql`SELECT 1`, {
+        signal: controller.signal,
+        timeoutMs: 1000,
+      }),
+    ).toEqual([{ ID: '1' }]);
+    expect(driver.release).toHaveBeenCalledOnce();
+    const reason = new Error('stop');
+    controller.abort(reason);
+    await expect(db.queryRaw(sql`SELECT 1`, { signal: controller.signal })).rejects.toBe(reason);
+    await expect(db.execute(select(table), { signal: controller.signal })).rejects.toBe(reason);
+    await expect(async () => {
+      for await (const _row of db.stream(select(table), { signal: controller.signal })) {
+        /* consume */
+      }
+    }).rejects.toBe(reason);
+    await expect(async () => {
+      for await (const _row of db.streamRaw(sql`SELECT 1`, { signal: controller.signal })) {
+        /* consume */
+      }
+    }).rejects.toBe(reason);
+    expect(driver.acquire).toHaveBeenCalledOnce();
+    expect(driver.release).toHaveBeenCalledOnce();
+    let cancelled: ((error?: SnowflakeError) => void) | undefined;
+    const statement = {
+      cancel: vi.fn((callback?: (error?: SnowflakeError) => void) => {
+        cancelled = callback;
+      }),
+    } as unknown as RowStatement;
+    const connection = await driver.acquire();
+    connection.execute.mockImplementation(() => statement);
+    const pending = db.queryRaw(sql`SELECT SYSTEM$WAIT(10)`, { timeoutMs: 1 });
+    await vi.waitFor(() => expect(statement.cancel).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(driver.release).toHaveBeenCalledOnce();
+    cancelled?.();
+    await expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(driver.release).toHaveBeenCalledTimes(2);
+    await db.close();
+    await expect(db.queryRaw(sql`SELECT 1`, { timeoutMs: 1000 })).rejects.toThrow('closed');
+  });
+
   it('destroys the lease instead of releasing it when ROLLBACK fails', async () => {
     const rollback = new Error('rollback failed');
     const driver = fakePool(undefined, { ROLLBACK: rollback });

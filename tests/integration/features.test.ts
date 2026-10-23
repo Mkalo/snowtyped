@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import {
   alias,
@@ -356,6 +356,50 @@ describe('complete query and execution paths against Snowflake', () => {
         /* consume */
       }
     }).rejects.toThrow();
+  });
+
+  it('cancels live buffered raw queries on deadline and abort', async () => {
+    const cancelled = sql`
+      SELECT QUERY_TEXT, ERROR_CODE
+      FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION())
+      WHERE QUERY_TEXT LIKE 'SELECT SYSTEM$WAIT(10) AS RAW!_%' ESCAPE '!'
+      ORDER BY QUERY_TEXT
+    `;
+    const started = Date.now();
+    await expect(
+      db.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_DEADLINE`, { timeoutMs: 1_000 }),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    const controller = new AbortController();
+    const reason = new Error('live abort');
+    const pending = db.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_ABORT`, {
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(reason), 1_000);
+    await expect(pending).rejects.toBe(reason);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    await vi.waitFor(
+      async () =>
+        expect(await db.queryRaw(cancelled)).toEqual([
+          { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_ABORT', ERROR_CODE: '604' },
+          { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_DEADLINE', ERROR_CODE: '604' },
+        ]),
+      { timeout: 8_000, interval: 500 },
+    );
+    const pool = await createPool(integrationConfig(), { max: 1 });
+    try {
+      await expect(
+        pool.queryRaw(sql`SELECT SYSTEM$WAIT(10) AS RAW_POOLED`, { timeoutMs: 1_000 }),
+      ).rejects.toMatchObject({ name: 'TimeoutError' });
+      await vi.waitFor(
+        async () =>
+          expect(await pool.queryRaw(cancelled)).toEqual([
+            { QUERY_TEXT: 'SELECT SYSTEM$WAIT(10) AS RAW_POOLED', ERROR_CODE: '604' },
+          ]),
+        { timeout: 8_000, interval: 500 },
+      );
+    } finally {
+      await pool.close();
+    }
   });
 
   it('commits and rolls back DML on a pinned session', async () => {
