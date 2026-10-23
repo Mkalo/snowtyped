@@ -144,6 +144,30 @@ const monthly = unpivot(budget, 'monthly', { value: 'amount', for: 'month', in: 
 
 `pivot` groups by every other source column; narrow the source with `.as()` first. Pivoted columns are nullable unless `aggregate` is `count` or a `default` is given, and `in` values are rendered as escaped literals because Snowflake does not accept binds there. `unpivot` requires same-typed columns (Snowflake also rejects differing NUMBER scale or timestamp precision), types `for` as the union of their keys, and drops nulls unless `includeNulls` is set. `dynamicPivot` compiles `IN (ANY)` to a raw query with `unknown` rows, since its columns are only known at execution.
 
+### MATCH_RECOGNIZE
+
+```ts
+const { variable, sequence, oneOrMore } = rowPattern;
+const vShapes = matchRecognize(stocks, 'V', {
+  partitionBy: ['company'],
+  orderBy: (row) => [asc(row.day)],
+  pattern: sequence(variable('start'), oneOrMore(variable('down')), oneOrMore(variable('up'))),
+  define: ({ row, lag }) => ({
+    down: lt(row.price, lag(row.price)),
+    up: gt(row.price, lag(row.price)),
+  }),
+  measures: ({ row, vars, first, last, matchNumber, classifier }) => ({
+    match: matchNumber(),
+    startDay: first(row.day),
+    bottomDay: last(vars.down.day),
+    kind: classifier(),
+  }),
+});
+const rows = await db.execute(select(vShapes).where(eq(vShapes.columns.kind, 'up')));
+```
+
+`matchRecognize` returns a table source that can be selected, joined, or derived further. Pattern variables come from the pattern, so `define`, `vars`, `count(variable)`, `classifier()`, and `afterMatch` only accept those names. `define` sees the classified row with `lag`, `lead`, `next`, and `last`; `measures` also get variable-qualified columns, `prev`, `first`, `final`, `running`, `matchNumber`, and `matchSequenceNumber`. Inside the clause, columns are named by their source keys. `rowsPerMatch` is `'one'` (partition keys plus measures), `'all'`, `'all-omit-empty'`, or `'all-with-unmatched'` (all source keys plus measures). Measures become nullable when unmatched rows or empty matches can appear. In ALL ROWS PER MATCH, wrap `first`/`last` of variable columns in `final`.
+
 `timeTravel(table, { offset: -60 })`, `{ timestamp: '...' }`, or `{ statement: '...' }` adds a bound AT selector. Pass `'BEFORE'` as the third argument for BEFORE semantics. Timestamps are cast to `TIMESTAMP_TZ`, so an explicit offset (`2026-10-22T15:00:00-07:00`) is honored and a string without one is read in the session `TIMEZONE`. Database retention and supported selector rules still apply.
 
 ## Writes
@@ -235,7 +259,7 @@ Await running operations and close cursors before starting a transaction on a si
 
 ## Scope and distribution
 
-The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. MATCH_RECOGNIZE, complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
+The first-class API covers the operations above; the AST layer (`compileAst`, `identifier`, `quoteIdentifier`, and `*Node` types) is experimental. Complex nested relation projections, migrations, DDL builders, and ORM relation loading are not first-class APIs in this alpha. Raw SQL can execute Snowflake syntax beyond the modeled builder surface. A public third-party AST registration protocol is not implemented.
 
 ESM/CJS conditional exports have matching `.d.mts`/`.d.cts` files. Sources and source maps are shipped for debugging; tests, credentials, and development scripts are excluded. `sideEffects: false` enables tree shaking. Zod is a runtime dependency; `snowflake-sdk` is an optional peer loaded only when creating an SDK pool, or by your application's connection setup. Pure compiler imports do not load the driver or retain unused validation code.
 

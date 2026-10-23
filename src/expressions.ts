@@ -28,7 +28,12 @@ export interface Expression<
 }
 export type AnyExpression = Expression<unknown, string, string>;
 export type InferExpression<E> = E extends Expression<infer T, string, string> ? T : never;
-export type ExpressionScope<E> = E extends Expression<unknown, infer S, string> ? S : never;
+// Non-distributive: a literal argument would otherwise widen the scope of comparisons to string.
+export type ExpressionScope<E> = [E] extends [never]
+  ? never
+  : [E] extends [Expression<unknown, infer S, string>]
+    ? S
+    : never;
 export type ExpressionNullScope<E> = E extends Expression<unknown, string, infer S> ? S : never;
 export type Predicate<S extends string = string> = Expression<boolean | null, S>;
 
