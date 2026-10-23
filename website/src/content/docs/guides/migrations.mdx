@@ -75,9 +75,10 @@ does not fit. Other changes, such as a new NUMBER scale or a NOT NULL column on 
 are listed under `unsupported` for a hand-written migration. So are identity columns on an existing
 table, which Snowflake adds only to empty tables, non-constant defaults, which it accepts only at
 table creation, and any change between no server value, a default, identity, and a virtual
-expression. Identity start, increment, and order are compared when declared. Constant defaults
-compare by value, since Snowflake normalizes numbers and string escapes and records `DEFAULT NULL` as
-no default; a changed constant is listed under `unsupported`. Other default and virtual
+expression. Identity start, increment, and order are compared when declared. A constant default is
+a number (`.5` and `5.` included), a string in single quotes (with `''` or backslash escapes) or
+`$$`, `TRUE`, `FALSE`, or `NULL`. Constant defaults compare by value, since Snowflake normalizes
+numbers and string escapes and records `DEFAULT NULL` as no default; a changed constant is listed under `unsupported`. Other default and virtual
 expressions are not compared, because Snowflake stores them rewritten. Renames are never inferred.
 
 `checkDrift` runs the same comparison while ignoring the history tables. `pushSchema` applies a diff

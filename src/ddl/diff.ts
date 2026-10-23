@@ -27,22 +27,26 @@ export interface SchemaDiff {
   readonly changes: readonly SchemaChange[];
   readonly unsupported: readonly UnsupportedChange[];
 }
-const constant = /^\s*(?:-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|'(?:[^']|'')*'|TRUE|FALSE|NULL)\s*$/i;
+const number = /^(-?)(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i;
+const constant =
+  /^\s*(?:-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?|'(?:[^'\\]|''|\\[\s\S])*'|\$\$(?:(?!\$\$)[\s\S])*\$\$|TRUE|FALSE|NULL)\s*$/i;
 const nullDefault = /^\s*NULL\s*$/i;
 const escapes: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', 0: '\0' };
 /** Decodes a Snowflake string literal, which Snowflake re-renders after resolving escapes. */
 function stringValue(literal: string): string {
+  if (literal.startsWith('$$')) return literal.slice(2, -2);
   return literal
     .slice(1, -1)
-    .replaceAll("''", "'")
     .replace(
-      /\\(?:([0-7]{3})|x([0-9a-f]{2})|u([0-9a-f]{4})|([\s\S]))/gi,
-      (_, octal, hex, unicode, char) =>
-        octal
-          ? String.fromCharCode(Number.parseInt(octal, 8))
-          : hex || unicode
-            ? String.fromCharCode(Number.parseInt(hex ?? unicode, 16))
-            : (escapes[char] ?? char),
+      /''|\\(?:([0-7]{3})|x([0-9a-f]{2})|u([0-9a-f]{4})|([\s\S]))/gi,
+      (match, octal, hex, unicode, char) =>
+        match === "''"
+          ? "'"
+          : octal
+            ? String.fromCharCode(Number.parseInt(octal, 8))
+            : hex || unicode
+              ? String.fromCharCode(Number.parseInt(hex ?? unicode, 16))
+              : (escapes[char] ?? char),
     );
 }
 /**
@@ -52,9 +56,9 @@ function stringValue(literal: string): string {
 function constantValue(expression: string): string | undefined {
   if (!constant.test(expression)) return undefined;
   const text = expression.trim();
-  const number = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text);
-  if (!number) return text.startsWith("'") ? JSON.stringify(stringValue(text)) : text.toUpperCase();
-  const [, sign, whole, fraction = '', exponent = '0'] = number;
+  const parts = number.exec(text);
+  if (!parts) return /^['$]/.test(text) ? JSON.stringify(stringValue(text)) : text.toUpperCase();
+  const [, sign, whole, fraction = '', exponent = '0'] = parts;
   const digits = `${whole}${fraction}`.replace(/^0+/, '');
   if (!digits) return '0';
   const significant = digits.replace(/0+$/, '');
