@@ -44,7 +44,8 @@ describe('SDK-backed pool leases', () => {
     expect((await db.execute(insert(table, { id: 1n }))).affectedRows).toBe(1);
     expect(await db.queryRaw`SELECT 1`).toEqual([{ ID: '1' }]);
     expect(await db.queryRaw(sql`SELECT 1`)).toEqual([{ ID: '1' }]);
-    expect(driver.release).toHaveBeenCalledTimes(4);
+    expect((await db.execute(select(table).union(select(table)))).rows).toEqual([{ id: 1n }]);
+    expect(driver.release).toHaveBeenCalledTimes(5);
     await db.close();
     await db.close();
     expect(driver.drain).toHaveBeenCalledOnce();
@@ -65,6 +66,10 @@ describe('SDK-backed pool leases', () => {
     for await (const row of db.streamRaw<{ ID: string }>(sql`SELECT 1`)) rows.push(row);
     expect(rows).toEqual([{ ID: '1' }]);
     expect(driver.release).toHaveBeenCalledTimes(2);
+    const combined = [];
+    for await (const row of db.stream(select(table).except(select(table)))) combined.push(row);
+    expect(combined).toEqual([{ id: 1n }]);
+    expect(driver.release).toHaveBeenCalledTimes(3);
     await db.close();
     await expect(async () => {
       for await (const _row of db.stream(select(table))) {

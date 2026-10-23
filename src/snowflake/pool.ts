@@ -1,6 +1,6 @@
 import type { ConnectionOptions } from 'snowflake-sdk';
 import type { MutationQuery } from '../mutations.js';
-import type { SelectQuery } from '../query.js';
+import type { SelectQuery, SetQuery } from '../query.js';
 import type { Selection } from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation } from '../sql.js';
 import { createClient, type SnowflakeClient } from './client.js';
@@ -38,13 +38,18 @@ export async function createPool(
   }
   return Object.freeze({
     execute: (
-      query: SelectQuery<Selection, string, string> | MutationQuery,
+      query:
+        | SelectQuery<Selection, string, string>
+        | SetQuery<Record<string, unknown>>
+        | MutationQuery,
       executeOptions?: ExecuteOptions,
     ) =>
       use<unknown>((client) =>
         query.kind === 'select'
           ? client.execute(query, executeOptions)
-          : client.execute(query, executeOptions),
+          : query.kind === 'set'
+            ? client.execute(query, executeOptions)
+            : client.execute(query, executeOptions),
       ),
     queryRaw<T = unknown>(
       input: TemplateStringsArray | RawQuery<T>,
@@ -56,11 +61,17 @@ export async function createPool(
           : client.queryRaw<T>(input, ...values),
       );
     },
-    async *stream(query: SelectQuery<Selection, string, string>, executeOptions?: ExecuteOptions) {
+    async *stream(
+      query: SelectQuery<Selection, string, string> | SetQuery<Record<string, unknown>>,
+      executeOptions?: ExecuteOptions,
+    ) {
       check();
       const connection = await pool.acquire();
       try {
-        yield* createClient(connection).stream(query, executeOptions);
+        const client = createClient(connection);
+        yield* query.kind === 'select'
+          ? client.stream(query, executeOptions)
+          : client.stream(query, executeOptions);
       } finally {
         await pool.release(connection);
       }
