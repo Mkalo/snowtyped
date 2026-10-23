@@ -56,7 +56,19 @@ export {
   sum,
   upper,
 } from './expressions.js';
-export { add, avg, type CastType, type CastValue, cast, div, mul, sub } from './functions.js';
+export {
+  add,
+  avg,
+  type CaseExpression,
+  type CastType,
+  type CastValue,
+  caseWhen,
+  cast,
+  coalesce,
+  div,
+  mul,
+  sub,
+} from './functions.js';
 export {
   generateSchema,
   type IntrospectedColumn,

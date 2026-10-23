@@ -3,14 +3,19 @@ import {
   add,
   asc,
   avg,
+  caseWhen,
   cast,
+  coalesce,
   count,
   date,
   decimal,
   div,
+  eq,
   float,
+  gt,
   insert,
   integer,
+  isNull,
   mul,
   select,
   snowflakeTable,
@@ -205,5 +210,39 @@ describe('typed expression helpers against Snowflake', () => {
         maybe: '9.5000',
       },
     ]);
+  });
+
+  it('evaluates COALESCE and CASE with typed fallbacks', async () => {
+    const query = select(metrics, {
+      note: coalesce(m.note, 'none'),
+      bonus: coalesce(m.bonus, '0.5'),
+      either: coalesce(m.bonus, m.price),
+      tier: caseWhen(gt(m.qty, 100n), 'huge').when(gt(m.qty, 5n), 'mid').else('small'),
+      level: caseWhen(gt(m.ratio, 1), m.price).else('0'),
+      open: caseWhen(isNull(m.note), 1n),
+    }).orderBy(asc(m.id));
+    expect((await db.execute(query)).rows).toEqual([
+      {
+        note: ' x ',
+        bonus: '0.5000',
+        either: '10.5000',
+        tier: 'huge',
+        level: '0.0000',
+        open: null,
+      },
+      { note: 'none', bonus: '1.0000', either: '1.0000', tier: 'small', level: '2.2500', open: 1n },
+      {
+        note: 'hello',
+        bonus: '2.5000',
+        either: '2.5000',
+        tier: 'mid',
+        level: '0.0001',
+        open: null,
+      },
+    ]);
+    const total = select(metrics, {
+      total: sum(caseWhen(eq(m.grp, 'a'), m.qty).else(0n)),
+    });
+    expect((await db.execute(total)).rows).toEqual([{ total: '9007199254740996' }]);
   });
 });

@@ -56,6 +56,11 @@ export interface FunctionNode {
   readonly args: readonly ExpressionNode[];
   readonly distinct?: boolean;
 }
+export interface CaseNode {
+  readonly kind: 'case';
+  readonly branches: readonly { readonly when: ExpressionNode; readonly result: ExpressionNode }[];
+  readonly otherwise?: ExpressionNode;
+}
 export interface InNode {
   readonly kind: 'in';
   readonly operand: ExpressionNode;
@@ -96,6 +101,7 @@ export type ExpressionNode =
   | LogicalNode
   | UnaryNode
   | FunctionNode
+  | CaseNode
   | InNode
   | WindowNode
   | JsonPathNode
@@ -245,6 +251,8 @@ export function compileAst(statement: StatementNode): CompiledQuery {
           : `(${expression(node.operand, qualify)} ${node.operator})`;
       case 'function':
         return `${node.name}(${node.distinct ? 'DISTINCT ' : ''}${node.args.length ? node.args.map((arg) => expression(arg, qualify)).join(', ') : node.name === 'COUNT' ? '*' : ''})`;
+      case 'case':
+        return `CASE ${node.branches.map((branch) => `WHEN ${expression(branch.when, qualify)} THEN ${expression(branch.result, qualify)}`).join(' ')}${node.otherwise ? ` ELSE ${expression(node.otherwise, qualify)}` : ''} END`;
       case 'in':
         return node.values.length === 0
           ? node.negate

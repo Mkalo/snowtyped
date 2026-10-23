@@ -3,13 +3,17 @@ import {
   add,
   avg,
   boolean,
+  caseWhen,
   cast,
+  coalesce,
   decimal,
   div,
   eq,
   float,
+  gt,
   type InferSelection,
   integer,
+  isNull,
   jsonPath,
   mul,
   select,
@@ -101,3 +105,44 @@ add(id, active);
 avg(active);
 // @ts-expect-error Arithmetic keeps its source scope.
 select(owners, { value: add(owners.columns.id, id) });
+
+const fallback = select(accounts, {
+  code: coalesce(code, 'none'),
+  maybe: coalesce(code, code),
+  balance: coalesce(bonus, balance),
+  tier: caseWhen(gt(id, 10n), 'big').when(gt(id, 5n), 'mid').else('small'),
+  open: caseWhen(gt(id, 10n), 1n),
+  amount: caseWhen(eq(active, true), bonus).else(balance),
+});
+expectTypeOf<InferSelection<typeof fallback.selection>>().toEqualTypeOf<{
+  readonly code: string;
+  readonly maybe: string | null;
+  readonly balance: string;
+  readonly tier: string;
+  readonly open: bigint | null;
+  readonly amount: string | null;
+}>();
+const joinedFallback = select(accounts)
+  .leftJoin(owners, eq(accounts.columns.id, owners.columns.id))
+  .select({
+    guarded: coalesce(owners.columns.id, 0n),
+    either: coalesce(owners.columns.id, id),
+    label: caseWhen(isNull(owners.columns.id), 'none').else('owned'),
+    owner: caseWhen(gt(id, 1n), owners.columns.id).else(0n),
+  });
+expectTypeOf<InferSelection<typeof joinedFallback.selection, 'OWNERS'>>().toEqualTypeOf<{
+  readonly guarded: bigint;
+  readonly either: bigint | null;
+  readonly label: string;
+  readonly owner: bigint | null;
+}>();
+// @ts-expect-error COALESCE values share one representation.
+coalesce(id, '0');
+// @ts-expect-error COALESCE needs a fallback value.
+coalesce(id);
+// @ts-expect-error CASE results share one representation.
+caseWhen(gt(id, 1n), 'x').else(1n);
+// @ts-expect-error CASE conditions must be predicates.
+caseWhen(id, 'x');
+// @ts-expect-error CASE keeps the scope of its conditions.
+select(owners, { value: caseWhen(gt(id, 1n), 'x').else('y') });

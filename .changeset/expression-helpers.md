@@ -2,4 +2,4 @@
 "snowtyped": minor
 ---
 
-Add typed `cast`, `avg`, and `add`/`sub`/`mul`/`div` expressions with Snowflake result domains.
+Add typed `cast`, `avg`, `add`/`sub`/`mul`/`div`, `coalesce`, and `caseWhen` expressions with Snowflake result domains.

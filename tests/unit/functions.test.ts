@@ -2,16 +2,21 @@ import { describe, expect, it } from 'vitest';
 import {
   add,
   avg,
+  binary,
   boolean,
+  caseWhen,
   cast,
+  coalesce,
   count,
   date,
   decimal,
   div,
   eq,
   float,
+  gt,
   inArray,
   integer,
+  isNull,
   jsonPath,
   mul,
   select,
@@ -35,9 +40,10 @@ const t = snowflakeTable('T', {
   at: timestamp('AT_VALUE'),
   flag: boolean('FLAG'),
   json: variant('JSON').notNull(),
+  data: binary('DATA'),
 });
 const o = snowflakeTable('O', { id: integer('ID').notNull(), name: text('NAME').notNull() });
-const { id, name, label, amount, price, ratio, day, at, json } = t.columns;
+const { id, name, label, amount, price, ratio, day, at, flag, json, data } = t.columns;
 
 describe('typed casts', () => {
   it('compiles every target and decodes the target domain', () => {
@@ -214,5 +220,94 @@ describe('averages and arithmetic', () => {
     expect(() => avg(day)).toThrow('Numeric helpers');
     expect(() => add(amount, `0.${'1'.repeat(38)}`)).toThrow('37 fractional digits');
     expect(() => add(id, 1 as never)).toThrow();
+  });
+});
+
+describe('COALESCE and CASE', () => {
+  it('derives COALESCE domains, nullability, and typed literal fallbacks', () => {
+    const selection = {
+      text: coalesce(name, label),
+      literal: coalesce(name, 'x'),
+      decimal: coalesce(price, '0'),
+      maybe: coalesce(name, name),
+      bool: coalesce(flag, false),
+      bytes: coalesce(data, new Uint8Array([1])),
+      json: coalesce(jsonPath(json, 'a'), '1'),
+      variant: coalesce(json, { a: 1 }),
+    };
+    const compiled = select(t, selection).compile();
+    expect(compiled.sql).toContain('COALESCE("NAME", "LABEL")');
+    expect(compiled.sql).toContain('COALESCE("PRICE", CAST(? AS NUMBER(38,0)))');
+    expect(compiled.sql).toContain('COALESCE("DATA", TO_BINARY(?, ?))');
+    expect(compiled.binds).toEqual(['x', '0', false, '01', 'HEX', 'a', 1, '{"a":1}']);
+    expect(selection.decimal.wireType).toBe('decimal');
+    expect(selection.text.readSchema.safeParse(null).success).toBe(false);
+    expect(selection.literal.readSchema.safeParse(null).success).toBe(false);
+    expect(selection.maybe.readSchema.parse(null)).toBeNull();
+    expect(select(t).where(eq(selection.decimal, '1.5')).compile().binds).toEqual(['0', '1.5']);
+    expect(inArray(selection.maybe, [null]).expression).toMatchObject({
+      values: [{ kind: 'parameter', value: null }],
+    });
+    const joined = select(t)
+      .leftJoin(o, eq(t.columns.id, o.columns.id))
+      .select({
+        guarded: coalesce(o.columns.name, 'x'),
+        counted: coalesce(o.columns.id, count()),
+        either: coalesce(o.columns.name, label),
+      });
+    expect(joined.selection.guarded.nullRefs).toEqual([]);
+    expect(joined.selection.counted.nullRefs).toEqual([]);
+    expect(joined.selection.either.nullRefs).toEqual([o.ref, t.ref]);
+    expect(
+      resultSchema(joined.selection, joined.nullableSources).safeParse({
+        guarded: null,
+        counted: '1',
+        either: null,
+      }).success,
+    ).toBe(false);
+    expect(coalesce(count(), id).phase).toBe('aggregate');
+    expect(() => coalesce(day, label)).toThrow('COALESCE values must share one SQL domain.');
+    expect(() => (coalesce as (value: unknown) => unknown)(name)).toThrow('at least two');
+    expect(() => coalesce(id, 'x' as never)).toThrow();
+  });
+
+  it('compiles searched CASE with ordered bindings and derived domains', () => {
+    const tier = caseWhen(gt(id, 10n), 'big').when(gt(id, 5n), 'mid').else('small');
+    expect(select(t, { tier }).compile()).toMatchObject({
+      sql: expect.stringContaining(
+        'CASE WHEN ("ID" > ?) THEN ? WHEN ("ID" > ?) THEN ? ELSE ? END AS "tier"',
+      ),
+      binds: ['10', 'big', '5', 'mid', 'small'],
+    });
+    expect(tier.wireType).toBeUndefined();
+    expect(tier.readSchema.safeParse(null).success).toBe(false);
+    const open = caseWhen(gt(id, 10n), 'big');
+    expect(open.readSchema.parse(null)).toBeNull();
+    expect(open.when(gt(id, 1n), 'small').readSchema.parse(null)).toBeNull();
+    const decimalCase = caseWhen(gt(id, 1n), amount).else('0');
+    expect(decimalCase.wireType).toBe('decimal');
+    expect(decimalCase.readSchema.safeParse(null).success).toBe(false);
+    expect(select(t, { v: decimalCase }).compile().sql).toContain(
+      'ELSE CAST(? AS NUMBER(38,0)) END',
+    );
+    const late = caseWhen(gt(id, 1n), 1n).else(id);
+    expect(late.wireType).toBe('integer');
+    expect(late.readSchema.parse('2')).toBe(2n);
+    expect(select(t, { v: late }).compile().sql).toContain(
+      'THEN CAST(? AS NUMBER(38,0)) ELSE "ID"',
+    );
+    expect(select(t, { v: caseWhen(gt(id, 1n), 1.5) }).compile().sql).toContain(
+      'THEN CAST(? AS DOUBLE) END',
+    );
+    expect(caseWhen(gt(id, 1n), true).else(false).readSchema.parse(true)).toBe(true);
+    expect(caseWhen(gt(id, 1n), price).else(amount).readSchema.parse(null)).toBeNull();
+    expect(caseWhen(gt(count(), 1n), 'many').phase).toBe('aggregate');
+    const scoped = caseWhen(isNull(o.columns.name), label).else('y');
+    expect(scoped.refs).toEqual([o.ref, t.ref]);
+    expect(scoped.nullRefs).toEqual([t.ref]);
+    expect(() => caseWhen(gt(id, 1n), day).else(label)).toThrow(
+      'CASE values must share one SQL domain.',
+    );
+    expect(() => caseWhen(gt(id, 1n), 'x').else(1n as never)).toThrow();
   });
 });

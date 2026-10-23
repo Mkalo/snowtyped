@@ -1,4 +1,5 @@
-import type { ArithmeticNode, CastNode, ExpressionNode } from './ast.js';
+import * as z from 'zod';
+import type { ArithmeticNode, CastNode, ExpressionNode, SourceReference } from './ast.js';
 import {
   type AnyExpression,
   type Expression,
@@ -47,6 +48,59 @@ export interface CastValue {
 }
 type NullOf<T> = null extends T ? null : never;
 type ValueOf<V> = V extends AnyExpression ? InferExpression<V> : V;
+type Same<E> = NoInfer<NonNullable<InferExpression<E>>>;
+type SameValue<E> = Same<E> | Expression<Same<E> | null, string, string>;
+type AllNullable<Vs extends readonly unknown[]> = Vs extends readonly [infer H, ...infer Rest]
+  ? H extends AnyExpression
+    ? null extends InferExpression<H>
+      ? AllNullable<Rest>
+      : never
+    : never
+  : null;
+type Certain<V> = V extends AnyExpression
+  ? null extends InferExpression<V>
+    ? false
+    : [ExpressionNullScope<V>] extends [never]
+      ? true
+      : false
+  : true;
+type GuardScope<V> = V extends AnyExpression
+  ? null extends InferExpression<V>
+    ? never
+    : ExpressionNullScope<V>
+  : never;
+type CoalesceScope<Vs extends readonly unknown[]> = true extends {
+  [K in keyof Vs]: Certain<Vs[K]>;
+}[number]
+  ? never
+  : { [K in keyof Vs]: GuardScope<Vs[K]> }[number];
+type Literal = string | bigint | number | boolean;
+type Widen<V> = V extends AnyExpression
+  ? InferExpression<V>
+  : V extends string
+    ? string
+    : V extends bigint
+      ? bigint
+      : V extends number
+        ? number
+        : V extends boolean
+          ? boolean
+          : never;
+type PredicateExpression = Expression<boolean | null, string, string>;
+export interface CaseExpression<T, S extends string, N extends string>
+  extends Expression<T | null, S, N> {
+  when<P extends PredicateExpression, V extends SameValue<Expression<T>>>(
+    predicate: P,
+    value: V,
+  ): CaseExpression<
+    T | Widen<V>,
+    S | ExpressionScope<P> | ExpressionScope<V>,
+    N | ExpressionNullScope<V>
+  >;
+  else<V extends SameValue<Expression<T>>>(
+    value: V,
+  ): Expression<T | Widen<V>, S | ExpressionScope<V>, N | ExpressionNullScope<V>>;
+}
 type Numeric = bigint | number | string;
 type NumericExpression = Expression<Numeric | null, string, string>;
 type Operand<L> = NoInfer<NonNullable<InferExpression<L>>> | NumericExpression;
@@ -80,18 +134,31 @@ const domains: Record<CastType, readonly [CastNode['target'], () => AnyColumn]> 
 function domain(type: CastType): AnyExpression {
   return domains[type][1]().notNull();
 }
+const literalTypes: Readonly<Record<string, CastType>> = {
+  string: 'text',
+  bigint: 'integer',
+  number: 'float',
+  boolean: 'boolean',
+};
 function nullable(value: AnyExpression): boolean {
   return value.wireType === 'variant' || value.readSchema.safeParse(null).success;
+}
+function strip(schema: z.ZodType): z.ZodType {
+  return schema instanceof z.ZodNullable ? strip(schema.unwrap() as z.ZodType) : schema;
+}
+function same(type: AnyExpression, values: readonly AnyExpression[], name: string): void {
+  if (values.some((value) => value.wireType !== type.wireType))
+    throw new TypeError(`${name} values must share one SQL domain.`);
 }
 function derive(
   node: ExpressionNode,
   output: AnyExpression,
   isNullable: boolean,
   values: readonly AnyExpression[],
-  options: { readonly phase?: 'aggregate' } = {},
+  options: { readonly nullRefs?: readonly SourceReference[]; readonly phase?: 'aggregate' } = {},
 ): AnyExpression {
-  const read = output.readSchema;
-  const value = output.valueSchema;
+  const read = strip(output.readSchema);
+  const value = strip(output.valueSchema);
   return expression(node, isNullable ? read.nullable() : read, {
     ...metadata(values),
     nullRefs: [...new Set(values.flatMap((item) => item.nullRefs))],
@@ -103,7 +170,13 @@ function derive(
 }
 function literal(type: AnyExpression, value: unknown): ExpressionNode {
   const node = type.encode(value);
-  if (node.kind !== 'parameter' || node.value === null) return node;
+  if (
+    node.kind !== 'parameter' ||
+    node.value === null ||
+    !type.wireType ||
+    type.wireType === 'variant'
+  )
+    return node;
   let target = domains[type.wireType as CastType][0];
   if (type.wireType === 'decimal') {
     const scale = String(node.value).split('.')[1]?.length ?? 0;
@@ -137,6 +210,40 @@ function arithmetic(
     values.some(nullable),
     values,
   );
+}
+function caseExpression(
+  branches: readonly (readonly [AnyExpression, unknown])[],
+  otherwise?: { readonly value: unknown },
+): AnyExpression {
+  const values = [...branches.map((branch) => branch[1]), ...(otherwise ? [otherwise.value] : [])];
+  const results = values.filter(isExpression);
+  const type = results[0] ?? domain(literalTypes[typeof values[0]] as CastType);
+  same(type, results, 'CASE');
+  const encode = (value: unknown) =>
+    isExpression(value) ? value.expression : literal(type, value);
+  return derive(
+    {
+      kind: 'case',
+      branches: Object.freeze(
+        branches.map(([when, result]) =>
+          Object.freeze({ when: when.expression, result: encode(result) }),
+        ),
+      ),
+      ...(otherwise ? { otherwise: encode(otherwise.value) } : {}),
+    },
+    type,
+    !otherwise || results.some(nullable),
+    [...branches.map((branch) => branch[0]), ...results],
+    { nullRefs: [...new Set(results.flatMap((value) => value.nullRefs))] },
+  );
+}
+function caseBuilder(branches: readonly (readonly [AnyExpression, unknown])[]) {
+  return Object.freeze({
+    ...caseExpression(branches),
+    when: (predicate: AnyExpression, value: unknown) =>
+      caseBuilder([...branches, [predicate, value]]),
+    else: (value: unknown) => caseExpression(branches, { value }),
+  });
 }
 
 export function cast<E extends AnyExpression, T extends Exclude<CastType, 'decimal'>>(
@@ -222,4 +329,48 @@ export function div<L extends NumericExpression, R extends Operand<L>>(
   right: R,
 ): ArithmeticResult<L, R, true> {
   return arithmetic('/', left, right) as ArithmeticResult<L, R, true>;
+}
+export function coalesce<
+  E extends AnyExpression,
+  R extends readonly [SameValue<E>, ...SameValue<E>[]],
+>(
+  first: E,
+  ...rest: R
+): Expression<
+  NonNullable<InferExpression<E>> | AllNullable<[E, ...R]>,
+  ExpressionScope<E> | ExpressionScope<R[number]>,
+  CoalesceScope<[E, ...R]>
+>;
+export function coalesce(first: AnyExpression, ...rest: unknown[]): AnyExpression {
+  if (!rest.length) throw new TypeError('COALESCE requires at least two values.');
+  const values = [first, ...rest.filter(isExpression)];
+  same(first, values, 'COALESCE');
+  const guards = values.filter((value) => !nullable(value));
+  const certain =
+    rest.some((value) => !isExpression(value)) ||
+    guards.some((value) => value.nullRefs.length === 0);
+  return derive(
+    {
+      kind: 'function',
+      name: 'COALESCE',
+      args: Object.freeze([
+        first.expression,
+        ...rest.map((value) => (isExpression(value) ? value.expression : literal(first, value))),
+      ]),
+    },
+    first,
+    !guards.length && !certain,
+    values,
+    { nullRefs: certain ? [] : [...new Set(guards.flatMap((value) => value.nullRefs))] },
+  );
+}
+export function caseWhen<P extends PredicateExpression, V extends Literal | AnyExpression>(
+  predicate: P,
+  value: V,
+): CaseExpression<Widen<V>, ExpressionScope<P> | ExpressionScope<V>, ExpressionNullScope<V>> {
+  return caseBuilder([[predicate, value]]) as unknown as CaseExpression<
+    Widen<V>,
+    ExpressionScope<P> | ExpressionScope<V>,
+    ExpressionNullScope<V>
+  >;
 }
