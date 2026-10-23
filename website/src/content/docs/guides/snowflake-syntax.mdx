@@ -6,6 +6,7 @@ description: Window functions, QUALIFY, FLATTEN, ASOF JOIN, and time travel.
 import Snippet from '../../../components/Snippet.astro';
 import asof from '../../../snippets/asof.ts?raw';
 import flatten from '../../../snippets/flatten.ts?raw';
+import offsetWindows from '../../../snippets/offset-windows.ts?raw';
 import timeTravel from '../../../snippets/time-travel.ts?raw';
 import windows from '../../../snippets/windows.ts?raw';
 
@@ -16,6 +17,12 @@ into a window. Both accept `partitionBy` and `orderBy`. QUALIFY requires a windo
 or in its predicate.
 
 <Snippet code={windows} />
+
+`rank` and `denseRank` take the same options with a required `orderBy`. `lag(value, options)` and
+`lead` also accept `offset` and a `default` in the value's domain. They are nullable unless both the
+value and the default are non-null.
+
+<Snippet code={offsetWindows} />
 
 ## FLATTEN
 
