@@ -678,13 +678,14 @@ export function projectionRow(projection: Projection): (values: readonly unknown
   const shape = (value: Projection): (readonly [string, number | object])[] =>
     Object.entries(value).map(([key, item]) => [key, isLeaf(item) ? index++ : shape(item)]);
   const tree = shape(projection);
-  const build = (nodes: typeof tree, values: readonly unknown[]): Record<string, unknown> =>
-    Object.fromEntries(
-      nodes.map(([key, node]) => [
-        key,
-        typeof node === 'number' ? values[node] : build(node as typeof tree, values),
-      ]),
-    );
+  // Runs once per result row, so it assigns in a loop instead of allocating entry pairs.
+  // Projections reject the reserved __proto__ alias, so plain assignment is safe.
+  const build = (nodes: typeof tree, values: readonly unknown[]): Record<string, unknown> => {
+    const row: Record<string, unknown> = {};
+    for (const [key, node] of nodes)
+      row[key] = typeof node === 'number' ? values[node] : build(node as typeof tree, values);
+    return row;
+  };
   return (values) => build(tree, values);
 }
 /**

@@ -281,6 +281,22 @@ describe('execution, streaming, and cancellation', () => {
     expect(normalizeWireRow(null, statement)).toBeNull();
     expect(normalizeWireRow('value', statement)).toBe('value');
   });
+
+  it('reads column metadata once per statement and copies object rows', () => {
+    const metadata = (name: string, string = false) =>
+      ({ getName: () => name, isString: () => string, isBinary: () => false }) as Column;
+    const getColumns = vi.fn(() => [metadata('X'), metadata('X', true), metadata('__proto__')]);
+    const statement = { getColumns } as unknown as RowStatement;
+    const row = JSON.parse('{"X":"NULL","__proto__":"NULL"}');
+    const normalized = normalizeWireRow(row, statement) as Record<string, unknown>;
+    expect(normalized).not.toBe(row);
+    expect(row.X).toBe('NULL');
+    expect(normalized.X).toBe('NULL');
+    expect(Object.getPrototypeOf(normalized)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(normalized, '__proto__')?.value).toBeNull();
+    expect(normalizeWireRow(['NULL', 'NULL', 'NULL'], statement)).toEqual([null, 'NULL', null]);
+    expect(getColumns).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('transaction sessions', () => {
