@@ -1,10 +1,9 @@
-# First supported release contract
+# Release contract
 
-Snowtyped is alpha software. This document defines what the first supported
-release, `1.0.0`, guarantees and what must be true before it is published. Until
-then, breaking changes remain possible through reviewed changesets
-([versioning policy](versioning.md)). Update this document in the same PR as
-any change to the guarantees below.
+This document defines what Snowtyped guarantees from `1.0.0` on and what must be
+true before a stable release is published. Breaking changes to the stable API
+need a major release ([versioning policy](versioning.md)). Update this document
+in the same PR as any change to the guarantees below.
 
 ## Public API
 
@@ -16,13 +15,20 @@ that list and this section.
 **Stable** from `1.0.0`; incompatible changes need a major release:
 - Schema declarations: `snowflakeTable`, `alias`, `timeTravel`, the column
   builders (`text`, `integer`, `decimal`, `float`, `boolean`, `date`, `time`,
-  `timestamp`, `binary`, `variant`), and `.notNull()`.
+  `timestamp`, `binary`, `variant`, `array`, `object`, `structured` with
+  `structuredType`, `geography`, `geometry`, `vector`), their precision, scale,
+  and length options, `.notNull()`, `.serverDefault()`, `.identity()`, and
+  `.virtual()`.
 - Query construction: `select` and the `SelectQuery` methods documented in the
-  README, `flatten`, `pivot`, `unpivot`, `dynamicPivot`, `matchRecognize` with
-  `rowPattern`, the expression, aggregate, window, and ordering helpers, the
-  subquery helpers (`exists`, `notExists`, `scalar`, `inSubquery`), `insert`,
-  `insertFrom`, `update`, `updateFrom`, `deleteFrom`, `deleteUsing`, and
-  `mergeInto` with its conditional branches.
+  [queries guide](https://mkalo.github.io/snowtyped/guides/queries/), including
+  nested object projections and the `union`, `unionAll`, `intersect`, and
+  `except` set operations; `recursiveCte`, `flatten`, `pivot`, `unpivot`,
+  `dynamicPivot`, `matchRecognize` with `rowPattern`; the expression, aggregate,
+  window, frame (`rowsBetween`, `rangeBetween`), and ordering helpers; the
+  subquery helpers (`exists`, `notExists`, `scalar`, `inSubquery`); relation
+  loading with `one`, `many`, and `withRelations`; `insert`, `insertFrom`,
+  `update`, `updateFrom`, `deleteFrom`, `deleteUsing`, and `mergeInto` with its
+  conditional branches.
 - `.compile()` results (`CompiledQuery`, `BindValue`); the bound values and SQL
   semantics are stable, the exact SQL text is not.
 - Raw SQL: `sql`, `sql.identifier`, `sql.join`, `sql.json`, `sql.unsafe`,
@@ -80,8 +86,8 @@ supported.
 
 ## Data representations
 
-Structured queries return the representations in the README's
-[declaration table](../README.md#declared-schemas-and-typed-queries):
+Structured queries return the representations in the
+[column types table](https://mkalo.github.io/snowtyped/guides/schemas/#column-types):
 integers as `bigint`, fixed-point decimals as exact strings, temporal values as
 strings that keep nanoseconds and offsets, binary as `Uint8Array`, and VARIANT
 as `unknown` or the declared Zod shape. Every structured result row is validated
@@ -126,16 +132,19 @@ tests.
 8. **Sustained use:** a live run mixes concurrent queries, streams, and
    transactions above pool `max` and ends with every connection closed.
 
-Inference and editor benchmarks (`pnpm bench:types`) and baselines are in
-[production behavior](production.md#baselines). Longer soak and throughput suites
-remain #17 work but do not block the first supported release.
+Inference and editor benchmarks (`pnpm bench:types`), runtime and live load
+benchmarks (`pnpm bench:runtime`, `pnpm bench:load`), and their baselines are in
+[production behavior](production.md#baselines). Benchmarks are not release gates.
 
 ## Release gates
 
 Record the candidate SHA and evidence for every gate in the GitHub release or a
-comment on #1. Missing, pending, skipped, or cancelled runs do not count.
-1. **Contract:** this document, the README, and the public API snapshot match
-   the candidate; deferred and experimental features are listed accurately.
+comment on the release's tracking issue (#85 for `1.0.0`). Missing, pending,
+skipped, or cancelled runs do not count.
+1. **Contract:** this document, the README, the documentation site's
+   [feature status](https://mkalo.github.io/snowtyped/guides/feature-status/),
+   and the public API snapshot match the candidate; deferred and experimental
+   features are listed accurately.
 2. **Offline CI:** `CI required`, the four matrix jobs, and Changesets pass on
    the candidate's main push ([CI](ci.md#release-gate)).
 3. **Live tests:** the protected Snowflake workflow passes on the same SHA
@@ -146,26 +155,26 @@ comment on #1. Missing, pending, skipped, or cancelled runs do not count.
    metadata are inspected.
 5. **Docs:** the documentation site builds with checked examples (#21) and its
    production deployment matches the version (#22).
-6. **Version review:** a reviewed `pnpm changeset pre exit` PR and version PR
-   produce `1.0.0` with a consolidated changelog and a frozen install.
+6. **Version review:** for the first stable release, a reviewed
+   `pnpm changeset pre exit` PR and version PR produce `1.0.0` with a
+   consolidated changelog and a frozen install. Later releases need a reviewed
+   version PR.
 7. **npm:** `npm owner ls snowtyped` lists the maintainer account `mkalodev`;
    npm 2FA and trusted publishing are configured as in
    [npm publication](versioning.md#npm-publication).
-   `NPM_STABLE_RELEASES_ENABLED=true` is set only after gates 1-6 pass, and the
-   maintainer approves the stage with 2FA.
+   `NPM_STABLE_RELEASES_ENABLED=true` is set before the version PR merges (the
+   release workflow refuses stable versions without it), and the maintainer
+   approves the stage with 2FA.
 8. **Finalize:** registry bytes, provenance, the Git tag, the GitHub release,
    the `latest` dist-tag, and the docs version agree.
 
 ## Roadmap status
 
-Not required for `1.0.0`; each can ship later as a minor release unless it
-changes stable behavior:
-- Stronger SQL semantic validation (#11)
+Not part of `1.0.0`; each can ship later as a minor release unless it changes
+stable behavior:
 - A public AST extension protocol (#13)
-- Nested selections and relation loading (#14)
-
-In progress and not yet part of this contract: constraints and additional type codecs (#5). It
-joins the stable API when it merges and this document and the export snapshot are updated.
+- DDL for objects other than schemas and tables
+- Error classes with stable names and codes
 
 Raw SQL remains available for Snowflake syntax beyond the modeled builders.
 
@@ -175,5 +184,5 @@ Snowtyped is maintained by [Mkalo](https://github.com/Mkalo) on a best-effort
 basis; there is no dedicated support service or response-time commitment. Use
 [GitHub issues](https://github.com/Mkalo/snowtyped/issues) for bugs and
 questions. Report vulnerabilities privately as described in
-[SECURITY.md](../SECURITY.md). Fixes target the latest release; before
-`1.0.0`, that is the latest alpha or beta.
+[SECURITY.md](../SECURITY.md). Fixes target the latest stable release,
+published under the `latest` dist-tag.

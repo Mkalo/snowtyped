@@ -16,8 +16,8 @@ release and disclosed through a GitHub security advisory.
 
 ## Supported versions
 
-Fixes target the latest published release. Before `1.0.0`, that is the latest
-alpha or beta; older prereleases are not patched. Fixed versions do not replace
+Fixes target the latest stable release, published under the `latest` npm
+dist-tag. Older versions and prereleases are not patched. Fixed versions do not replace
 published versions; affected versions may be deprecated on npm.
 
 ## Scope

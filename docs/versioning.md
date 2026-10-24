@@ -1,7 +1,7 @@
 # Versions and releases
 
 Snowtyped uses MIT. Changesets manages versions and changelogs; the separate
-release workflow stages alpha/beta packages for your npm approval with 2FA.
+release workflow stages packages for your npm approval with 2FA.
 The [release contract](release-contract.md) defines stable guarantees and gates.
 
 ## Changesets
@@ -16,8 +16,8 @@ Commit it with the implementation; leave version generation to the version PR.
 | minor | Compatible new APIs and operations                      | 1.2.3 -> 1.3.0 |
 | major | Incompatible APIs/types/defaults, or dropped runtimes   | 1.2.3 -> 2.0.0 |
 
-Use `major` for breaking changes even during 0.x development. From the current
-alpha, that plans `1.0.0-alpha.1`; it does not grant stable-release approval.
+Breaking changes to the [stable API](release-contract.md#public-api) need `major`.
+Experimental APIs change in a `minor` with a changeset that says so.
 
 Docs, tests, and CI-only changes are exempt. Checks watch `src/**`, `package.json`,
 `pnpm-lock.yaml`, and `tsdown.config.ts`. Tooling-only manifest/lockfile edits need
@@ -34,10 +34,18 @@ its Markdown formatter rewrites that frontmatter.
 
 ## Alpha, beta, and stable
 
-Main starts in alpha mode through `.changeset/pre.json`. A patch changes
+Main releases stable versions. Snowtyped was developed in alpha mode up to
+`0.1.0-alpha.2`; the PR that exited it with a major changeset made the next
+version PR produce `1.0.0`.
+
+A prerelease campaign is entered with `pnpm changeset pre enter alpha` (or
+`beta`) in a PR, which writes `.changeset/pre.json`. A patch then changes
 `0.1.0-alpha.0` to `0.1.0-alpha.1`; a subsequent minor becomes `0.1.0-alpha.2`.
 Changesets applies prerelease SemVer rules to the current target. Consumed files
 move to `.changeset/pre/`; retain them for the consolidated stable changelog.
+While main is in prerelease mode no stable fixes can ship from it, so decide how
+stable fixes continue before entering one; the current automation only supports
+main.
 
 To switch alpha to beta, run these together in a channel-control PR, add a real
 changeset for the beta changes, and commit the final state:
@@ -52,9 +60,7 @@ Do not run versioning between those commands. The example above then becomes
 
 To finish prereleases, commit `pnpm changeset pre exit` in a PR. The next version
 PR removes the suffix and consumes the archived changesets, yielding `0.1.0` in
-this example. Use a major changeset to select a 1.0 target. After stable releases
-exist, decide how stable fixes will continue before starting another prerelease
-campaign; the current automation only supports main.
+this example. A major changeset in the same PR selects the next major instead.
 
 ## Version PRs
 
@@ -130,9 +136,11 @@ It rejects only the saved holding-stage ID after verifying the public release's
 bytes, provenance, and signatures. Retain the artifact directory and its receipt.
 
 Alpha uses `alpha`, beta uses `beta`; neither advances `latest`. Stable uses
-`latest` only with `NPM_STABLE_RELEASES_ENABLED=true` after the stable gates in
-[CI](ci.md#release-gate) are met. The default **prepare** operation performs no
-registry write. A running release cannot be cancelled by another release;
+`latest` and requires the repository variable `NPM_STABLE_RELEASES_ENABLED=true`;
+without it the release workflow refuses a stable version. Set it before merging
+the first stable version PR, once the stable gates in [CI](ci.md#release-gate)
+are met, and keep it set for later stable releases. The default **prepare**
+operation performs no registry write. A running release cannot be cancelled by another release;
 GitHub may replace an older queued dispatch.
 
 If a real release stage already exists, inspect it and approve or reject it with 2FA. Conflicts
