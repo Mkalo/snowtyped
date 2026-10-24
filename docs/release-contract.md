@@ -49,7 +49,7 @@ new case.
 
 **Experimental**; may change in a minor release, always with a changeset:
 - The AST layer: `compileAst`, `identifier`, `quoteIdentifier`, the `*Node`
-  types, `SourceReference`, and `WireType`.
+  types, `PivotLiteral`, `SourceReference`, and `WireType`.
 - Members of columns, tables, expressions, and queries other than their builder
   methods, `columns`, `selection`, and `compile()`; for example `ast`, `node`,
   `expression`, `readSchema`, `refs`, and the phantom `*ScopeType` fields. Use
