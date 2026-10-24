@@ -39,6 +39,6 @@ this tooling.
 
 The project uses MIT. Report vulnerabilities through [SECURITY.md](SECURITY.md),
 not public issues. Follow [npm publication](docs/versioning.md#npm-publication)
-to release alpha/beta versions; approve staged packages with npm 2FA. The
-[release contract](docs/release-contract.md) lists the gates for a stable
-release. Run `pnpm test:release` when changing release policy or automation.
+to release a version; approve staged packages with npm 2FA. The
+[release contract](docs/release-contract.md) lists the stable guarantees and the
+gates for a stable release. Run `pnpm test:release` when changing release policy or automation.

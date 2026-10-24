@@ -106,6 +106,5 @@ scenarios (#17), and checked documentation and deployment/version agreement
 (#21/#22). These are still release requirements even though their jobs are not
 yet part of `CI required`. First npm publication and production documentation
 deployment need your approval. Stable publication also needs the explicit
-repository variable `NPM_STABLE_RELEASES_ENABLED=true`; leave it unset while
-those stable gates are outstanding. Do not infer stable readiness from an
-experimental npm release.
+repository variable `NPM_STABLE_RELEASES_ENABLED=true`, set once those gates are
+met for the first stable release and kept set afterwards.

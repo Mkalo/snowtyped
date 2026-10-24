@@ -3,15 +3,9 @@ title: Getting started
 description: Install Snowtyped, declare a table, and run a typed query.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
 import Snippet from '../../components/Snippet.astro';
 import firstQuery from '../../snippets/first-query.ts?raw';
 import schema from '../../snippets/schema.ts?raw';
-
-<Aside type="caution" title="Alpha software">
-  Snowtyped is an alpha release. The public API may change before a stable release. See
-  [feature status](/guides/feature-status/) for what is covered today.
-</Aside>
 
 ## Requirements
 
@@ -23,11 +17,12 @@ import schema from '../../snippets/schema.ts?raw';
 ## Install
 
 ```sh
-pnpm add snowtyped@alpha snowflake-sdk
+pnpm add snowtyped snowflake-sdk
 ```
 
-Prereleases are published under the `alpha` or `beta` npm dist-tag. `latest` is reserved for stable
-releases.
+Stable releases are published under the `latest` npm dist-tag. See
+[feature status](/guides/feature-status/) for what is covered and [releases](/project/releases/)
+for the release channels.
 
 Snowtyped ships ESM and CommonJS builds with matching declarations. The main entry point,
 `snowtyped`, contains schema declarations, the query builder, and the `sql` tag. Execution helpers

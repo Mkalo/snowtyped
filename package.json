@@ -3,6 +3,15 @@
   "version": "0.1.0-alpha.2",
   "private": false,
   "description": "Schema-driven Snowflake queries, runtime validation, and parameterized raw SQL for TypeScript.",
+  "keywords": [
+    "snowflake",
+    "typescript",
+    "query-builder",
+    "sql",
+    "zod",
+    "snowflake-sdk",
+    "type-safe"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Mkalo/snowtyped.git"
@@ -10,12 +19,11 @@
   "bugs": {
     "url": "https://github.com/Mkalo/snowtyped/issues"
   },
-  "homepage": "https://github.com/Mkalo/snowtyped#readme",
+  "homepage": "https://mkalo.github.io/snowtyped/",
   "license": "MIT",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org",
-    "tag": "alpha",
     "provenance": true
   },
   "type": "module",
