@@ -326,4 +326,10 @@ describe('column families and wire representations against Snowflake', () => {
       FLAG: true,
     });
   });
+
+  it('normalizes NULL by the column a duplicated raw name keeps', async () => {
+    const [row] = await db.queryRaw<[Record<string, unknown>]>`SELECT
+        'text' AS NUMBER_LAST, NULL::NUMBER AS NUMBER_LAST, NULL::NUMBER AS TEXT_LAST, 'NULL' AS TEXT_LAST`;
+    expect(row).toEqual({ NUMBER_LAST: null, TEXT_LAST: 'NULL' });
+  });
 });

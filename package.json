@@ -94,6 +94,8 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:bench": "vitest run --config vitest.tooling.config.ts tests/tooling/bench-types.test.ts",
     "bench:types": "node scripts/bench-types.mjs",
+    "bench:runtime": "vitest run --config vitest.bench.config.ts tests/bench/runtime.bench.ts",
+    "bench:load": "vitest run --config vitest.bench.config.ts tests/bench/load.bench.ts",
     "test:package": "vitest run --config vitest.tooling.config.ts tests/tooling/package.test.ts",
     "check:package": "publint && attw --pack .",
     "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm test:bench && pnpm build && pnpm check:package && pnpm test:package",

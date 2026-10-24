@@ -30,8 +30,8 @@ pool ends with no open, borrowed, or pending connections. If a run is killed, dr
 
 ## Baselines
 
-Measured on 2026-10-23 on Linux x64 (cloud container), Node.js 22.22, TypeScript 6.0.3, and
-snowflake-sdk 3.4.0 against an X-Small warehouse. Treat them as orders of magnitude.
+Measured on 2026-10-23 and 2026-10-24 on Linux x64 (cloud container), Node.js 22.22, TypeScript
+6.0.3, and snowflake-sdk 3.4.0 against an X-Small warehouse. Treat them as orders of magnitude.
 
 ### Type inference and editor latency
 
@@ -53,8 +53,48 @@ again after an edit.
 Checking cost grows linearly with tables × columns; join depth mainly affects editor latency
 on the joined query. `pnpm test:bench` fails if the 10 × 20 case exceeds 330k instantiations.
 
-### Live throughput
+### Client-side cost
 
-The default sustained run completed 116 operations in 17.1 s (26 queries, 29 raw queries,
-31 streams of 5,000 rows, 30 single-insert transactions) with 12 workers on `max: 4`.
-Latency is dominated by Snowflake round trips; a transaction costs three statements.
+`pnpm bench:runtime` times statement building and result mapping against a connection that
+completes instantly, so only snowtyped's own work is measured. Measured on 2026-10-24:
+
+| Case                                           | Time (p50) |
+| ---------------------------------------------- | ---------: |
+| Compile a prebuilt `select`                    |      15 µs |
+| Build and compile a two-table join with filter |      77 µs |
+| Build and compile an insert of 1,000 rows      |     2.1 ms |
+| Map a typed row, 8 columns (`execute(select)`) |     0.6 µs |
+| Map a raw row, 8 columns (`queryRaw`)          |     0.2 µs |
+| Map a raw row, 100 columns                     |     2.6 µs |
+
+Before #82, raw-row NULL normalization was quadratic in the column count (32 µs per
+100-column row) and typed rows cost 1.8 µs each.
+
+### Live load
+
+`pnpm bench:load` runs against Snowflake with the integration credentials, creates one
+`SFLIB_TEST_<uuid>` schema with a 1M-row table, and drops it afterwards. Set
+`SNOWTYPED_LOAD_SECONDS` (pool step length, default 15), `SNOWTYPED_LOAD_SOAK_SECONDS` (default
+120), and `SNOWTYPED_LOAD_ROWS` (default 1,000,000). A default run takes about 7 minutes on an
+X-Small warehouse and writes `reports/load.md` and `reports/load.json`.
+
+Measured on 2026-10-24 from AWS us-east-2:
+- **Round trips.** A point query takes about 130 ms at p50 through the SDK, `execute`, and
+  `queryRaw` alike; client-side work is below the noise.
+- **Pool throughput.** Each pooled connection runs one statement at a time, so throughput
+  follows `max`: 7.5 point queries/s on `max: 1`, 29/s on 4, and 53-67/s on 8. With 16 or 32
+  workers on `max: 8`, extra workers only queue (p50 234 ms and 460 ms).
+- **Large results (1M rows × 5 columns, one connection).** Typed `stream` reads about 110k rows/s
+  with a 220-260 MB peak, and typed `execute` reads about 135-155k rows/s. Raw reads of a
+  `TIMESTAMP` column run at 14-27k rows/s and peak at 790-850 MB, because the SDK formats each
+  timestamp on the client; the plain SDK behaves the same. Selecting `TO_VARCHAR(column)` instead
+  brings a raw stream to about 110k rows/s and 300 MB. Typed queries already format temporal
+  values on the server.
+- **Soak.** For 120 s, 16 workers on `max: 8` mixed point queries, raw queries, 2,000-row streams,
+  single-insert transactions, and 300 ms timeouts on `SYSTEM$WAIT(5)` (about 1,700-1,900
+  operations). There were no unexpected errors, every inserted row was present, retained heap
+  stayed flat, and the pool ended with no open, borrowed, or pending connections. A transaction
+  costs three statements and took about 2 s at p50 under this contention.
+
+The shorter sustained run in `hardening.test.ts` completed 116 operations in 17.1 s with 12
+workers on `max: 4`.

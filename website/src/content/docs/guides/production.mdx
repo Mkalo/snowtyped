@@ -54,8 +54,23 @@ results decompress into large chunks and can use far more: 1.5 million rows of o
 400-character string peaked at 1.1 GB, with the SDK alone as well. Lowering the connection option
 `resultPrefetch` to 1 reduced that to 745 MB.
 
+Raw results that return `TIMESTAMP` columns are slow and memory-hungry at scale, because the SDK
+formats every timestamp on the client. A raw stream of 1 million rows with one timestamp column read
+14-27k rows per second and peaked at about 800 MB. Selecting `TO_VARCHAR(column)` instead raised
+that to about 110k rows per second at 300 MB. Typed queries already format temporal values on
+the server, so typed `stream` and `execute` read 110-155k rows per second.
+
 Breaking out of a stream destroys the row stream and releases its connection. It does not save
 server work: the statement has already completed by the time the first row arrives.
+
+## Throughput
+
+Snowtyped adds no measurable latency to a round trip. Compiling a statement takes 15-80 µs, and
+mapping a typed row takes under 1 µs, against a point-query round trip of about 130 ms. A pooled
+connection runs one statement at a time, so throughput grows with `max` and not with the number of
+callers: in live runs, `max: 8` handled 53-67 point queries per second, and extra callers only
+waited longer for a connection. Run `pnpm bench:runtime` and `pnpm bench:load` in the repository
+to measure your own setup.
 
 ## Type-checking cost
 
