@@ -3,6 +3,7 @@ import * as library from 'snowtyped';
 import * as ddl from 'snowtyped/ddl';
 import * as snowflake from 'snowtyped/snowflake';
 import { describe, expect, it } from 'vitest';
+import { visibleSnippet } from '../src/snippet';
 
 const root = new URL('../', import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, root), 'utf8');
@@ -39,6 +40,15 @@ describe('documentation content', () => {
       ),
     );
     expect(inline.map(({ path }) => path)).toEqual([]);
+  });
+
+  it('copies README examples from type-checked snippets', () => {
+    const visible = new Set(snippets.map((name) => visibleSnippet(read(`src/snippets/${name}`))));
+    const examples = [...read('../README.md').matchAll(/```ts\n([\s\S]*?)```/g)].map((match) =>
+      (match[1] ?? '').trim(),
+    );
+    expect(examples).not.toEqual([]);
+    expect(examples.filter((code) => !visible.has(code))).toEqual([]);
   });
 
   it('keeps docs dependencies out of the published package', () => {

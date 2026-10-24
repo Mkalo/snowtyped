@@ -15,5 +15,6 @@ const page = withRelations(select(customers).orderBy(asc(customers.columns.id)).
   orders: customerOrders,
 });
 const { rows, queryIds } = await db.execute(page);
-// rows: { id: bigint; name: string; email: string | null; orders: { id: bigint; amount: string }[] }[]
+// rows: readonly { readonly id: bigint; readonly name: string; readonly email: string | null;
+//   orders: { readonly id: bigint; readonly amount: string }[] }[]
 // queryIds: one for the 20 customers, one for all of their orders

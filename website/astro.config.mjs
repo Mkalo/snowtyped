@@ -16,6 +16,7 @@ export default defineConfig({
     baseLinksIntegration(base),
     starlight({
       title: 'Snowtyped',
+      logo: { src: './src/assets/logo.svg', alt: '' },
       description:
         'Schema-driven Snowflake queries, runtime validation, and parameterized raw SQL for TypeScript.',
       social: [{ icon: 'github', label: 'GitHub', href: repository }],
