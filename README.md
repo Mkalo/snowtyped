@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Mkalo/snowtyped/main/website/src/assets/logo.svg" width="160" height="160" alt="Snowtyped logo">
+  <img src="https://raw.githubusercontent.com/Mkalo/snowtyped/main/website/src/assets/logo.svg" width="160" alt="Snowtyped logo">
 </p>
 
 <h1 align="center">Snowtyped</h1>
@@ -32,7 +32,7 @@
 ## Install
 
 ```sh
-pnpm add snowtyped snowflake-sdk
+npm install snowtyped snowflake-sdk
 ```
 
 Snowtyped needs Node.js 22.18+ or 24.11+. [`snowflake-sdk`](https://www.npmjs.com/package/snowflake-sdk) is an optional peer: you only need it to connect, not to compile queries.
