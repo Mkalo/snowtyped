@@ -20,9 +20,10 @@ Package checks install the actual tarball in a temporary consumer and verify ESM
 
 The documentation site in `website/` is the authoritative user documentation. Changes to
 public APIs, behavior, or feature boundaries update the matching pages in
-`website/src/content/docs/` along with the README. Its examples are type-checked snippets under
+`website/src/content/docs/`. Its examples are type-checked snippets under
 `website/src/snippets/`, and its tests require every runtime export to appear in a guide or
-snippet. It is a separate pnpm project (Node.js 22.23.4+); run `pnpm check` in `website/`.
+snippet. The README is a short showcase that links to the site; its examples are copies of
+snippets, which the site's tests enforce. It is a separate pnpm project (Node.js 22.23.4+); run `pnpm check` in `website/`.
 Write internal links root-relative, such as `/guides/queries/`; the build adds the deployment
 base path. See [documentation deployment](docs/docs-deployment.md).
 
