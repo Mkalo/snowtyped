@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import semver from 'semver';
 import { test } from 'vitest';
 import type {
   CiJob,
@@ -23,6 +24,7 @@ interface ReleaseTestState {
   metadata?: PublishedMetadata;
   attestations?: ProvenanceDocument;
   reference?: { object: { type: string; sha: string } };
+  release?: { draft: boolean; prerelease: boolean; latest: boolean; body: string };
   unpublishedAt?: string;
   registryStatus?: number;
   approvalAfterPolls?: number;
@@ -62,6 +64,8 @@ test('real release CLI rehearses immutable packing, staging, and partial-failure
       stdio: 'pipe',
     });
     const { version } = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
+    const tag = String(semver.prerelease(version)?.[0] ?? 'latest');
+    const stable = tag === 'latest';
     const statePath = join(cwd, 'reports/state.json');
     const preload = join(cwd, 'reports/mock-services.mjs');
     const fakeCli = join(cwd, 'reports/npm/bin/npm-cli.js');
@@ -106,7 +110,7 @@ childProcess.execFileSync = (command, args, options) => {
   if (args[0] === 'api') return JSON.stringify([{ jobs: state.jobs }]);
   assert.deepEqual(args.slice(0, 2), ['release', 'create']);
   state.writes.push('release');
-  state.release = { draft: false, prerelease: true, body: fs.readFileSync(args[args.indexOf('--notes-file') + 1], 'utf8') };
+  state.release = { draft: false, prerelease: args.includes('--prerelease'), latest: args.includes('--latest=true'), body: fs.readFileSync(args[args.indexOf('--notes-file') + 1], 'utf8') };
   save(); return 'https://github.com/Mkalo/snowtyped/releases/test';
 };
 syncBuiltinESMExports();
@@ -182,6 +186,7 @@ globalThis.fetch = async (url, options = {}) => {
             ACTIONS_ID_TOKEN_REQUEST_URL: 'https://oidc.invalid',
             NODE_AUTH_TOKEN: '',
             NPM_TOKEN: '',
+            NPM_STABLE_RELEASES_ENABLED: stable ? 'true' : '',
             ...env,
           },
         },
@@ -190,6 +195,12 @@ globalThis.fetch = async (url, options = {}) => {
       assert.equal(result.status, expected, result.stdout + result.stderr);
       return result.stdout + result.stderr;
     };
+    if (stable) {
+      assert.match(
+        await invoke('check', 1, { NPM_STABLE_RELEASES_ENABLED: '' }),
+        /Stable publication requires NPM_STABLE_RELEASES_ENABLED=true/,
+      );
+    }
     await invoke('check');
     await invoke('inspect');
     await invoke('candidate');
@@ -202,7 +213,7 @@ globalThis.fetch = async (url, options = {}) => {
     );
     await rm(unversioned);
     const record = JSON.parse(await readFile(join(artifacts, 'release.json'), 'utf8'));
-    assert.equal(record.tag, 'alpha');
+    assert.equal(record.tag, tag);
     assert.equal(record.sha, sha);
     assert.equal((await readdir(artifacts)).filter((file) => file.endsWith('.tgz')).length, 1);
     state.run.conclusion = 'failure';
@@ -268,7 +279,7 @@ globalThis.fetch = async (url, options = {}) => {
     const args = state.npmCalls[3];
     assert(args);
     assert.deepEqual(args.slice(0, 2), ['stage', 'publish']);
-    assert.equal(args[args.indexOf('--tag') + 1], 'alpha');
+    assert.equal(args[args.indexOf('--tag') + 1], tag);
     assert(args.includes('--provenance') && args.includes('--ignore-scripts'));
     assert.deepEqual(state.writes, []);
     state.conflict = true;
@@ -324,7 +335,7 @@ globalThis.fetch = async (url, options = {}) => {
         },
       ],
     };
-    state.tags = { alpha: version };
+    state.tags = { [tag]: version };
     const calls = state.npmCalls.length;
     await invoke('stage');
     assert.equal(state.npmCalls.length, calls);
@@ -338,6 +349,8 @@ globalThis.fetch = async (url, options = {}) => {
     assert.equal(state.npmCalls.length, calls);
     await invoke('finalize');
     assert.deepEqual(state.writes, ['tag', 'release']);
+    assert.equal(state.release?.prerelease, !stable);
+    assert.equal(state.release?.latest, stable);
     await invoke('candidate');
     assert(
       (await readFile(join(cwd, 'reports/github-output'), 'utf8')).endsWith('eligible=false\n'),
