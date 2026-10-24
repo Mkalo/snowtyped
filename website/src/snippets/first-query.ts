@@ -1,6 +1,6 @@
-import type { Connection } from 'snowflake-sdk';
 // ---cut---
 
+import type { Connection } from 'snowflake-sdk';
 import { eq, select } from 'snowtyped';
 import { createClient } from 'snowtyped/snowflake';
 import { customers } from './schema.js';
