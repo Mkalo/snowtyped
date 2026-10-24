@@ -24,7 +24,12 @@ import { createFixture, integrationConfig } from '../support/snowflake.js';
 v8.setFlagsFromString('--expose-gc');
 const gc = vm.runInNewContext('gc') as () => void;
 
-const seconds = (name: string, fallback: number) => Number(process.env[name] ?? fallback);
+function seconds(name: string, fallback: number) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isInteger(value) || value < 1)
+    throw new Error(`${name} must be a positive integer, received ${process.env[name]}.`);
+  return value;
+}
 const stepSeconds = seconds('SNOWTYPED_LOAD_SECONDS', 15);
 const soakSeconds = seconds('SNOWTYPED_LOAD_SOAK_SECONDS', 120);
 const streamRows = seconds('SNOWTYPED_LOAD_ROWS', 1_000_000);
@@ -72,7 +77,7 @@ describe('load against Snowflake', () => {
   beforeAll(async () => {
     await fixture.seed();
     await db.queryRaw(sql`CREATE TABLE ${eventsTable} AS
-      SELECT SEQ8() AS ID, RANDSTR(24, RANDOM()) AS NAME, UNIFORM(0, 100000, RANDOM()) / 100 :: NUMBER(12, 2) AS AMOUNT,
+      SELECT SEQ8() AS ID, RANDSTR(24, RANDOM()) AS NAME, (UNIFORM(0, 100000, RANDOM()) / 100)::NUMBER(12, 2) AS AMOUNT,
         DATEADD(SECOND, SEQ4(), '2024-01-01'::TIMESTAMP_NTZ) AS CREATED, UNIFORM(0, 1, RANDOM()) = 1 AS FLAG
       FROM TABLE(GENERATOR(ROWCOUNT => ${streamRows}))`);
     await db.queryRaw(
