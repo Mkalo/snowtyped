@@ -1,4 +1,4 @@
-import type * as Snowtyped from '../types.js';
+import type { Snowtyped } from '../index.js';
 
 /** @deprecated Use `Snowtyped.AlterTable`. */
 export type AlterTable = Snowtyped.AlterTable;

@@ -127,7 +127,15 @@ test('packed ESM/CJS consumers, declarations, license, and tree shaking', async 
     );
 
     // TypeScript must resolve both conditional declaration formats from the installed tarball.
-    runPnpm(['add', '--ignore-workspace', '--ignore-scripts', '--save-dev', 'snowflake-sdk@3.4.0']);
+    // Declarations are checked without skipLibCheck, and the SDK's declarations need Node's types.
+    runPnpm([
+      'add',
+      '--ignore-workspace',
+      '--ignore-scripts',
+      '--save-dev',
+      'snowflake-sdk@3.4.0',
+      '@types/node@22.20.5',
+    ]);
     const typeSource = `import { eq, integer, select, snowflakeTable, type Snowtyped, sql, text } from 'snowtyped';
     import type { SnowflakeClient } from 'snowtyped/snowflake';
     import { defineTable, sqlType } from 'snowtyped/ddl';
@@ -159,7 +167,6 @@ test('packed ESM/CJS consumers, declarations, license, and tree shaking', async 
           tsc,
           '--noEmit',
           '--strict',
-          '--skipLibCheck',
           '--target',
           'ES2022',
           '--module',
