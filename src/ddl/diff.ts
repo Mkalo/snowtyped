@@ -12,19 +12,29 @@ import {
 } from './statements.js';
 import { alterableType, renderType, sameType } from './types.js';
 
+/** A change {@link diffSchema} found that Snowflake can make in place. */
 export interface SchemaChange {
+  /** The DDL statement that makes the change. */
   readonly statement: DdlStatement;
+  /** Whether the change can lose data, such as dropping a column or table. */
   readonly destructive: boolean;
+  /** A human-readable summary of the change. */
   readonly description: string;
 }
 /** A difference that needs a hand-written migration, such as a table rebuild. */
 export interface UnsupportedChange {
+  /** The table the change applies to. */
   readonly table: string;
+  /** The column the change applies to. */
   readonly column: string;
+  /** Why the change cannot be made in place. */
   readonly reason: string;
 }
+/** The result of {@link diffSchema}. */
 export interface SchemaDiff {
+  /** Changes Snowflake makes in place, in declaration order. */
   readonly changes: readonly SchemaChange[];
+  /** Differences that need a hand-written migration. */
   readonly unsupported: readonly UnsupportedChange[];
 }
 const number = /^(-?)(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i;
@@ -51,7 +61,8 @@ function stringValue(literal: string): string {
 }
 /**
  * Snowflake re-renders string literals and normalizes numbers (`1.50` becomes `1.5`), so both
- * compare by value; booleans compare by name. Other expressions come back rewritten and are not compared.
+ * compare by value; booleans compare by name. Other expressions come back rewritten and are not
+ * compared.
  */
 function constantValue(expression: string): string | undefined {
   if (!constant.test(expression)) return undefined;
@@ -119,12 +130,28 @@ function serverValueBlocker(
     : `Cannot change the AUTOINCREMENT ${changed.join(', ')} in place.`;
 }
 
+/** Options of {@link diffSchema}. */
 export interface DiffOptions {
   /** Observed tables that are neither compared nor dropped. */
   readonly ignoreTables?: readonly string[];
 }
 
-/** Deterministic: follows declaration order, then drops extra tables by name. Renames are not inferred. */
+/**
+ * Compares a desired schema with an observed one and lists the DDL that brings it up to date.
+ *
+ * The comparison follows declaration order, then drops extra tables by name. It only emits changes
+ * Snowflake makes in place: widening VARCHAR, changing NUMBER precision, toggling NOT NULL, adding
+ * nullable columns or columns with a constant default, dropping columns and tables, and setting
+ * comments. Other differences are listed under `unsupported`. Renames are never inferred.
+ *
+ * @throws `TypeError` when the observed schema is a different schema.
+ * @example
+ * ```ts
+ * const desired = defineSchema({ database: 'APP_DB', schema: 'PUBLIC' }, [customers]);
+ * const { changes, unsupported } = diffSchema(desired, await inspectSchema(db, desired));
+ * for (const change of changes) console.log(change.description, change.statement.compile().sql);
+ * ```
+ */
 export function diffSchema(
   desired: SchemaDefinition,
   observed: ObservedSchema,

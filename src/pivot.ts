@@ -29,7 +29,12 @@ import {
 } from './schema.js';
 import type { RawQuery } from './sql.js';
 
+/** The aggregate a PIVOT applies to the value column. */
 export type PivotAggregate = 'sum' | 'min' | 'max' | 'count';
+/**
+ * The TypeScript value of a pivoted column: `bigint` for `count`, exact decimal text for `sum`, and
+ * the value column's type for `min` and `max`.
+ */
 export type PivotValue<A extends PivotAggregate, C> = A extends 'count'
   ? bigint
   : A extends 'sum'
@@ -46,12 +51,16 @@ type Key<C> = keyof C & string;
 type Collisions<T, Taken> = { readonly [K in Extract<keyof T, Taken>]: never };
 
 interface PivotInput<C extends ColumnMap, A extends PivotAggregate, V extends Key<C>, F, D> {
+  /** The aggregate applied to the value column. */
   readonly aggregate: A;
+  /** The key of the source column to aggregate. */
   readonly value: V;
+  /** The key of the source column whose values become output columns. */
   readonly for: F;
-  /** Replaces missing groups; the pivoted columns become non-null. */
+  /** Replaces NULL for groups without rows, which makes the pivoted columns non-null. */
   readonly default?: D;
 }
+/** Options of {@link pivot}. */
 export interface PivotOptions<
   C extends ColumnMap,
   A extends PivotAggregate,
@@ -60,9 +69,13 @@ export interface PivotOptions<
   In,
   D,
 > extends PivotInput<C, A, V, F, D> {
-  /** Output column names mapped to values of the `for` column. */
+  /**
+   * Output column names mapped to values of the `for` column. Values are validated against that
+   * column and rendered as escaped literals, because Snowflake does not accept binds here.
+   */
   readonly in: In;
 }
+/** The columns of a {@link pivot} result: the grouping columns, plus one column per `in` key. */
 export type PivotColumns<
   C extends ColumnMap,
   A extends PivotAggregate,
@@ -79,6 +92,7 @@ export type PivotColumns<
     PivotType<A, C[V]>
   >;
 };
+/** Options of {@link unpivot}. */
 export interface UnpivotOptions<
   C extends ColumnMap,
   In extends readonly Key<C>[],
@@ -86,15 +100,22 @@ export interface UnpivotOptions<
   F extends string,
   I extends boolean,
 > {
+  /** The name of the output column that holds the unpivoted values. */
   readonly value: V;
-  /** The output column holding each unpivoted column's key. */
+  /** The name of the output column that holds each value's source column key. */
   readonly for: F;
+  /** The keys of the source columns to rotate into rows. They must have the same Snowflake type. */
   readonly in: In;
+  /** Keeps rows whose value is NULL, which UNPIVOT drops by default. */
   readonly includeNulls?: I;
 }
 type UnpivotValue<U, I extends boolean, T extends DataType> = I extends true
   ? Column<NonNullable<U>, null extends U ? false : true, string, 'none', T>
   : Column<NonNullable<U>, true, string, 'none', T>;
+/**
+ * The columns of an {@link unpivot} result: the source columns not in `in`, plus the `value` and
+ * `for` columns.
+ */
 export type UnpivotColumns<
   C extends ColumnMap,
   In extends readonly Key<C>[],
@@ -221,7 +242,26 @@ function aggregation(
   return { aggregate, value, by, groups, node };
 }
 
-/** Pivots declared values of one column into typed columns; other source columns group rows. */
+/**
+ * Rotates the values of the `for` column into columns with `PIVOT`, aggregating the value column.
+ *
+ * Every other source column groups the rows, so narrow the source with `select(...).as()` first.
+ * Pivoted columns are nullable unless the aggregate is `count` or a `default` is given. The result
+ * is a table to select from, join, or turn into a derived table or CTE.
+ *
+ * @param name - The source name of the result.
+ * @example
+ * ```ts
+ * const quarterly = pivot(sales, 'QUARTERLY', {
+ *   aggregate: 'sum',
+ *   value: 'amount',
+ *   for: 'quarter',
+ *   in: { q1: 'Q1', q2: 'Q2' },
+ *   default: '0',
+ * });
+ * select(quarterly);
+ * ```
+ */
 export function pivot<
   C extends ColumnMap,
   const N extends string,
@@ -286,8 +326,10 @@ export function pivot(
 }
 
 /**
- * PIVOT ... IN (ANY): output columns are only known at execution, so the result is
- * an unvalidated raw query whose row type defaults to unknown.
+ * Compiles a PIVOT over every value of the `for` column, `IN (ANY)`, to a raw query.
+ *
+ * The columns are only known at execution, so rows are `unknown` and not validated. Run it with
+ * `queryRaw`.
  */
 export function dynamicPivot<
   C extends ColumnMap,
@@ -327,7 +369,23 @@ export function dynamicPivot(
   });
 }
 
-/** Rotates same-typed columns into rows of (`for` = column key, `value` = column value). */
+/**
+ * Rotates columns into rows with `UNPIVOT`.
+ *
+ * The `value` column takes the columns' shared SQL type, and the `for` column holds each source key
+ * as TEXT, typed as the union of the `in` keys.
+ *
+ * @param name - The source name of the result.
+ * @example
+ * ```ts
+ * const monthly = unpivot(budgets, 'MONTHLY', {
+ *   value: 'amount',
+ *   for: 'month',
+ *   in: ['jan', 'feb'],
+ * });
+ * select(monthly);
+ * ```
+ */
 export function unpivot<
   C extends ColumnMap,
   const N extends string,

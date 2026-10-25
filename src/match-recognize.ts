@@ -34,20 +34,33 @@ import {
   type Table,
 } from './schema.js';
 
+/**
+ * A MATCH_RECOGNIZE row pattern built with {@link rowPattern}. `V` is the union of its variable
+ * names.
+ */
 export interface RowPattern<V extends string = string, Empty extends boolean = boolean> {
+  /** The pattern's syntax tree. */
   readonly node: PatternNode;
+  /** The pattern variables, in order of first appearance. */
   readonly variables: readonly string[];
   /** Whether the pattern can match zero rows. */
   readonly empty: boolean;
+  /** Whether the pattern contains an exclusion. */
   readonly excludes: boolean;
+  /** Whether a quantifier can be applied. Anchors and exclusions cannot be quantified. */
   readonly quantifiable: boolean;
+  /** @internal */
   readonly variableType?: V;
+  /** @internal */
   readonly emptyType?: Empty;
 }
+/** A row pattern that a quantifier such as `oneOrMore` can be applied to. */
 export interface QuantifiablePattern<V extends string = string, Empty extends boolean = boolean>
   extends RowPattern<V, Empty> {
+  /** Quantifiers can be applied. */
   readonly quantifiable: true;
 }
+/** Options of the {@link rowPattern} quantifiers. */
 export interface QuantifierOptions {
   /** Prefer the fewest repetitions. */
   readonly reluctant?: boolean;
@@ -110,8 +123,26 @@ function quantify(
   );
 }
 
-/** Composable row pattern terms. Variable names are matched case-insensitively by Snowflake. */
+/**
+ * Builders for MATCH_RECOGNIZE row patterns. Variable names are matched case-insensitively by
+ * Snowflake.
+ *
+ * @example
+ * ```ts
+ * const { variable, sequence, oneOrMore } = rowPattern;
+ * const vShape = sequence(
+ *   variable('start'),
+ *   oneOrMore(variable('down')),
+ *   oneOrMore(variable('up')),
+ * );
+ * ```
+ */
 export const rowPattern = /* @__PURE__ */ Object.freeze({
+  /**
+   * A pattern variable, matched by its `define` predicate or by every row when it has none.
+   *
+   * @throws `TypeError` unless the name is a simple identifier.
+   */
   variable<const V extends string>(name: V): QuantifiablePattern<V, false> {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name.length > 255 || name === '__proto__')
       throw new TypeError('Pattern variables must be simple identifiers.');
@@ -120,6 +151,7 @@ export const rowPattern = /* @__PURE__ */ Object.freeze({
       false
     >;
   },
+  /** Matches the items one after another. */
   sequence<const P extends Patterns>(
     ...values: P
   ): QuantifiablePattern<
@@ -133,6 +165,7 @@ export const rowPattern = /* @__PURE__ */ Object.freeze({
       values.some((value) => value.excludes),
     ) as never;
   },
+  /** Matches any one of the items, preferring earlier ones. */
   alternation<const P extends Patterns>(
     ...values: P
   ): QuantifiablePattern<
@@ -170,6 +203,7 @@ export const rowPattern = /* @__PURE__ */ Object.freeze({
       false,
     ) as RowPattern<V, E>;
   },
+  /** `^`, which matches the start of a partition. */
   start: /* @__PURE__ */ pattern(
     { kind: 'anchor', position: 'start' },
     [],
@@ -177,6 +211,7 @@ export const rowPattern = /* @__PURE__ */ Object.freeze({
     false,
     false,
   ) as RowPattern<never, true>,
+  /** `$`, which matches the end of a partition. */
   end: /* @__PURE__ */ pattern(
     { kind: 'anchor', position: 'end' },
     [],
@@ -184,25 +219,31 @@ export const rowPattern = /* @__PURE__ */ Object.freeze({
     false,
     false,
   ) as RowPattern<never, true>,
+  /** `*`: zero or more repetitions. */
   zeroOrMore<V extends string>(
     value: QuantifiablePattern<V>,
     options: QuantifierOptions = {},
   ): QuantifiablePattern<V, true> {
     return quantify(value, 0, undefined, options) as QuantifiablePattern<V, true>;
   },
+  /** `+`: one or more repetitions. */
   oneOrMore<V extends string, E extends boolean>(
     value: QuantifiablePattern<V, E>,
     options: QuantifierOptions = {},
   ): QuantifiablePattern<V, E> {
     return quantify(value, 1, undefined, options) as QuantifiablePattern<V, E>;
   },
+  /** `?`: zero or one repetition. */
   optional<V extends string>(
     value: QuantifiablePattern<V>,
     options: QuantifierOptions = {},
   ): QuantifiablePattern<V, true> {
     return quantify(value, 0, 1, options) as QuantifiablePattern<V, true>;
   },
-  /** `{min}` without a maximum, `{min,max}` with one, and `{min,}` with Infinity. */
+  /**
+   * A bounded repetition: `{min}` without a maximum, `{min,max}` with one, and `{min,}` with
+   * `Infinity`.
+   */
   repeat<V extends string, E extends boolean, const Min extends number>(
     value: QuantifiablePattern<V, E>,
     min: Min,
@@ -218,7 +259,15 @@ export const rowPattern = /* @__PURE__ */ Object.freeze({
   },
 });
 
+/**
+ * How many rows MATCH_RECOGNIZE returns: `'one'` per match, or `'all'` rows of each match,
+ * optionally omitting empty matches or including unmatched rows.
+ */
 export type RowsPerMatch = 'one' | 'all' | 'all-omit-empty' | 'all-with-unmatched';
+/**
+ * Where matching resumes after a match: past its last row, at the next row, or at the first or last
+ * row mapped to a variable.
+ */
 export type AfterMatch<V extends string> =
   | 'past-last-row'
   | 'to-next-row'
@@ -236,33 +285,51 @@ type Navigated<T, N extends string, E extends AnyExpression> = Expression<
   MatchRowScope<N>,
   ExpressionDataType<E>
 >;
+/**
+ * A navigation function such as `lag` or `prev`: reads a column of a row before or after the
+ * current one, by a constant offset that defaults to 1, with an optional fallback.
+ */
 export interface Navigation<N extends string> {
+  /** Reads a column `offset` rows away, 1 by default. NULL when there is no such row. */
   <E extends RowExpression<N>>(
     value: E,
     offset?: number,
   ): Navigated<InferExpression<E> | null, N, E>;
+  /** Reads a column `offset` rows away, or `fallback` when there is no such row. */
   <E extends RowExpression<N>>(
     value: E,
     offset: number,
     fallback: NonNullable<NoInfer<InferExpression<E>>>,
   ): Navigated<InferExpression<E>, N, E>;
 }
+/** The helpers passed to `define` in {@link matchRecognize}. */
 export interface DefineContext<C extends ColumnMap, N extends string> {
   /** The row being classified. */
   readonly row: BoundColumns<C, MatchRowScope<N>>;
+  /** `LAG`: a column of an earlier row of the partition. */
   readonly lag: Navigation<N>;
+  /** `LEAD`: a column of a later row of the partition. */
   readonly lead: Navigation<N>;
+  /** `NEXT`: a column of the next row. */
   readonly next: Navigation<N>;
+  /** `LAST`: a column of the last row mapped so far. */
   last<E extends RowExpression<N>>(value: E): Navigated<InferExpression<E>, N, E>;
 }
+/** The helpers passed to `measures` in {@link matchRecognize}. */
 export interface MeasureContext<C extends ColumnMap, N extends string, V extends string> {
+  /** The source columns of the current row. */
   readonly row: BoundColumns<C, MatchRowScope<N>>;
   /** Columns restricted to rows mapped to each variable. */
   readonly vars: { readonly [K in V]: BoundColumns<C, MatchVariableScope<N, K>> };
+  /** `LAG`: a column of an earlier row of the partition. */
   readonly lag: Navigation<N>;
+  /** `LEAD`: a column of a later row of the partition. */
   readonly lead: Navigation<N>;
+  /** `PREV`: a column of the previous row. */
   readonly prev: Navigation<N>;
+  /** `NEXT`: a column of the next row. */
   readonly next: Navigation<N>;
+  /** `FIRST`: the value at the first row of the match, or at the first row mapped to a variable. */
   first<E extends Expression<unknown, MatchRowScope<N> | MatchVariableScope<N, V>, string>>(
     value: E,
   ): Expression<
@@ -271,6 +338,7 @@ export interface MeasureContext<C extends ColumnMap, N extends string, V extends
     ExpressionScope<E>,
     ExpressionDataType<E>
   >;
+  /** `LAST`: the value at the last row of the match, or at the last row mapped to a variable. */
   last<E extends Expression<unknown, MatchRowScope<N> | MatchVariableScope<N, V>, string>>(
     value: E,
   ): Expression<
@@ -283,10 +351,15 @@ export interface MeasureContext<C extends ColumnMap, N extends string, V extends
   final<E extends AnyExpression>(value: E): E;
   /** Evaluates up to the current row; ALL ROWS PER MATCH only. */
   running<E extends AnyExpression>(value: E): E;
+  /** `COUNT(*)`: the number of rows in the match. */
   count(): Expression<bigint, MatchRowScope<N>, never, 'integer'>;
+  /** `COUNT(variable.*)`: the number of rows mapped to a variable. */
   count<K extends V>(variable: K): Expression<bigint, MatchVariableScope<N, K>, never, 'integer'>;
+  /** `MATCH_NUMBER()`: the match's sequential number within its partition. */
   matchNumber(): Expression<bigint, MatchRowScope<N>, never, 'integer'>;
+  /** `MATCH_SEQUENCE_NUMBER()`: the row's sequential number within its match. */
   matchSequenceNumber(): Expression<bigint, MatchRowScope<N>, never, 'integer'>;
+  /** `CLASSIFIER()`: the variable the row is mapped to. */
   classifier(): Expression<V, MatchRowScope<N>, never, 'text'>;
 }
 type MeasureColumn<T, D extends DataType> = Column<
@@ -305,6 +378,10 @@ type NullableMeasures<R extends RowsPerMatch, E extends boolean> = R extends 'al
   : R extends 'all-omit-empty'
     ? false
     : E;
+/**
+ * The columns of a {@link matchRecognize} result: the partition keys for one row per match, or
+ * every source column otherwise, followed by the measures.
+ */
 export type MatchRecognizeColumns<
   C extends ColumnMap,
   P extends keyof C,
@@ -320,6 +397,7 @@ export type MatchRecognizeColumns<
 type Collisions<T, Taken> = { readonly [K in Extract<keyof T, Taken>]: never };
 type Unknown<T, Allowed> = { readonly [K in Exclude<keyof T, Allowed>]: never };
 
+/** Options of {@link matchRecognize}. */
 export interface MatchRecognizeOptions<
   C extends ColumnMap,
   N extends string,
@@ -330,16 +408,23 @@ export interface MatchRecognizeOptions<
   M,
   R extends RowsPerMatch,
 > {
+  /** Source column keys to partition by. GEOGRAPHY and GEOMETRY columns are rejected. */
   readonly partitionBy?: P;
+  /** Orders rows within each partition. */
   readonly orderBy?: (
     row: BoundColumns<C, MatchRowScope<N>>,
   ) => readonly Ordering<MatchRowScope<N>>[];
+  /** The row pattern, built with {@link rowPattern}. */
   readonly pattern: RowPattern<V, E>;
-  /** Variables without a definition match every row. */
+  /**
+   * BOOLEAN conditions keyed by pattern variable. Variables without a definition match every row.
+   */
   readonly define?: (context: DefineContext<C, N>) => D;
+  /** Output expressions computed for each match, keyed by output column name. */
   readonly measures?: (context: MeasureContext<C, N, V>) => M;
-  /** Defaults to one row per match. */
+  /** How many rows to return per match. Defaults to `'one'`. */
   readonly rowsPerMatch?: R;
+  /** Where matching resumes after a match. Defaults to past the last row. */
   readonly afterMatch?: AfterMatch<NoInfer<V>>;
 }
 
@@ -397,8 +482,33 @@ function reference(name: string): SourceReference {
 const bigintText = () => z.string().regex(/^\d+$/).transform(BigInt);
 
 /**
- * A MATCH_RECOGNIZE table source. Inside it, columns are named by their source keys, and
- * output columns are the partition keys (one row per match) or all source keys, then measures.
+ * Creates a MATCH_RECOGNIZE table source for row pattern matching.
+ *
+ * Inside the clause, columns are named by their source keys. The output columns are the partition
+ * keys and measures for one row per match, or every source column and the measures otherwise.
+ * Measures become nullable when unmatched rows or empty matches can appear. In ALL ROWS PER MATCH,
+ * wrap `first` or `last` of variable columns in `final`.
+ *
+ * @param name - The source name of the result.
+ * @example
+ * ```ts
+ * const { variable, sequence, oneOrMore } = rowPattern;
+ * const vShapes = matchRecognize(stocks, 'V', {
+ *   partitionBy: ['company'],
+ *   orderBy: (row) => [asc(row.day)],
+ *   pattern: sequence(variable('start'), oneOrMore(variable('down')), oneOrMore(variable('up'))),
+ *   define: ({ row, lag }) => ({
+ *     down: lt(row.price, lag(row.price)),
+ *     up: gt(row.price, lag(row.price)),
+ *   }),
+ *   measures: ({ row, vars, first, last, matchNumber }) => ({
+ *     match: matchNumber(),
+ *     startDay: first(row.day),
+ *     bottomDay: last(vars.down.day),
+ *   }),
+ * });
+ * select(vShapes);
+ * ```
  */
 export function matchRecognize<
   C extends ColumnMap,

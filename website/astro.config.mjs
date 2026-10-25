@@ -2,6 +2,7 @@ import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightTypeDoc, { typeDocSidebarGroup } from 'starlight-typedoc';
+import { apiEntryPoints, apiTsconfig, apiTypeDocOptions } from './src/api.ts';
 import { baseLinksIntegration, siteLocation } from './src/site.ts';
 
 const repository = 'https://github.com/Mkalo/snowtyped';
@@ -27,18 +28,22 @@ export default defineConfig({
       plugins: [
         starlightLinksValidator({ errorOnLocalLinks: true }),
         starlightTypeDoc({
-          entryPoints: ['../src/index.ts', '../src/snowflake/index.ts', '../src/ddl/index.ts'],
-          tsconfig: '../tsconfig.build.json',
+          entryPoints: apiEntryPoints,
+          tsconfig: apiTsconfig,
           output: 'api',
           sidebar: { label: 'API reference', collapsed: true, readmeLabel: 'Overview' },
           typeDoc: {
-            excludePrivate: true,
-            excludeProtected: true,
-            excludeInternal: true,
-            excludeExternals: true,
+            ...apiTypeDocOptions,
             name: 'API reference',
             readme: './src/api-readme.md',
-            plugin: ['./typedoc-modules.mjs'],
+            indexFormat: 'table',
+            parametersFormat: 'table',
+            interfacePropertiesFormat: 'table',
+            classPropertiesFormat: 'table',
+            typeAliasPropertiesFormat: 'table',
+            typeDeclarationFormat: 'table',
+            useCodeBlocks: true,
+            tableColumnSettings: { hideModifiers: true, hideSources: true },
             sourceLinkTemplate: `${repository}/blob/${sourceRef}/{path}#L{line}`,
           },
         }),

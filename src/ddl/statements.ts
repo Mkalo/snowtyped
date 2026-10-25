@@ -3,13 +3,20 @@ import type { ServerValue, Table } from '../schema.js';
 import type { TableDefinition } from './definition.js';
 import { type PhysicalType, renderType } from './types.js';
 
+/** A column in a CREATE TABLE or ADD COLUMN node. */
 export interface ColumnDefinitionNode {
+  /** The column name. */
   readonly name: IdentifierNode;
+  /** The column's physical type. */
   readonly type: PhysicalType;
+  /** Whether the column is NOT NULL. */
   readonly notNull: boolean;
+  /** The column comment. */
   readonly comment?: string;
+  /** The column's DEFAULT, AUTOINCREMENT, or virtual AS expression. */
   readonly serverValue?: ServerValue;
 }
+/** A schema or table DDL statement node, compiled by {@link compileDdl}. */
 export type DdlNode =
   | {
       readonly kind: 'create-schema';
@@ -90,17 +97,32 @@ export type DdlNode =
       readonly column: IdentifierNode;
       readonly comment: string | null;
     };
-/** Snowflake commits each DDL statement on its own; destructive statements can lose data. */
+/**
+ * A DDL statement created by the schema and table builders. Snowflake commits each DDL statement on
+ * its own.
+ */
 export interface DdlStatement {
+  /** Identifies a DDL statement. */
   readonly kind: 'ddl';
+  /** The statement's syntax tree. */
   readonly node: DdlNode;
+  /**
+   * Whether the statement can lose data: dropping a schema, table, or column, or CREATE OR REPLACE.
+   */
   readonly destructive: boolean;
+  /** Compiles the statement. DDL has no bind parameters, so comments are escaped literals. */
   compile(): CompiledQuery;
 }
+/** Options of `alterTable(table).addColumn()`. */
 export interface ColumnOptions {
+  /** Declares the column NOT NULL. */
   readonly notNull?: boolean;
+  /** The column comment. */
   readonly comment?: string;
-  /** Expressions are trusted SQL text, as written in the column declaration. */
+  /**
+   * A DEFAULT, AUTOINCREMENT, or virtual AS expression. Expressions are trusted SQL text, as
+   * written in the column declaration.
+   */
   readonly serverValue?: ServerValue;
 }
 
@@ -148,6 +170,7 @@ function comment(value: string | null): string {
   return value === null ? 'UNSET COMMENT' : `SET COMMENT = ${literal(value)}`;
 }
 
+/** Compiles a DDL node to SQL text. Names are quoted and comments are escaped string literals. */
 export function compileDdl(node: DdlNode): string {
   const name = quoteIdentifier(node.name);
   switch (node.kind) {
@@ -218,6 +241,7 @@ export function columnNode(
   });
 }
 
+/** Creates `CREATE SCHEMA`, optionally `IF NOT EXISTS` and with a comment. */
 export function createSchema(
   name: IdentifierNode,
   options: { readonly ifNotExists?: boolean; readonly comment?: string } = {},
@@ -229,6 +253,10 @@ export function createSchema(
     ...(options.comment === undefined ? {} : { comment: options.comment }),
   });
 }
+/**
+ * Creates `DROP SCHEMA`, RESTRICT unless `cascade` is set. Snowflake only enforces RESTRICT for
+ * foreign keys from other schemas, so it still drops a schema that has tables.
+ */
 export function dropSchema(
   name: IdentifierNode,
   options: { readonly ifExists?: boolean; readonly cascade?: boolean } = {},
@@ -240,9 +268,20 @@ export function dropSchema(
     cascade: options.cascade ?? false,
   });
 }
+/** Creates `ALTER SCHEMA ... SET COMMENT`, or `UNSET COMMENT` for `null`. */
 export function setSchemaComment(name: IdentifierNode, value: string | null): DdlStatement {
   return statement({ kind: 'set-schema-comment', name, comment: value });
 }
+/**
+ * Creates `CREATE TABLE` from a {@link TableDefinition}, optionally `IF NOT EXISTS` or
+ * `OR REPLACE`, which is destructive.
+ *
+ * @throws `TypeError` when both `ifNotExists` and `orReplace` are set.
+ * @example
+ * ```ts
+ * createTable(defineTable(customers), { ifNotExists: true }).compile().sql;
+ * ```
+ */
 export function createTable(
   definition: TableDefinition,
   options: {
@@ -269,6 +308,7 @@ export function createTable(
     ...(typeof definition.comment === 'string' ? { comment: definition.comment } : {}),
   });
 }
+/** Creates `DROP TABLE` for a declared table or a table name. */
 export function dropTable(
   target: Table | IdentifierNode,
   options: { readonly ifExists?: boolean } = {},
@@ -280,19 +320,43 @@ export function dropTable(
   });
 }
 
+/**
+ * `ALTER TABLE` statements for one table, created by {@link alterTable}. Column names are physical
+ * names.
+ */
 export interface AlterTable {
-  /** Renames within the same database and schema. */
+  /** Renames the table within the same database and schema. */
   renameTo(name: string): DdlStatement;
+  /** Sets the table comment, or unsets it for `null`. */
   setComment(comment: string | null): DdlStatement;
+  /** Adds a column. */
   addColumn(name: string, type: PhysicalType, options?: ColumnOptions): DdlStatement;
+  /** Drops a column. Destructive. */
   dropColumn(name: string): DdlStatement;
+  /** Renames a column. */
   renameColumn(name: string, to: string): DdlStatement;
+  /**
+   * Changes a column's type. Snowflake only allows changes such as widening VARCHAR or NUMBER
+   * precision.
+   */
   setColumnType(name: string, type: PhysicalType): DdlStatement;
+  /** Declares a column NOT NULL. Fails when existing rows hold NULL. */
   setNotNull(name: string): DdlStatement;
+  /** Allows NULL in a column. */
   dropNotNull(name: string): DdlStatement;
+  /** Sets a column comment, or unsets it for `null`. */
   setColumnComment(name: string, comment: string | null): DdlStatement;
+  /** Removes a column's DEFAULT. */
   dropDefault(name: string): DdlStatement;
 }
+/**
+ * Builds `ALTER TABLE` statements for a declared table or a table name.
+ *
+ * @example
+ * ```ts
+ * alterTable(customers).addColumn('TIER', sqlType.varchar(20));
+ * ```
+ */
 export function alterTable(target: Table | IdentifierNode): AlterTable {
   const name = nameOf(target);
   return Object.freeze({

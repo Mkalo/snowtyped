@@ -7,19 +7,59 @@ import { isRawQuery, type RawQuery, type SqlInterpolation } from '../sql.js';
 import { createClient, isUnusable, type SnowflakeClient } from './client.js';
 import { type ExecuteOptions, requestSignal } from './request.js';
 
+/** Options of {@link createPool}, passed to the `snowflake-sdk` pool. */
 export interface PoolOptions {
+  /** The number of connections kept open. Defaults to 0. */
   readonly min?: number;
+  /**
+   * The most connections open at once. Defaults to 5. A transaction or stream holds one for its
+   * duration.
+   */
   readonly max?: number;
+  /** How long a request waits for a connection before it fails. Waits are unbounded by default. */
   readonly acquireTimeoutMillis?: number;
+  /** How long a connection can stay idle before eviction closes it. */
   readonly idleTimeoutMillis?: number;
+  /**
+   * How often idle connections are evicted. Without it, idle connections stay open until `close()`.
+   */
   readonly evictionRunIntervalMillis?: number;
-  /** Heartbeat each connection before lending it; costs one round trip per acquire. */
+  /**
+   * Heartbeats each connection before lending it and replaces a terminated one. Costs one round
+   * trip per acquire.
+   */
   readonly testOnBorrow?: boolean;
 }
+/**
+ * A {@link SnowflakeClient} that borrows a pooled connection for each request, and pins one for a
+ * whole transaction or stream.
+ */
 export interface PooledClient extends SnowflakeClient {
+  /**
+   * Rejects new work, waits for running and queued operations, including unfinished streams, and
+   * then closes every connection.
+   */
   close(): Promise<void>;
 }
 
+/**
+ * Creates a connection pool with the `snowflake-sdk` pool, loading `snowflake-sdk` only when
+ * called.
+ *
+ * A connection whose session has terminated is destroyed instead of being lent again. A pooled
+ * request's `signal` and `timeoutMs` also cover the wait for a connection. Always `close()` the
+ * pool.
+ *
+ * @example
+ * ```ts
+ * const pool = await createPool(connectionOptions, { max: 8, acquireTimeoutMillis: 10_000 });
+ * try {
+ *   await pool.execute(select(customers));
+ * } finally {
+ *   await pool.close();
+ * }
+ * ```
+ */
 export async function createPool(
   connectionOptions: ConnectionOptions,
   options: PoolOptions = {},

@@ -12,25 +12,63 @@ import type {
 } from './ast.js';
 import type { DataType } from './schema.js';
 
+/**
+ * A typed SQL expression, such as a column, a function call, a predicate, or an aggregate.
+ *
+ * `T` is the decoded TypeScript value, `D` the SQL type that comparisons and functions check, and
+ * `Scope` the names of the sources the expression references. Queries reject expressions whose
+ * sources are not in scope.
+ *
+ * @typeParam T - The value the expression decodes to, including `null` when it is nullable.
+ * @typeParam Scope - Names of the sources the expression reads.
+ * @typeParam NullScope - Sources whose absence in an outer join makes the expression NULL.
+ * @typeParam D - The expression's SQL type.
+ */
 export interface Expression<
   T = unknown,
   Scope extends string = string,
   NullScope extends string = Scope,
   D extends DataType = DataType,
 > {
+  /** The expression's syntax tree. */
   readonly expression: ExpressionNode;
+  /** The expression's SQL type. */
   readonly dataType: D;
+  /** Decodes the value as read from a result row. */
   readonly readSchema: z.ZodType<T>;
+  /** Validates JavaScript values written to or compared with the expression. */
   readonly valueSchema: z.ZodType<T>;
+  /** The sources the expression reads. */
   readonly refs: readonly SourceReference[];
+  /** The sources whose absence in an outer join makes the expression NULL. */
   readonly nullRefs: readonly SourceReference[];
+  /**
+   * Whether the expression is a plain value, contains an aggregate, or contains a window function.
+   */
   readonly phase: 'scalar' | 'aggregate' | 'window';
+  /** How the compiler serializes the expression when it is projected. */
   readonly wireType?: WireType;
+  /** @internal */
   readonly scopeType?: Scope;
+  /** @internal */
   readonly nullScopeType?: NullScope;
+  /**
+   * Validates a JavaScript value with {@link Expression.valueSchema} and encodes it as a bind
+   * parameter of this expression's type.
+   */
   encode(value: T): ExpressionNode;
 }
+/** An expression of any value type, SQL type, and scope. */
 export type AnyExpression = Expression<unknown, string, string>;
+/**
+ * The decoded TypeScript value of an expression.
+ *
+ * @example
+ * ```ts
+ * const total = sum(orders.columns.amount);
+ * type Total = InferExpression<typeof total>; // string | null
+ * ```
+ */
 export type InferExpression<E> = E extends Expression<infer T, string, string> ? T : never;
 // Non-distributive: a literal argument would otherwise widen the scope of comparisons to string.
 export type ExpressionScope<E> = [E] extends [never]
@@ -44,6 +82,10 @@ export type ExpressionDataType<E> = E extends {
 }
   ? D
   : never;
+/**
+ * A BOOLEAN expression, accepted by `.where()`, `.having()`, `.qualify()`, joins, and {@link and},
+ * {@link or}, and {@link not}.
+ */
 export type Predicate<S extends string = string> = Expression<boolean | null, S, S, 'boolean'>;
 
 export type NumericType = 'integer' | 'decimal' | 'float';
@@ -194,7 +236,8 @@ function exactNumber(value: number, source: string): number {
 /**
  * By default, rejects JSON numbers whose text carries digits a JavaScript number cannot hold,
  * instead of rounding them. Text is accepted when it is the decoded double correctly rounded to the
- * text's own precision, which covers both shortest spellings and Snowflake's 16-digit DOUBLE output.
+ * text's own precision, which covers both shortest spellings and Snowflake's 16-digit DOUBLE
+ * output.
  */
 export const jsonText = (number: (value: number, source: string) => unknown = exactNumber) =>
   z.string().transform((input, context) => {
@@ -269,36 +312,56 @@ type Comparand<L extends AnyExpression> = [ExpressionDataType<L>] extends [Spati
   :
       | NoInfer<InferExpression<L>>
       | Expression<unknown, string, string, ComparableType<ExpressionDataType<L>>>;
+/**
+ * Compares two values with `=`.
+ *
+ * `right` is a literal of `left`'s TypeScript type, which is bound as a parameter, or an expression
+ * of a comparable SQL type. `eq(value, null)` compiles to `value IS NULL`.
+ *
+ * @example
+ * ```ts
+ * select(customers).where(eq(customers.columns.name, 'Ada'));
+ * ```
+ */
 export function eq<L extends AnyExpression, R extends Comparand<L>>(
   left: L,
   right: R,
 ): Predicate<ExpressionScope<L> | ExpressionScope<R>> {
   return comparison('=', left, right);
 }
+/**
+ * Compares two values with `<>`. `ne(value, null)` compiles to `value IS NOT NULL`.
+ *
+ * Accepts the same operands as {@link eq}.
+ */
 export function ne<L extends AnyExpression, R extends Comparand<L>>(
   left: L,
   right: R,
 ): Predicate<ExpressionScope<L> | ExpressionScope<R>> {
   return comparison('<>', left, right);
 }
+/** Compares two values with `>`. Accepts the same operands as {@link eq}. */
 export function gt<L extends AnyExpression, R extends Comparand<L>>(
   left: L,
   right: R,
 ): Predicate<ExpressionScope<L> | ExpressionScope<R>> {
   return comparison('>', left, right);
 }
+/** Compares two values with `>=`. Accepts the same operands as {@link eq}. */
 export function gte<L extends AnyExpression, R extends Comparand<L>>(
   left: L,
   right: R,
 ): Predicate<ExpressionScope<L> | ExpressionScope<R>> {
   return comparison('>=', left, right);
 }
+/** Compares two values with `<`. Accepts the same operands as {@link eq}. */
 export function lt<L extends AnyExpression, R extends Comparand<L>>(
   left: L,
   right: R,
 ): Predicate<ExpressionScope<L> | ExpressionScope<R>> {
   return comparison('<', left, right);
 }
+/** Compares two values with `<=`. Accepts the same operands as {@link eq}. */
 export function lte<L extends AnyExpression, R extends Comparand<L>>(
   left: L,
   right: R,
@@ -323,12 +386,20 @@ function match<S extends string>(
     predicate([left]),
   );
 }
+/**
+ * Matches TEXT or VARIANT values against a case-sensitive LIKE pattern, where `%` matches any
+ * sequence and `_` any single character. The pattern is bound as a parameter.
+ */
 export function like<S extends string>(
   left: Expression<string | null, S, string, TextType>,
   pattern: string,
 ): Predicate<S> {
   return match('LIKE', left, pattern);
 }
+/**
+ * Matches TEXT or VARIANT values against a case-insensitive ILIKE pattern. The pattern is bound as
+ * a parameter.
+ */
 export function ilike<S extends string>(
   left: Expression<string | null, S, string, TextType>,
   pattern: string,
@@ -351,12 +422,28 @@ function logical<S extends string>(
     predicate(values),
   );
 }
+/**
+ * Combines predicates with AND.
+ *
+ * @throws `TypeError` when called without predicates.
+ *
+ * @example
+ * ```ts
+ * select(orders).where(and(gt(orders.columns.amount, '100'), eq(orders.columns.customerId, 7n)));
+ * ```
+ */
 export function and<S extends string>(...values: readonly Predicate<S>[]): Predicate<S> {
   return logical('AND', values);
 }
+/**
+ * Combines predicates with OR.
+ *
+ * @throws `TypeError` when called without predicates.
+ */
 export function or<S extends string>(...values: readonly Predicate<S>[]): Predicate<S> {
   return logical('OR', values);
 }
+/** Negates a predicate with NOT. */
 export function not<S extends string>(value: Predicate<S>): Predicate<S> {
   assertPredicate(value, 'NOT');
   return expression(
@@ -365,6 +452,7 @@ export function not<S extends string>(value: Predicate<S>): Predicate<S> {
     predicate([value]),
   );
 }
+/** Tests whether a value is NULL. The result is never NULL itself. */
 export function isNull<E extends AnyExpression>(
   value: E,
 ): Expression<boolean, ExpressionScope<E>, never, 'boolean'> {
@@ -374,6 +462,7 @@ export function isNull<E extends AnyExpression>(
     { ...predicate([value]), nullRefs: [] },
   );
 }
+/** Tests whether a value is not NULL. The result is never NULL itself. */
 export function isNotNull<E extends AnyExpression>(
   value: E,
 ): Expression<boolean, ExpressionScope<E>, never, 'boolean'> {
@@ -383,6 +472,17 @@ export function isNotNull<E extends AnyExpression>(
     { ...predicate([value]), nullRefs: [] },
   );
 }
+/**
+ * Tests whether a value is one of a list of literals, with `IN (...)`, or `NOT IN` when `negate` is
+ * true. Each literal is validated and bound as a parameter.
+ *
+ * An empty list compiles to FALSE, or TRUE when negated. For a subquery, use {@link inSubquery}.
+ *
+ * @example
+ * ```ts
+ * select(orders).where(inArray(orders.columns.customerId, [1n, 2n, 3n]));
+ * ```
+ */
 export function inArray<
   E extends Expression<unknown, string, string, Exclude<DataType, SpatialType>>,
 >(
@@ -402,10 +502,18 @@ export function inArray<
     predicate([value]),
   );
 }
+/** An ORDER BY item created by {@link asc} or {@link desc}. */
 export interface Ordering<S extends string = string> {
+  /** The ORDER BY item's syntax tree. */
   readonly ast: OrderNode;
+  /** The ordered expression. */
   readonly value: Expression<unknown, S, string, KeyType>;
 }
+/**
+ * Orders by a value ascending, optionally with `NULLS FIRST` or `NULLS LAST`.
+ *
+ * GEOGRAPHY and GEOMETRY values cannot be ordered.
+ */
 export function asc<T, S extends string, N extends string>(
   value: Expression<T, S, N, KeyType>,
   nulls?: 'FIRST' | 'LAST',
@@ -420,6 +528,11 @@ export function asc<T, S extends string, N extends string>(
     value,
   });
 }
+/**
+ * Orders by a value descending, optionally with `NULLS FIRST` or `NULLS LAST`.
+ *
+ * GEOGRAPHY and GEOMETRY values cannot be ordered.
+ */
 export function desc<T, S extends string, N extends string>(
   value: Expression<T, S, N, KeyType>,
   nulls?: 'FIRST' | 'LAST',
@@ -449,6 +562,19 @@ export function aggregate(
     ...(distinct ? { distinct: true } : {}),
   });
 }
+/**
+ * Counts rows with `COUNT(*)`, or the non-NULL values of an expression, optionally `DISTINCT`.
+ *
+ * The count decodes as a non-null `bigint`.
+ *
+ * @category Aggregates
+ * @example
+ * ```ts
+ * select(orders, { customerId: orders.columns.customerId, orders: count() }).groupBy(
+ *   orders.columns.customerId,
+ * );
+ * ```
+ */
 export function count<E extends AnyExpression = Expression<never, never>>(
   value?: E,
   distinct = false,
@@ -467,6 +593,14 @@ export function count<E extends AnyExpression = Expression<never, never>>(
     },
   );
 }
+/**
+ * Sums a numeric expression with `SUM`.
+ *
+ * The result decodes as exact decimal text, and is NULL for an empty group. Its SQL type is FLOAT
+ * for a FLOAT input and DECIMAL otherwise.
+ *
+ * @category Aggregates
+ */
 export function sum<
   E extends Expression<bigint | number | string | null, string, string, NumericType>,
 >(
@@ -511,6 +645,13 @@ function extremum<E extends Expression<unknown, string, string, Exclude<DataType
     ExpressionDataType<E>
   >;
 }
+/**
+ * Returns the smallest value with `MIN`, keeping the input's type. NULL for an empty group.
+ *
+ * ARRAY, OBJECT, VECTOR, structured, and spatial values are rejected.
+ *
+ * @category Aggregates
+ */
 export function min<
   E extends Expression<unknown, string, string, Exclude<DataType, UnorderedType>>,
 >(
@@ -523,6 +664,13 @@ export function min<
 > {
   return extremum('MIN', value);
 }
+/**
+ * Returns the largest value with `MAX`, keeping the input's type. NULL for an empty group.
+ *
+ * ARRAY, OBJECT, VECTOR, structured, and spatial values are rejected.
+ *
+ * @category Aggregates
+ */
 export function max<
   E extends Expression<unknown, string, string, Exclude<DataType, UnorderedType>>,
 >(
@@ -546,26 +694,47 @@ function textFunction<S extends string>(
     { ...metadata([value]), dataType: 'text' },
   );
 }
+/** Converts TEXT to lowercase with `LOWER`. */
 export function lower<S extends string>(
   value: Expression<string | null, S, string, TextType>,
 ): Expression<string | null, S, S, 'text'> {
   return textFunction('LOWER', value);
 }
+/** Converts TEXT to uppercase with `UPPER`. */
 export function upper<S extends string>(
   value: Expression<string | null, S, string, TextType>,
 ): Expression<string | null, S, S, 'text'> {
   return textFunction('UPPER', value);
 }
+/**
+ * The PARTITION BY and ORDER BY of a window.
+ *
+ * @category Windows
+ */
 export interface WindowOptions<S extends string = string> {
+  /** Splits rows into partitions. GEOGRAPHY and GEOMETRY values cannot be partition keys. */
   readonly partitionBy?: readonly Expression<unknown, S, string, KeyType>[];
+  /** Orders rows within each partition. */
   readonly orderBy?: readonly Ordering<S>[];
 }
+/**
+ * A ROWS frame boundary: `'UNBOUNDED PRECEDING'`, `'CURRENT ROW'`, `'UNBOUNDED FOLLOWING'`,
+ * `{ preceding: n }`, or `{ following: n }`.
+ *
+ * @category Windows
+ */
 export type FrameBoundary<Offset = { readonly unit?: never }> =
   | 'UNBOUNDED PRECEDING'
   | 'CURRENT ROW'
   | 'UNBOUNDED FOLLOWING'
   | ({ readonly preceding: number } & Offset)
   | ({ readonly following: number } & Offset);
+/**
+ * A RANGE frame boundary. Offsets may also carry an interval `unit`, such as
+ * `{ preceding: 1, unit: 'DAY' }`, for a date or timestamp ORDER BY key.
+ *
+ * @category Windows
+ */
 export type RangeBoundary = FrameBoundary<{ readonly unit?: IntervalUnit }>;
 type FrameEnd<B, Start> = Exclude<
   B,
@@ -575,10 +744,24 @@ type FrameEnd<B, Start> = Exclude<
       : never)
   | (Start extends { readonly following: number } ? 'CURRENT ROW' : never)
 >;
+/**
+ * A window frame created by {@link rowsBetween} or {@link rangeBetween}.
+ *
+ * @category Windows
+ */
 export interface WindowFrame<Offset extends boolean = boolean> {
+  /** The frame's syntax tree. */
   readonly ast: WindowFrameNode;
+  /** @internal */
   readonly offsetType?: Offset;
 }
+/**
+ * The options of {@link over}: a window's PARTITION BY and ORDER BY, and an optional frame.
+ *
+ * A frame requires ORDER BY. A RANGE frame with offsets requires exactly one ORDER BY expression.
+ *
+ * @category Windows
+ */
 export type FramedWindowOptions<S extends string = string> =
   | (WindowOptions<S> & { readonly frame?: undefined })
   | {
@@ -662,12 +845,44 @@ function windowFrame(
     throw new TypeError('A RANGE frame cannot mix numeric and interval offsets.');
   return Object.freeze({ ast: Object.freeze({ units, start, end }) });
 }
+/**
+ * Creates a `ROWS BETWEEN start AND end` frame for {@link over}. Offsets count rows and must be
+ * nonnegative integers.
+ *
+ * @throws `TypeError` when the start follows the end or an offset is invalid.
+ * @category Windows
+ * @example
+ * ```ts
+ * over(sum(orders.columns.amount), {
+ *   partitionBy: [orders.columns.customerId],
+ *   orderBy: [asc(orders.columns.id)],
+ *   frame: rowsBetween('UNBOUNDED PRECEDING', 'CURRENT ROW'),
+ * });
+ * ```
+ */
 export function rowsBetween<
   const Start extends Exclude<FrameBoundary, 'UNBOUNDED FOLLOWING'>,
   const End extends FrameEnd<FrameBoundary, Start>,
 >(start: Start, end: End): WindowFrame<false> {
   return windowFrame('ROWS', start, end) as WindowFrame<false>;
 }
+/**
+ * Creates a `RANGE BETWEEN start AND end` frame for {@link over}.
+ *
+ * Numeric offsets need a numeric or date ORDER BY key, and interval offsets such as
+ * `{ preceding: 1, unit: 'DAY' }` need a date or timestamp key. A frame cannot mix numeric and
+ * interval offsets.
+ *
+ * @throws `TypeError` when the start follows the end or an offset is invalid.
+ * @category Windows
+ * @example
+ * ```ts
+ * over(count(), {
+ *   orderBy: [asc(trades.columns.at)],
+ *   frame: rangeBetween({ preceding: 1, unit: 'DAY' }, 'CURRENT ROW'),
+ * });
+ * ```
+ */
 export function rangeBetween<
   const Start extends Exclude<RangeBoundary, 'UNBOUNDED FOLLOWING'>,
   const End extends FrameEnd<RangeBoundary, Start>,
@@ -683,6 +898,21 @@ const temporalOrder: readonly (WireType | undefined)[] = [
   'timestamp_ltz',
   'timestamp_tz',
 ];
+/**
+ * Turns an aggregate or a ranking function into a window function with `OVER (...)`.
+ *
+ * The result keeps the input's type and SQL type. Window functions cannot be nested, and they can
+ * be filtered with `.qualify()`.
+ *
+ * @throws `TypeError` when the value is not an aggregate or window function, when a frame is given
+ * without ORDER BY or for a ranking function, or when RANGE offsets do not fit the ORDER BY key.
+ * @category Windows
+ * @example
+ * ```ts
+ * const share = over(sum(orders.columns.amount), { partitionBy: [orders.columns.customerId] });
+ * select(orders, { id: orders.columns.id, share });
+ * ```
+ */
 export function over<E extends AnyExpression, S extends string>(
   value: E,
   options: FramedWindowOptions<S> = {},
@@ -736,6 +966,19 @@ export function over<E extends AnyExpression, S extends string>(
     },
   ) as Expression<InferExpression<E>, ExpressionScope<E> | S, never, ExpressionDataType<E>>;
 }
+/**
+ * Numbers rows within each partition with `ROW_NUMBER() OVER (...)`, starting at 1.
+ *
+ * @category Windows
+ * @example
+ * ```ts
+ * const rank = rowNumber({
+ *   partitionBy: [orders.columns.customerId],
+ *   orderBy: [desc(orders.columns.amount)],
+ * });
+ * select(orders, { id: orders.columns.id, rank }).qualify(eq(rank, 1n));
+ * ```
+ */
 export function rowNumber<S extends string = never>(
   options: WindowOptions<S> = {},
 ): Expression<bigint, S, never, 'integer'> {
@@ -748,6 +991,18 @@ export function rowNumber<S extends string = never>(
     options,
   );
 }
+/**
+ * Reads a field or element of a VARIANT, ARRAY, OBJECT, or structured value with `GET`.
+ *
+ * Strings select object fields and numbers select array elements. The result is VARIANT and decodes
+ * as `unknown`; literals compared with it are bound as JSON.
+ *
+ * @throws `TypeError` when an index is not a nonnegative integer.
+ * @example
+ * ```ts
+ * select(events, { kind: jsonPath(events.columns.payload, 'kind') });
+ * ```
+ */
 export function jsonPath<E extends Expression<unknown, string, string, SemiStructuredType>>(
   value: E,
   ...path: [string | number, ...(string | number)[]]

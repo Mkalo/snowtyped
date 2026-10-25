@@ -1,9 +1,21 @@
-/** Syntax nodes are independent of driver and runtime-validation implementations. */
+/**
+ * A Snowflake identifier. Each part is quoted separately, so `parts: ['DB', 'PUBLIC', 'ORDERS']`
+ * compiles to `"DB"."PUBLIC"."ORDERS"`.
+ *
+ * Build one with {@link identifier}, which validates the parts.
+ */
 export interface IdentifierNode {
   readonly kind: 'identifier';
   readonly parts: readonly string[];
 }
+/** A value sent to Snowflake as a bind parameter. */
 export type BindValue = string | number | boolean | null;
+/**
+ * How a projected column is serialized by the compiler so its decoder receives an exact value, such
+ * as exact text for NUMBER, DATE, and timestamps.
+ *
+ * Projections without a wire type are read as the SDK returns them.
+ */
 export type WireType =
   | 'integer'
   | 'decimal'
@@ -17,9 +29,16 @@ export type WireType =
   | 'geography'
   | 'geometry'
   | 'structured';
+/**
+ * The identity of a table or derived source within a query. References with the same `name` are
+ * told apart by `id`.
+ */
 export interface SourceReference {
+  /** Unique per source, so two aliases with the same name stay distinct. */
   readonly id: symbol;
+  /** The source name columns are qualified with in SQL. */
   readonly name: string;
+  /** The identifier that qualifies column references to this source. */
   readonly qualifier: IdentifierNode;
 }
 export interface ReferenceNode {
@@ -87,6 +106,7 @@ export interface InNode {
   readonly values: readonly ExpressionNode[];
   readonly negate: boolean;
 }
+/** The unit of an interval offset in a RANGE window frame. */
 export type IntervalUnit =
   | 'YEAR'
   | 'QUARTER'
@@ -97,6 +117,7 @@ export type IntervalUnit =
   | 'MINUTE'
   | 'SECOND'
   | 'MILLISECOND';
+/** A window frame boundary, such as `3 PRECEDING` or `INTERVAL '1 DAY' PRECEDING`. */
 export interface FrameBoundaryNode {
   readonly bound:
     | 'UNBOUNDED PRECEDING'
@@ -107,6 +128,7 @@ export interface FrameBoundaryNode {
   readonly offset?: number;
   readonly unit?: IntervalUnit;
 }
+/** A `ROWS` or `RANGE` window frame. */
 export interface WindowFrameNode {
   readonly units: 'ROWS' | 'RANGE';
   readonly start: FrameBoundaryNode;
@@ -142,18 +164,23 @@ export interface CastNode {
     | `VECTOR(${'INT' | 'FLOAT'}, ${number})`
     | `${'ARRAY' | 'OBJECT' | 'MAP'}(${string})`;
 }
-/** `correlated` lists the enclosing sources the inner query may reference. */
+/**
+ * A scalar subquery, `(SELECT ...)`. `correlated` lists the enclosing sources the inner query may
+ * reference.
+ */
 export interface SubqueryNode {
   readonly kind: 'subquery';
   readonly query: SelectNode;
   readonly correlated: readonly SourceReference[];
 }
+/** `EXISTS (subquery)`, or `NOT EXISTS` when `negate` is set. */
 export interface ExistsNode {
   readonly kind: 'exists';
   readonly query: SelectNode;
   readonly correlated: readonly SourceReference[];
   readonly negate: boolean;
 }
+/** `operand IN (subquery)`, or `NOT IN` when `negate` is set. */
 export interface InSubqueryNode {
   readonly kind: 'in-subquery';
   readonly operand: ExpressionNode;
@@ -161,7 +188,10 @@ export interface InSubqueryNode {
   readonly correlated: readonly SourceReference[];
   readonly negate: boolean;
 }
-/** Navigation inside MATCH_RECOGNIZE; Snowflake requires constant offsets. */
+/**
+ * A MATCH_RECOGNIZE navigation function such as `PREV(value, 1)`. Snowflake requires constant
+ * offsets.
+ */
 export interface NavigationNode {
   readonly kind: 'navigation';
   readonly name: 'PREV' | 'NEXT' | 'FIRST' | 'LAST' | 'LAG' | 'LEAD';
@@ -169,15 +199,18 @@ export interface NavigationNode {
   readonly offset?: number;
   readonly default?: ExpressionNode;
 }
+/** `RUNNING` or `FINAL` semantics around a MATCH_RECOGNIZE measure. */
 export interface SemanticsNode {
   readonly kind: 'semantics';
   readonly mode: 'RUNNING' | 'FINAL';
   readonly value: ExpressionNode;
 }
+/** `*`, or `qualifier.*` when a qualifier is given. */
 export interface StarNode {
   readonly kind: 'star';
   readonly qualifier?: IdentifierNode;
 }
+/** Any node that compiles to an SQL expression. */
 export type ExpressionNode =
   | IdentifierNode
   | ReferenceNode
@@ -199,32 +232,42 @@ export type ExpressionNode =
   | NavigationNode
   | SemanticsNode
   | StarNode;
+/**
+ * A `column = value` filter on an unqualified column. A `null` value compiles to `column IS NULL`.
+ */
 export interface EqualityNode {
   readonly kind: 'equality';
   readonly column: IdentifierNode;
   readonly value: BindValue;
 }
+/** An ORDER BY item. */
 export interface OrderNode {
   readonly expression: ExpressionNode;
   readonly direction: 'ASC' | 'DESC';
   readonly nulls?: 'FIRST' | 'LAST';
 }
+/**
+ * A time-travel clause: `AT` or `BEFORE` with a timestamp, an offset in seconds, or a statement ID.
+ */
 export interface TemporalNode {
   readonly mode: 'AT' | 'BEFORE';
   readonly selector: 'TIMESTAMP' | 'OFFSET' | 'STATEMENT';
   readonly value: BindValue;
 }
+/** A base table, optionally aliased and read at a point in time. */
 export interface TableNode {
   readonly kind: 'table';
   readonly name: IdentifierNode;
   readonly alias?: IdentifierNode;
   readonly temporal?: TemporalNode;
 }
+/** A query used as a table: `(query) AS alias`. */
 export interface DerivedNode {
   readonly kind: 'derived';
   readonly query: QueryNode;
   readonly alias: IdentifierNode;
 }
+/** A `LATERAL FLATTEN(INPUT => ...)` table function. */
 export interface FlattenNode {
   readonly kind: 'flatten';
   readonly input: ExpressionNode;
@@ -234,6 +277,7 @@ export interface FlattenNode {
   readonly recursive: boolean;
   readonly mode: 'OBJECT' | 'ARRAY' | 'BOTH';
 }
+/** A common table expression in a WITH clause. */
 export interface CteNode {
   readonly kind: 'cte';
   readonly name: IdentifierNode;
@@ -241,6 +285,7 @@ export interface CteNode {
   /** Present on recursive definitions; the recursive branch reads the CTE through it. */
   readonly self?: SelfReferenceNode;
 }
+/** A MATCH_RECOGNIZE row pattern. */
 export type PatternNode =
   | { readonly kind: 'variable'; readonly name: string }
   | { readonly kind: 'anchor'; readonly position: 'start' | 'end' }
@@ -255,6 +300,7 @@ export type PatternNode =
       readonly max?: number;
       readonly reluctant: boolean;
     };
+/** A MATCH_RECOGNIZE clause over a source query. */
 export interface MatchRecognizeNode {
   readonly kind: 'match-recognize';
   readonly source: SelectNode;
@@ -272,7 +318,9 @@ export interface MatchRecognizeNode {
   /** Every output column; without it, quoted partition names come back with their quotes. */
   readonly columns: readonly IdentifierNode[];
 }
+/** A literal value in a PIVOT `IN` list. */
 export type PivotLiteral = string | number | boolean;
+/** A PIVOT over a source query. */
 export interface PivotNode {
   readonly kind: 'pivot';
   readonly source: SelectNode;
@@ -288,6 +336,7 @@ export interface PivotNode {
   /** Every output column; without it, explicit IN lists mangle quoted grouping names. */
   readonly columns?: readonly IdentifierNode[];
 }
+/** An UNPIVOT over a source query. */
 export interface UnpivotNode {
   readonly kind: 'unpivot';
   readonly source: SelectNode;
@@ -297,12 +346,16 @@ export interface UnpivotNode {
   readonly includeNulls: boolean;
   readonly alias: IdentifierNode;
 }
-/** Valid only while compiling the recursive branch of the CTE that owns it. */
+/**
+ * The recursive CTE as referenced from its own recursive branch. Valid only while compiling the
+ * recursive branch of the CTE that owns it.
+ */
 export interface SelfReferenceNode {
   readonly kind: 'self-reference';
   readonly name: IdentifierNode;
   readonly columns: readonly string[];
 }
+/** Anything that can appear in FROM or a join. */
 export type RelationNode =
   | IdentifierNode
   | TableNode
@@ -313,12 +366,14 @@ export type RelationNode =
   | PivotNode
   | UnpivotNode
   | SelfReferenceNode;
+/** A join. `on` is the join predicate, and `match` is the MATCH_CONDITION of an ASOF join. */
 export interface JoinNode {
   readonly kind: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL' | 'CROSS' | 'ASOF' | 'LATERAL';
   readonly source: RelationNode;
   readonly on?: ExpressionNode;
   readonly match?: ExpressionNode;
 }
+/** A SELECT statement. */
 export interface SelectNode {
   readonly kind: 'select';
   readonly from: RelationNode;
@@ -338,8 +393,12 @@ export interface SelectNode {
   readonly offset?: number;
   readonly with?: readonly CteNode[];
 }
+/** A set operator between two queries. */
 export type SetOperator = 'UNION' | 'UNION ALL' | 'INTERSECT' | 'EXCEPT';
-/** Operands are always parenthesized, so the tree, not keyword precedence, defines grouping. */
+/**
+ * Two queries combined with a set operator. Operands are always parenthesized, so the tree, not
+ * keyword precedence, defines grouping.
+ */
 export interface SetOperationNode {
   readonly kind: 'set-operation';
   readonly operator: SetOperator;
@@ -351,12 +410,17 @@ export interface SetOperationNode {
   readonly offset?: number;
   readonly with?: readonly CteNode[];
 }
+/** A statement that returns rows. */
 export type QueryNode = SelectNode | SetOperationNode;
+/**
+ * `DEFAULT` in an INSERT row, which lets Snowflake apply the column's default, identity, or NULL.
+ */
 export interface DefaultNode {
   readonly kind: 'default';
   /** A typed NULL for the shared source row, needed where a bare NULL cannot join a UNION. */
   readonly placeholder?: ExpressionNode;
 }
+/** An INSERT of value rows, or of a query's rows when `query` is set. */
 export interface InsertNode {
   readonly kind: 'insert';
   readonly table: IdentifierNode;
@@ -364,10 +428,12 @@ export interface InsertNode {
   readonly rows: readonly (readonly (ExpressionNode | DefaultNode)[])[];
   readonly query?: SelectNode;
 }
+/** A `column = value` assignment in UPDATE or MERGE. */
 export interface AssignmentNode {
   readonly column: IdentifierNode;
   readonly value: ExpressionNode;
 }
+/** An UPDATE statement, optionally with a FROM source. */
 export interface UpdateNode {
   readonly kind: 'update';
   readonly table: IdentifierNode;
@@ -376,6 +442,7 @@ export interface UpdateNode {
   readonly from?: RelationNode;
   readonly where?: ExpressionNode;
 }
+/** A DELETE statement, optionally with a USING source. */
 export interface DeleteNode {
   readonly kind: 'delete';
   readonly table: IdentifierNode;
@@ -383,6 +450,7 @@ export interface DeleteNode {
   readonly using?: RelationNode;
   readonly where?: ExpressionNode;
 }
+/** A `WHEN [NOT] MATCHED` branch of a MERGE. */
 export type MergeBranchNode =
   | {
       readonly kind: 'matched-update';
@@ -396,6 +464,7 @@ export type MergeBranchNode =
       readonly columns: readonly IdentifierNode[];
       readonly values: readonly ExpressionNode[];
     };
+/** A MERGE statement. Branches are emitted in order. */
 export interface MergeNode {
   readonly kind: 'merge';
   readonly target: TableNode;
@@ -412,12 +481,27 @@ export interface MergeNode {
   /** @deprecated Use `branches`. */
   readonly deleteMatched?: boolean;
 }
+/** Any statement {@link compileAst} can compile. */
 export type StatementNode = QueryNode | InsertNode | UpdateNode | DeleteNode | MergeNode;
+/** SQL text with `?` placeholders and the values bound to them, in order. */
 export interface CompiledQuery {
+  /** The SQL text. */
   readonly sql: string;
+  /** The bind values, one per `?` placeholder. */
   readonly binds: readonly BindValue[];
 }
 
+/**
+ * Builds an identifier node from one or more parts.
+ *
+ * @throws `TypeError` when a part is empty, contains NUL, or is longer than 255 characters.
+ *
+ * @example
+ * ```ts
+ * quoteIdentifier(identifier('APP_DB', 'PUBLIC', 'my "table"'));
+ * // '"APP_DB"."PUBLIC"."my ""table"""'
+ * ```
+ */
 export function identifier(...parts: [string, ...string[]]): IdentifierNode {
   if (
     parts.length === 0 ||
@@ -429,12 +513,18 @@ export function identifier(...parts: [string, ...string[]]): IdentifierNode {
   }
   return Object.freeze({ kind: 'identifier', parts: Object.freeze([...parts]) });
 }
+/** Renders an identifier node as SQL, quoting every part and doubling embedded quotes. */
 export function quoteIdentifier(node: IdentifierNode): string {
   return node.parts.map((part) => `"${part.replaceAll('"', '""')}"`).join('.');
 }
 
-/** A new context per statement prevents binds leaking across reusable queries. */
+/**
+ * Compiles a statement node to SQL text and bind values.
+ *
+ * `compileAst(query.ast)` returns the same result as `query.compile()`.
+ */
 export function compileAst(statement: StatementNode): CompiledQuery {
+  // A new context per statement prevents binds leaking across reusable queries.
   const binds: BindValue[] = [];
   const active = new Set<SelfReferenceNode>();
   function parameter(value: BindValue): string {

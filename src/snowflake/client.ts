@@ -20,36 +20,120 @@ import {
 } from './request.js';
 import { normalizeWireRow } from './wire.js';
 
+/** The result of executing a query: its validated rows and Snowflake query ID. */
 export interface QueryResult<Row> {
+  /** The rows, decoded and validated against the declared columns. */
   readonly rows: readonly Row[];
+  /** The Snowflake query ID of the statement. */
   readonly queryId: string;
 }
+/** The result of executing a query with relations. */
 export interface LoadedResult<Row> extends QueryResult<Row> {
   /** The parent query's ID first, then each related query's in execution order. */
   readonly queryIds: readonly string[];
 }
+/** The result of executing an INSERT, UPDATE, DELETE, or MERGE. */
 export interface MutationResult {
+  /** The Snowflake query ID of the statement. */
   readonly queryId: string;
+  /** The number of rows the statement inserted, updated, or deleted. */
   readonly affectedRows: number;
 }
+/**
+ * Executes Snowtyped queries on a `snowflake-sdk` connection. Created by {@link createClient}, or
+ * pooled by {@link createPool}.
+ *
+ * Queries are never retried implicitly. `execute`, `stream`, `streamRaw`, and `queryRaw(query,
+ * options)` accept a `signal` and a `timeoutMs` deadline, which cancel the statement in Snowflake.
+ */
 export interface SnowflakeClient {
+  /**
+   * Executes a query and returns its rows, validated against the declared columns, and its query
+   * ID.
+   *
+   * @throws When a returned value does not match the declared schema, or Snowflake rejects the
+   * statement.
+   * @example
+   * ```ts
+   * const { rows, queryId } = await db.execute(select(customers), { timeoutMs: 5_000 });
+   * ```
+   */
   execute<S extends Projection, Scope extends string, Nullable extends string>(
     query: SelectQuery<S, Scope, Nullable>,
     options?: ExecuteOptions,
   ): Promise<QueryResult<InferSelection<S, Nullable>>>;
+  /** Executes a combined query and returns its validated rows and query ID. */
   execute<Row>(query: SetQuery<Row>, options?: ExecuteOptions): Promise<QueryResult<Row>>;
+  /**
+   * Executes a query with relations. `queryIds` lists the parent statement first, then each related
+   * query in execution order.
+   */
   execute<Row>(query: LoadedQuery<Row>, options?: ExecuteOptions): Promise<LoadedResult<Row>>;
+  /**
+   * Executes an INSERT, UPDATE, DELETE, or MERGE and returns the affected row count and query ID.
+   */
   execute(query: MutationQuery, options?: ExecuteOptions): Promise<MutationResult>;
+  /**
+   * Runs a tagged SQL template. Interpolated values become bind parameters.
+   *
+   * `T` asserts the entire result, an array of rows, and is not validated. Numbers, temporal
+   * values, and semi-structured values are returned as strings.
+   *
+   * @example
+   * ```ts
+   * const name = 'Ada';
+   * const rows = await db.queryRaw<Array<{ ID: string }>>`
+   *   SELECT ID FROM CUSTOMERS WHERE NAME = ${name}
+   * `;
+   * ```
+   */
   queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: SqlInterpolation[]): Promise<T>;
+  /** Runs a fragment built with the `sql` tag, typed by the fragment's asserted result. */
   queryRaw<T = unknown>(query: RawQuery<T>, options?: ExecuteOptions): Promise<T>;
+  /**
+   * Runs a fragment built with the `sql` tag. `T` asserts the entire result and is not validated.
+   */
   queryRaw<T = unknown>(query: RawQuery, options?: ExecuteOptions): Promise<T>;
+  /**
+   * Streams a query's rows, validating each one. Breaking out of the loop destroys the row stream.
+   *
+   * @example
+   * ```ts
+   * for await (const row of db.stream(select(customers))) {
+   *   console.log(row.name);
+   * }
+   * ```
+   */
   stream<S extends Projection, Scope extends string, Nullable extends string>(
     query: SelectQuery<S, Scope, Nullable>,
     options?: ExecuteOptions,
   ): AsyncIterable<InferSelection<S, Nullable>>;
+  /** Streams a combined query's rows, validating each one. */
   stream<Row>(query: SetQuery<Row>, options?: ExecuteOptions): AsyncIterable<Row>;
+  /**
+   * Streams a query with relations. Parents are read in batches of the relation `batchSize`, and
+   * each batch's children are loaded before it is yielded.
+   */
   stream<Row>(query: LoadedQuery<Row>, options?: ExecuteOptions): AsyncIterable<Row>;
+  /** Streams the rows of a `sql` fragment. `T` asserts each row's type and is not validated. */
   streamRaw<T = unknown>(query: RawQuery, options?: ExecuteOptions): AsyncIterable<T>;
+  /**
+   * Runs `callback` in a transaction: COMMIT when it resolves and ROLLBACK when it rejects.
+   *
+   * Use the client the callback receives, and await its queries and finish its streams before
+   * returning. While the transaction runs, the outer client rejects new queries. Nested
+   * transactions are not supported, and Snowflake DDL can commit on its own.
+   *
+   * @throws `AggregateError` with both failures when ROLLBACK itself fails. The client then rejects
+   * every later operation, so replace the connection.
+   * @example
+   * ```ts
+   * await db.transaction(async (tx) => {
+   *   await tx.execute(insert(customers, { id: 2n, name: 'Grace' }));
+   *   await tx.execute(update(customers, { email: null }).where(eq(customers.columns.id, 2n)));
+   * });
+   * ```
+   */
   transaction<T>(callback: (client: SnowflakeClient) => Promise<T>): Promise<T>;
 }
 
@@ -62,7 +146,18 @@ export function isUnusable(connection: DriverConnection): boolean {
   return unusable.has(connection);
 }
 
-/** Uses a connected SDK connection. The caller owns connection lifecycle. */
+/**
+ * Wraps a connected `snowflake-sdk` connection. Connecting and destroying the connection stay with
+ * the caller.
+ *
+ * @example
+ * ```ts
+ * import { createClient } from 'snowtyped/snowflake';
+ *
+ * // connection is a connected snowflake-sdk Connection.
+ * const db = createClient(connection);
+ * ```
+ */
 export function createClient(connection: DriverConnection): SnowflakeClient {
   const schemas = new WeakMap<object, z.ZodType>();
   interface Session {

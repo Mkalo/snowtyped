@@ -3,13 +3,21 @@ import type { ServerValue } from './schema.js';
 import type { SnowflakeClient } from './snowflake/client.js';
 import { sql } from './sql.js';
 
+/** A column read by {@link introspect}. */
 export interface IntrospectedColumn {
+  /** The physical column name. */
   readonly name: string;
+  /** The `INFORMATION_SCHEMA` data type, such as `NUMBER` or `TEXT`. */
   readonly dataType: string;
+  /** Whether the column accepts NULL. */
   readonly nullable: boolean;
+  /** NUMBER precision, or TIME and TIMESTAMP fractional seconds precision. */
   readonly precision: number | null;
+  /** NUMBER scale. */
   readonly scale: number | null;
+  /** VARCHAR length. */
   readonly length: number | null;
+  /** The column's default, identity, or virtual expression. */
   readonly serverValue?: ServerValue | null;
   /** The `SHOW COLUMNS` type of a structured ARRAY, OBJECT, or MAP column. */
   readonly structure?: StructureMetadata;
@@ -19,10 +27,15 @@ export interface StructureMetadata {
   readonly nullable: boolean;
   readonly [property: string]: unknown;
 }
+/** A table read by {@link introspect}. */
 export interface IntrospectedTable {
+  /** The table's database. */
   readonly database: string;
+  /** The table's schema. */
   readonly schema: string;
+  /** The physical table name. */
   readonly name: string;
+  /** The table's columns, in ordinal order. */
   readonly columns: readonly IntrospectedColumn[];
 }
 const metadata = () =>
@@ -74,6 +87,18 @@ function serverValue(row: z.infer<ReturnType<typeof metadata>>[number]): ServerV
     : Object.freeze({ kind: 'default', expression: row.COLUMN_DEFAULT });
 }
 
+/**
+ * Reads the tables and columns of a database, or one of its schemas, through `INFORMATION_SCHEMA`.
+ *
+ * Results are limited to what the connection's role can access. Structured types are read with
+ * `SHOW COLUMNS`, which keeps their exact field names.
+ *
+ * @param client - A client from `snowtyped/snowflake`.
+ * @example
+ * ```ts
+ * const tables = await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' });
+ * ```
+ */
 export async function introspect(
   client: Pick<SnowflakeClient, 'queryRaw'>,
   options: { readonly database: string; readonly schema?: string },
@@ -194,6 +219,19 @@ function serverModifier(value: ServerValue | null | undefined): string {
   return `.${method}(${value.expression === undefined ? '' : JSON.stringify(value.expression)})`;
 }
 
+/**
+ * Generates TypeScript source declaring each introspected table with {@link snowflakeTable}.
+ *
+ * Tables are exported as `table0`, `table1`, and so on, in a stable order. Declarations carry the
+ * exact physical names, NUMBER precision and scale, VARCHAR length, TIME and TIMESTAMP precision,
+ * and server values. Review the output, rename the exports, and commit it.
+ *
+ * @throws `TypeError` for data types Snowtyped cannot declare.
+ * @example
+ * ```ts
+ * const source = generateSchema(await introspect(db, { database: 'APP_DB', schema: 'PUBLIC' }));
+ * ```
+ */
 export function generateSchema(tables: readonly IntrospectedTable[]): string {
   const imports = new Set(['snowflakeTable']);
   const declarations = tables.map((table, index) => {

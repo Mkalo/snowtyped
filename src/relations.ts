@@ -8,8 +8,9 @@ import {
   type Table,
 } from './schema.js';
 
-/** SQL types whose decoded values identify a row unambiguously. */
+/** The SQL types relation keys can have, whose decoded values identify a row unambiguously. */
 export type RelationKeyType = 'integer' | 'decimal' | 'text' | 'date';
+/** Whether a parent row has at most one related row (`'one'`) or any number (`'many'`). */
 export type RelationCardinality = 'one' | 'many';
 type AnySelect = SelectQuery<Projection, string, string>;
 interface ChildQuery {
@@ -19,32 +20,54 @@ interface ChildQuery {
 type Runtime = AnySelect | LoadedQuery<unknown>;
 type ChildRow<Q> = Q extends { readonly rowType?: infer R } ? R : never;
 
+/** A relation declared with {@link one} or {@link many}, loaded by {@link withRelations}. */
 export interface Relation<
   C extends RelationCardinality = RelationCardinality,
   Row = unknown,
   Parent extends string = string,
 > {
+  /** Identifies a relation. */
   readonly kind: 'relation';
+  /** Whether a parent has at most one related row or any number. */
   readonly cardinality: C;
+  /** The parent's key. */
   readonly from: AnyExpression;
+  /** The related table's key, matched against the parent's. */
   readonly to: AnyExpression;
+  /** The related query, before it is filtered by parent keys. */
   readonly query: ChildQuery;
+  /** @internal */
   readonly rowType?: Row;
+  /** @internal */
   readonly parentScopeType?: Parent;
 }
+/**
+ * The value a relation adds to each parent row: an array for `many`, an object or `null` for `one`.
+ */
 export type RelationRow<R> =
   R extends Relation<infer C, infer Row> ? (C extends 'many' ? Row[] : Row | null) : never;
 type Simplify<T> = { [K in keyof T]: T[K] };
+/** A parent row with its loaded relations. */
 export type LoadedRow<Row, R> = Simplify<Row & { -readonly [K in keyof R]: RelationRow<R[K]> }>;
+/** A query with relations, created by {@link withRelations}. Execute or stream it with a client. */
 export interface LoadedQuery<Row> {
+  /** Identifies a query with relations. */
   readonly kind: 'loaded';
+  /** The parent query. */
   readonly query: AnySelect;
+  /** The relations, keyed by the property they add to parent rows. */
   readonly relations: Readonly<Record<string, Relation>>;
+  /** The number of distinct parent keys per related query. */
   readonly batchSize: number;
+  /** @internal */
   readonly rowType?: Row;
 }
+/** Options of {@link withRelations}. */
 export interface LoadOptions {
-  /** Distinct parent keys per child query; streams also load children per this many parents. */
+  /**
+   * Distinct parent keys per related query, from 1 to 16384 and 1000 by default. Streams also load
+   * children per this many parents.
+   */
   readonly batchSize?: number;
 }
 
@@ -74,7 +97,22 @@ function relation(
   return Object.freeze({ kind: 'relation', cardinality, ...keys, query: child });
 }
 
-/** Declares that each parent row has at most one row of `table` whose `to` equals its `from`. */
+/**
+ * Declares that each parent row has at most one row of `table` whose `to` key equals the parent's
+ * `from` key.
+ *
+ * Keys must be INTEGER, DECIMAL, TEXT, or DATE values of one shared SQL type. The optional `query`
+ * callback shapes the related query: project, filter, join, order, or nest relations with
+ * {@link withRelations}. It cannot use `.limit()` or `.offset()`, which would cut across parents.
+ *
+ * @throws `TypeError` when the keys have unsupported or different types, or the related query is
+ * paginated.
+ * @example
+ * ```ts
+ * const customer = one(customers, { from: orders.columns.customerId, to: customers.columns.id });
+ * withRelations(select(orders), { customer });
+ * ```
+ */
 export function one<
   C extends ColumnMap,
   N extends string,
@@ -91,7 +129,22 @@ export function one<
 ): Relation<'one', ChildRow<Q>, P> {
   return relation('one', table, keys, query as never) as Relation<'one', ChildRow<Q>, P>;
 }
-/** Declares that each parent row has any number of rows of `table` whose `to` equals its `from`. */
+/**
+ * Declares that each parent row has any number of rows of `table` whose `to` key equals the
+ * parent's `from` key.
+ *
+ * Accepts the same keys and `query` callback as {@link one}. For a per-parent limit, use
+ * `.qualify()` with {@link rowNumber} partitioned by the `to` key.
+ *
+ * @example
+ * ```ts
+ * const customerOrders = many(
+ *   orders,
+ *   { from: customers.columns.id, to: orders.columns.customerId },
+ *   (rows) => rows.orderBy(asc(orders.columns.id)),
+ * );
+ * ```
+ */
 export function many<
   C extends ColumnMap,
   N extends string,
@@ -110,8 +163,28 @@ export function many<
 }
 
 /**
- * Loads relations with one query for the parents and, per relation, one query per batch of
- * distinct parent keys, so parent pagination and row counts are unaffected by children.
+ * Adds relations to a query as properties of its rows.
+ *
+ * The parent query runs once and keeps its own pagination, grouping, and row count. Each relation
+ * then runs one query per batch of distinct parent keys, as `WHERE to IN (...)` added to the
+ * related query's filter. Executing the result returns every statement's ID in `queryIds`, parent
+ * first.
+ *
+ * A key the parent does not project is added as a hidden column and removed from the rows, except
+ * in DISTINCT queries, which must project it.
+ *
+ * @param relations - Relations keyed by the property they add, which cannot repeat a projection
+ * key.
+ * @throws `TypeError` when there are no relations or the batch size is not from 1 to 16384.
+ * @example
+ * ```ts
+ * const customerOrders = many(orders, {
+ *   from: customers.columns.id,
+ *   to: orders.columns.customerId,
+ * });
+ * const page = withRelations(select(customers).limit(20), { orders: customerOrders });
+ * const { rows, queryIds } = await db.execute(page);
+ * ```
  */
 export function withRelations<
   S extends Projection,

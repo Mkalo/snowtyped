@@ -41,6 +41,10 @@ type RequiredKeys<C extends ColumnMap> = {
       : never
     : never;
 }[WritableKeys<C>];
+/**
+ * A row for {@link insert}: required columns without a server value must be present, other writable
+ * columns are optional, and virtual columns are excluded.
+ */
 export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferColumn<C[K]> } & {
   [K in Exclude<WritableKeys<C>, RequiredKeys<C>>]?: InferColumn<C[K]>;
 };
@@ -50,9 +54,17 @@ type Assignment<C extends AnyColumn, Scope extends string> = Expression<
   string,
   ComparableType<ExpressionDataType<C>>
 >;
+/**
+ * Assignments for {@link update}, {@link updateFrom}, and MERGE: writable columns mapped to
+ * literals or expressions of an assignable SQL type.
+ */
 export type UpdateValues<C extends ColumnMap, Scope extends string = string> = {
   [K in WritableKeys<C>]?: InferColumn<C[K]> | Assignment<C[K], Scope>;
 };
+/**
+ * Resolves to `unknown` when a query's rows fit the target table for {@link insertFrom}, and to
+ * `never` otherwise.
+ */
 export type InsertSource<C extends ColumnMap, Row> = [
   Exclude<keyof Row, keyof InsertValues<C>>,
 ] extends [never]
@@ -69,24 +81,55 @@ type SourceTypes<C extends ColumnMap, S extends Selection> = true extends {
 }[keyof S & keyof C]
   ? never
   : unknown;
+/**
+ * An INSERT, UPDATE, DELETE, or MERGE statement. Executing it resolves to `{ affectedRows, queryId
+ * }`.
+ */
 export interface MutationQuery {
+  /** Identifies a mutation. */
   readonly kind: 'mutation';
+  /** The statement's syntax tree. */
   readonly ast: StatementNode;
+  /** Compiles the statement to SQL text and bind values without executing it. */
   compile(): CompiledQuery;
 }
+/**
+ * An UPDATE or DELETE that can be filtered with `.where()`. Without a filter it affects every row
+ * of the table.
+ */
 export interface FilteredMutation<Scope extends string> extends MutationQuery {
+  /**
+   * Filters the affected rows with WHERE, replacing an earlier filter. The join predicate of
+   * {@link updateFrom} and {@link deleteUsing} is kept.
+   */
   where(predicate: Predicate<Scope>): FilteredMutation<Scope>;
 }
+/**
+ * A MERGE statement built by {@link mergeInto}. Branches are emitted in the order they are added,
+ * and compiling requires at least one.
+ *
+ * An unconditional branch must be the last of its kind: adding it again replaces it, and adding a
+ * conditional branch after it throws.
+ */
 export interface MergeQuery<
   C extends ColumnMap,
   Scope extends string,
   Source extends string = Scope,
 > extends MutationQuery {
+  /**
+   * Adds `WHEN MATCHED [AND condition] THEN UPDATE SET ...`. Values may reference the target and
+   * the source.
+   */
   whenMatchedUpdate(
     values: UpdateValues<C, Scope>,
     condition?: Predicate<Scope>,
   ): MergeQuery<C, Scope, Source>;
+  /** Adds `WHEN MATCHED [AND condition] THEN DELETE`. */
   whenMatchedDelete(condition?: Predicate<Scope>): MergeQuery<C, Scope, Source>;
+  /**
+   * Adds `WHEN NOT MATCHED [AND condition] THEN INSERT ...`. Values and the condition can only
+   * reference the source, because the target row does not exist.
+   */
   whenNotMatchedInsert(
     values: {
       [K in keyof InsertValues<C>]: InsertValues<C>[K] | Assignment<C[K & keyof C], Source>;
@@ -177,6 +220,19 @@ function nullParameters<T>(node: T): T {
   ) as T;
 }
 
+/**
+ * Inserts one row or an array of rows into a base table.
+ *
+ * Omitted columns are left out of the statement, so Snowflake applies their default, identity, or
+ * NULL; rows that omit different columns compile to one `INSERT ALL`. An explicit `null` writes SQL
+ * NULL. Values are validated against the declared columns.
+ *
+ * @throws `TypeError` when there are no rows, a required column is missing, or a value is invalid.
+ * @example
+ * ```ts
+ * await db.execute(insert(customers, { id: 1n, name: 'Ada', email: null }));
+ * ```
+ */
 export function insert<C extends ColumnMap>(
   table: Table<C>,
   input: NoInfer<InsertValues<C>> | readonly NoInfer<InsertValues<C>>[],
@@ -220,6 +276,18 @@ export function insert<C extends ColumnMap>(
   );
 }
 
+/**
+ * Inserts the rows of a query with `INSERT INTO ... SELECT`, mapping each projection alias to the
+ * target column of the same key.
+ *
+ * The selected row type, including nullability from outer joins, must fit the target, and required
+ * columns without a server value must be selected.
+ *
+ * @example
+ * ```ts
+ * insertFrom(target, select(staged, { id: staged.columns.id, name: staged.columns.name }));
+ * ```
+ */
 export function insertFrom<
   C extends ColumnMap,
   S extends Selection,
@@ -281,6 +349,16 @@ function filtered<N extends string>(
     },
   });
 }
+/**
+ * Updates rows of a base table. Values are literals or expressions of the same table.
+ *
+ * Without `.where()`, every row is updated.
+ *
+ * @example
+ * ```ts
+ * await db.execute(update(customers, { name: 'Grace' }).where(eq(customers.columns.id, 1n)));
+ * ```
+ */
 export function update<C extends ColumnMap, N extends string>(
   table: Table<C, N>,
   values: NoInfer<UpdateValues<C, N>>,
@@ -291,6 +369,21 @@ export function update<C extends ColumnMap, N extends string>(
     Object.freeze({ kind: 'update', table: table.node, assignments: entries(table, values) }),
   );
 }
+/**
+ * Updates rows of `target` that match rows of `source` with `UPDATE ... FROM`. Values may reference
+ * both tables.
+ *
+ * The `on` join predicate is required, so a missing filter cannot update every row with an
+ * arbitrary match. `.where()` adds filters to it.
+ *
+ * @param source - A base table, a derived query (`.as()`), or a CTE (`.asCte()`), which is inlined.
+ * @example
+ * ```ts
+ * updateFrom(target, staged, eq(target.columns.id, staged.columns.id), {
+ *   name: staged.columns.name,
+ * });
+ * ```
+ */
 export function updateFrom<
   C extends ColumnMap,
   T extends string,
@@ -318,12 +411,27 @@ export function updateFrom<
     join,
   );
 }
+/**
+ * Deletes rows of a base table. Without `.where()`, every row is deleted.
+ *
+ * @example
+ * ```ts
+ * await db.execute(deleteFrom(customers).where(eq(customers.columns.id, 1n)));
+ * ```
+ */
 export function deleteFrom<C extends ColumnMap, N extends string>(
   table: Table<C, N>,
 ): FilteredMutation<N> {
   checkTable(table);
   return filtered([table.ref], Object.freeze({ kind: 'delete', table: table.node }));
 }
+/**
+ * Deletes rows of `target` that match rows of `source` with `DELETE ... USING`.
+ *
+ * The `on` join predicate is required, and `.where()` adds filters to it.
+ *
+ * @param source - A base table, a derived query (`.as()`), or a CTE (`.asCte()`), which is inlined.
+ */
 export function deleteUsing<
   C extends ColumnMap,
   T extends string,
@@ -346,6 +454,19 @@ export function deleteUsing<
   );
 }
 
+/**
+ * Starts a MERGE of `source` into `target`, matched with `on`. Add branches with the
+ * {@link MergeQuery} methods.
+ *
+ * @param source - A base table, a derived query (`.as()`), or a CTE (`.asCte()`), which is inlined.
+ * @example
+ * ```ts
+ * mergeInto(target, staged, eq(target.columns.id, staged.columns.id))
+ *   .whenMatchedDelete(eq(staged.columns.name, 'gone'))
+ *   .whenMatchedUpdate({ name: staged.columns.name })
+ *   .whenNotMatchedInsert({ id: staged.columns.id, name: staged.columns.name });
+ * ```
+ */
 export function mergeInto<
   C extends ColumnMap,
   T extends string,
