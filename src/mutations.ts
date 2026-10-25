@@ -55,7 +55,7 @@ export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferC
  *
  * @example
  * ```ts
- * type NewCustomer = InferInsert<typeof customers>;
+ * type NewCustomer = Snowtyped.InferInsert<typeof customers>;
  * // { id: bigint; name: string; email?: string | null }
  * ```
  */
@@ -68,7 +68,7 @@ export type InferInsert<T> =
  *
  * @example
  * ```ts
- * type CustomerPatch = InferUpdate<typeof customers>;
+ * type CustomerPatch = Snowtyped.InferUpdate<typeof customers>;
  * // { id?: bigint; name?: string; email?: string | null }
  * ```
  */

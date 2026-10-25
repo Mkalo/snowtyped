@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import {
-  type AnyExpression,
   alias,
   and,
   array,
@@ -16,7 +15,6 @@ import {
   eq,
   flatten,
   float,
-  type GeoJsonGeometry,
   generateSchema,
   geography,
   geometry,
@@ -32,6 +30,7 @@ import {
   mergeInto,
   object,
   rowNumber,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
@@ -740,11 +739,11 @@ describe('complete query and execution paths against Snowflake', () => {
   });
 
   it('round-trips GEOGRAPHY, GEOMETRY, and VECTOR columns exactly', async () => {
-    const precise: GeoJsonGeometry = {
+    const precise: Snowtyped.GeoJsonGeometry = {
       type: 'Point',
       coordinates: [0.30000000000000004, 45.123456789012344],
     };
-    const polygon: GeoJsonGeometry = {
+    const polygon: Snowtyped.GeoJsonGeometry = {
       type: 'Polygon',
       coordinates: [
         [
@@ -755,7 +754,7 @@ describe('complete query and execution paths against Snowflake', () => {
         ],
       ],
     };
-    const collection: GeoJsonGeometry = {
+    const collection: Snowtyped.GeoJsonGeometry = {
       type: 'GeometryCollection',
       geometries: [
         { type: 'Point', coordinates: [1, 2, 3] },
@@ -855,7 +854,7 @@ describe('complete query and execution paths against Snowflake', () => {
         )
       ).rows,
     ).toEqual([{ plain: collection }]);
-    expect(() => eq(spatial.columns.location as AnyExpression, precise)).toThrow(
+    expect(() => eq(spatial.columns.location as Snowtyped.AnyExpression, precise)).toThrow(
       '= does not accept GEOGRAPHY expressions.',
     );
     expect(() => insert(spatial, { id: 3n, location: precise, counts: [1, 2, 3] })).toThrow(

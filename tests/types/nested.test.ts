@@ -10,12 +10,11 @@ import {
   insertFrom,
   integer,
   isNull,
-  type Projection,
+  type Snowtyped,
   select,
   snowflakeTable,
   text,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const posts = snowflakeTable('POSTS', {
   id: integer('ID').notNull(),
@@ -34,7 +33,7 @@ const editors = snowflakeTable('EDITORS', {
 });
 const p = posts.columns;
 const u = users.columns;
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 
 const joined = select(posts).leftJoin(users, eq(p.authorId, u.id));
 const authored = joined.select({
@@ -153,5 +152,5 @@ exists(select(users, { user: { id: u.id } }));
 // @ts-expect-error A nested projection is not an INSERT source.
 insertFrom(users, select(users, { user: { id: u.id } }));
 
-const helper = <S extends Projection>(projection: S) => projection;
+const helper = <S extends Snowtyped.Projection>(projection: S) => projection;
 helper({ id: p.id, author: { name: u.name } });

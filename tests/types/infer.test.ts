@@ -1,6 +1,5 @@
 // Checked by tsc, not executed.
 import { expectTypeOf } from 'vitest';
-import type { InferInsert, InferRow, InferUpdate } from '../../src/index.js';
 import {
   alias,
   count,
@@ -10,6 +9,7 @@ import {
   integer,
   many,
   one,
+  type Snowtyped,
   select,
   snowflakeTable,
   type sql,
@@ -18,7 +18,6 @@ import {
   update,
   withRelations,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const customers = snowflakeTable('CUSTOMERS', {
   id: integer('ID').notNull().identity(),
@@ -35,7 +34,7 @@ const orders = snowflakeTable('ORDERS', {
 });
 const c = customers.columns;
 const o = orders.columns;
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 
 type Customer = {
   readonly id: bigint;
@@ -45,35 +44,37 @@ type Customer = {
   readonly created: string | null;
   readonly doubled: bigint | null;
 };
-expectTypeOf<InferRow<typeof customers>>().toEqualTypeOf<Customer>();
+expectTypeOf<Snowtyped.InferRow<typeof customers>>().toEqualTypeOf<Customer>();
 const everything = select(customers);
-expectTypeOf<InferRow<typeof everything>>().toEqualTypeOf<Customer>();
+expectTypeOf<Snowtyped.InferRow<typeof everything>>().toEqualTypeOf<Customer>();
 const renamed = alias(customers, 'c');
-expectTypeOf<InferRow<typeof renamed>>().toEqualTypeOf<Customer>();
+expectTypeOf<Snowtyped.InferRow<typeof renamed>>().toEqualTypeOf<Customer>();
 
 const projected = select(customers, { id: c.id, email: c.email }).where(eq(c.name, 'Ada'));
 type Projected = { readonly id: bigint; readonly email: string | null };
-expectTypeOf<InferRow<typeof projected>>().toEqualTypeOf<Projected>();
+expectTypeOf<Snowtyped.InferRow<typeof projected>>().toEqualTypeOf<Projected>();
 expectTypeOf(db.execute(projected))
   .resolves.toHaveProperty('rows')
-  .toEqualTypeOf<readonly InferRow<typeof projected>[]>();
-expectTypeOf(db.stream(projected)).toEqualTypeOf<AsyncIterable<InferRow<typeof projected>>>();
+  .toEqualTypeOf<readonly Snowtyped.InferRow<typeof projected>[]>();
+expectTypeOf(db.stream(projected)).toEqualTypeOf<
+  AsyncIterable<Snowtyped.InferRow<typeof projected>>
+>();
 
 // Outer-joined columns become nullable, which the selection alone does not say.
 const joined = select(customers)
   .leftJoin(orders, eq(c.id, o.customerId))
   .select({ name: c.name, amount: o.amount, customer: { id: c.id, orderId: o.id } });
-expectTypeOf<InferRow<typeof joined>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferRow<typeof joined>>().toEqualTypeOf<{
   readonly name: string;
   readonly amount: string | null;
   readonly customer: { readonly id: bigint; readonly orderId: bigint | null };
 }>();
 expectTypeOf(db.execute(joined))
   .resolves.toHaveProperty('rows')
-  .toEqualTypeOf<readonly InferRow<typeof joined>[]>();
+  .toEqualTypeOf<readonly Snowtyped.InferRow<typeof joined>[]>();
 
 const grouped = select(orders, { customerId: o.customerId, orders: count() }).groupBy(o.customerId);
-expectTypeOf<InferRow<typeof grouped>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferRow<typeof grouped>>().toEqualTypeOf<{
   readonly customerId: bigint;
   readonly orders: bigint;
 }>();
@@ -82,13 +83,13 @@ const leads = snowflakeTable('LEADS', { id: integer('ID'), email: text('EMAIL').
 const unioned = select(customers, { id: c.id, email: c.email }).unionAll(
   select(leads, { id: leads.columns.id, email: leads.columns.email }),
 );
-expectTypeOf<InferRow<typeof unioned>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferRow<typeof unioned>>().toEqualTypeOf<{
   readonly id: bigint | null;
   readonly email: string | null;
 }>();
 expectTypeOf(db.execute(unioned))
   .resolves.toHaveProperty('rows')
-  .toEqualTypeOf<readonly InferRow<typeof unioned>[]>();
+  .toEqualTypeOf<readonly Snowtyped.InferRow<typeof unioned>[]>();
 
 const loaded = withRelations(select(customers, { id: c.id, name: c.name }), {
   orders: many(orders, { from: c.id, to: o.customerId }, (rows) =>
@@ -106,15 +107,15 @@ type Loaded = {
     readonly amount: string;
   } | null;
 };
-expectTypeOf<InferRow<typeof loaded>>().toEqualTypeOf<Loaded>();
+expectTypeOf<Snowtyped.InferRow<typeof loaded>>().toEqualTypeOf<Loaded>();
 expectTypeOf(db.execute(loaded)).resolves.toHaveProperty('rows').toEqualTypeOf<readonly Loaded[]>();
 
-expectTypeOf<InferRow<typeof c.id>>().toEqualTypeOf<never>();
-expectTypeOf<InferRow<ReturnType<typeof sql>>>().toEqualTypeOf<never>();
-expectTypeOf<InferRow<ReturnType<typeof insert>>>().toEqualTypeOf<never>();
-expectTypeOf<InferRow<unknown>>().toEqualTypeOf<never>();
+expectTypeOf<Snowtyped.InferRow<typeof c.id>>().toEqualTypeOf<never>();
+expectTypeOf<Snowtyped.InferRow<ReturnType<typeof sql>>>().toEqualTypeOf<never>();
+expectTypeOf<Snowtyped.InferRow<ReturnType<typeof insert>>>().toEqualTypeOf<never>();
+expectTypeOf<Snowtyped.InferRow<unknown>>().toEqualTypeOf<never>();
 
-type NewCustomer = InferInsert<typeof customers>;
+type NewCustomer = Snowtyped.InferInsert<typeof customers>;
 expectTypeOf<NewCustomer>().toEqualTypeOf<{
   name: string;
   id?: bigint;
@@ -129,10 +130,10 @@ insert(customers, [draft, { name: 'Grace', email: null }]);
 ({ email: 'ada@example.com' }) satisfies NewCustomer;
 // @ts-expect-error Virtual columns are read-only.
 ({ name: 'Ada', doubled: 2n }) satisfies NewCustomer;
-expectTypeOf<InferInsert<typeof renamed>>().toEqualTypeOf<NewCustomer>();
-expectTypeOf<InferInsert<typeof projected>>().toEqualTypeOf<never>();
+expectTypeOf<Snowtyped.InferInsert<typeof renamed>>().toEqualTypeOf<NewCustomer>();
+expectTypeOf<Snowtyped.InferInsert<typeof projected>>().toEqualTypeOf<never>();
 
-type CustomerPatch = InferUpdate<typeof customers>;
+type CustomerPatch = Snowtyped.InferUpdate<typeof customers>;
 expectTypeOf<CustomerPatch>().toEqualTypeOf<{
   id?: bigint;
   name?: string;
@@ -146,4 +147,4 @@ update(customers, patch).where(eq(c.id, 1n));
 ({ name: null }) satisfies CustomerPatch;
 // @ts-expect-error Virtual columns are read-only.
 ({ doubled: 2n }) satisfies CustomerPatch;
-expectTypeOf<InferUpdate<typeof projected>>().toEqualTypeOf<never>();
+expectTypeOf<Snowtyped.InferUpdate<typeof projected>>().toEqualTypeOf<never>();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { identifier, type SqlInterpolation, sql } from '../../src/index.js';
+import { identifier, type Snowtyped, sql } from '../../src/index.js';
 
 describe('parameterized raw SQL', () => {
   it('binds scalars in order and never interpolates user data as SQL', () => {
@@ -59,7 +59,9 @@ describe('parameterized raw SQL', () => {
     expect(() => sql(Object.assign([''], { raw: [''] }), 1)).toThrow('template structure');
     expect(() => sql.identifier('')).toThrow('Identifiers');
     for (const value of [undefined, {}, [], () => 1]) {
-      expect(() => sql`SELECT ${value as unknown as SqlInterpolation}`).toThrow('Unsupported');
+      expect(() => sql`SELECT ${value as unknown as Snowtyped.SqlInterpolation}`).toThrow(
+        'Unsupported',
+      );
     }
     expect(() => sql`SELECT ${new Date('invalid')}`).toThrow();
   });

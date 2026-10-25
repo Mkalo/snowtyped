@@ -67,7 +67,15 @@ function undocumented(reflection: DeclarationReflection, shallow: boolean): stri
           )
         ? (reflection.children ?? [])
         : [];
-  return [...missing, ...members.flatMap((member) => undocumented(member, false))];
+  const ast = astChildren(reflection);
+  return [...missing, ...members.flatMap((member) => undocumented(member, ast.has(member)))];
+}
+
+/** AST exports need a summary, but their members do not. */
+function astChildren(reflection: DeclarationReflection): Set<Reflection> {
+  return new Set(
+    reflection.categories?.find((category) => category.title === 'AST')?.children ?? [],
+  );
 }
 
 /** The fenced TypeScript blocks of every TSDoc comment in the library source. */
@@ -124,9 +132,7 @@ function prelude(code: string, exports: ReadonlyMap<string, Export>): string {
 describe('API reference', () => {
   it('documents every public export', () => {
     const missing = (project.children ?? []).flatMap((module) => {
-      const ast = new Set(
-        module.categories?.find((category) => category.title === 'AST')?.children ?? [],
-      );
+      const ast = astChildren(module);
       return (module.children ?? []).flatMap((child) => undocumented(child, ast.has(child)));
     });
     expect(missing).toEqual([]);
@@ -143,7 +149,9 @@ describe('API reference', () => {
         if (!exports.has(child.name))
           exports.set(child.name, {
             entry: packages[module.name] as string,
-            type: child.kindOf(ReflectionKind.Interface | ReflectionKind.TypeAlias),
+            type:
+              child.kindOf(ReflectionKind.Interface | ReflectionKind.TypeAlias) ||
+              child.name === 'Snowtyped',
           });
     const found = examples();
     expect(found.length).toBeGreaterThan(50);

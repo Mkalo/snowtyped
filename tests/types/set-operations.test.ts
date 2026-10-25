@@ -6,13 +6,13 @@ import {
   decimal,
   eq,
   integer,
+  type Snowtyped,
   select,
   snowflakeTable,
   text,
   timestamp,
   variant,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const current = snowflakeTable('CURRENT', {
   id: integer('ID').notNull(),
@@ -31,7 +31,7 @@ const archived = snowflakeTable('ARCHIVED', {
   at: timestamp('AT').notNull(),
   payload: variant('PAYLOAD').notNull(),
 });
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 
 const left = select(current, {
   id: current.columns.id,

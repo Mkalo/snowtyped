@@ -12,12 +12,6 @@
  * ```
  * @module
  */
-export {
-  createClient,
-  type LoadedResult,
-  type MutationResult,
-  type QueryResult,
-  type SnowflakeClient,
-} from './client.js';
-export { createPool, type PooledClient, type PoolOptions } from './pool.js';
-export type { ExecuteOptions } from './request.js';
+export { createClient } from './client.js';
+export type * from './deprecated-types.js';
+export { createPool } from './pool.js';

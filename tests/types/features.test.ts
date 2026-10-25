@@ -8,13 +8,13 @@ import {
   decimal,
   eq,
   flatten,
-  type GeoJsonGeometry,
   geography,
   geometry,
   insert,
   integer,
   jsonPath,
   object,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
@@ -27,7 +27,6 @@ import {
   variant,
   vector,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const users = snowflakeTable('USERS', {
   id: integer('ID').notNull(),
@@ -41,7 +40,7 @@ const orders = snowflakeTable('ORDERS', {
 const other = snowflakeTable('OTHER', { id: integer('ID').notNull() });
 const nullable = snowflakeTable('NULLABLE', { id: integer('ID') });
 select(users).leftJoin(nullable, eq(users.columns.id, nullable.columns.id));
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 const left = select(users)
   .leftJoin(orders, eq(users.columns.id, orders.columns.userId))
   .select({ name: users.columns.name, orderId: orders.columns.id, count: count() });
@@ -175,8 +174,8 @@ expectTypeOf(db.execute(select(spatial)))
   .resolves.toHaveProperty('rows')
   .toEqualTypeOf<
     readonly {
-      readonly location: GeoJsonGeometry;
-      readonly shape: GeoJsonGeometry | null;
+      readonly location: Snowtyped.GeoJsonGeometry;
+      readonly shape: Snowtyped.GeoJsonGeometry | null;
       readonly embedding: number[];
       readonly counts: number[] | null;
     }[]

@@ -103,9 +103,9 @@ export interface SetOperand extends Flat {
  * @example
  * ```ts
  * const query = select(customers, { id: customers.columns.id, email: customers.columns.email });
- * type Row = InferRow<typeof query>;
+ * type Row = Snowtyped.InferRow<typeof query>;
  * // { readonly id: bigint; readonly email: string | null }
- * type Customer = InferRow<typeof customers>;
+ * type Customer = Snowtyped.InferRow<typeof customers>;
  * // { readonly id: bigint; readonly name: string; readonly email: string | null }
  * ```
  */

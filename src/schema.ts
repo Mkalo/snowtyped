@@ -182,7 +182,7 @@ type InferNested<P extends Projection, Nullable extends string> = [
  *
  * @example
  * ```ts
- * type Customer = InferSelection<typeof customers.columns>;
+ * type Customer = Snowtyped.InferSelection<typeof customers.columns>;
  * // { readonly id: bigint; readonly name: string; readonly email: string | null }
  * ```
  */

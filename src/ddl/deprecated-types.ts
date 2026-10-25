@@ -1,0 +1,57 @@
+import type { Snowtyped } from '../index.js';
+
+/** @deprecated Use `Snowtyped.AlterTable`. */
+export type AlterTable = Snowtyped.AlterTable;
+/** @deprecated Use `Snowtyped.ColumnDefinition`. */
+export type ColumnDefinition = Snowtyped.ColumnDefinition;
+/** @deprecated Use `Snowtyped.ColumnDefinitionNode`. */
+export type ColumnDefinitionNode = Snowtyped.ColumnDefinitionNode;
+/** @deprecated Use `Snowtyped.ColumnOptions`. */
+export type ColumnOptions = Snowtyped.ColumnOptions;
+/** @deprecated Use `Snowtyped.DdlNode`. */
+export type DdlNode = Snowtyped.DdlNode;
+/** @deprecated Use `Snowtyped.DdlStatement`. */
+export type DdlStatement = Snowtyped.DdlStatement;
+/** @deprecated Use `Snowtyped.DiffOptions`. */
+export type DiffOptions = Snowtyped.DiffOptions;
+/** @deprecated Use `Snowtyped.DriftOptions`. */
+export type DriftOptions = Snowtyped.DriftOptions;
+/** @deprecated Use `Snowtyped.IncompleteMigration`. */
+export type IncompleteMigration = Snowtyped.IncompleteMigration;
+/** @deprecated Use `Snowtyped.MigrateOptions`. */
+export type MigrateOptions = Snowtyped.MigrateOptions;
+/** @deprecated Use `Snowtyped.MigrateResult`. */
+export type MigrateResult = Snowtyped.MigrateResult;
+/** @deprecated Use `Snowtyped.Migration`. */
+export type Migration = Snowtyped.Migration;
+/** @deprecated Use `Snowtyped.MigrationErrorCode`. */
+export type MigrationErrorCode = Snowtyped.MigrationErrorCode;
+/** @deprecated Use `Snowtyped.MigrationStatus`. */
+export type MigrationStatus = Snowtyped.MigrationStatus;
+/** @deprecated Use `Snowtyped.MigrationTarget`. */
+export type MigrationTarget = Snowtyped.MigrationTarget;
+/** @deprecated Use `Snowtyped.ObservedColumn`. */
+export type ObservedColumn = Snowtyped.ObservedColumn;
+/** @deprecated Use `Snowtyped.ObservedSchema`. */
+export type ObservedSchema = Snowtyped.ObservedSchema;
+/** @deprecated Use `Snowtyped.ObservedTable`. */
+export type ObservedTable = Snowtyped.ObservedTable;
+/** @deprecated Use `Snowtyped.ObservedType`. */
+export type ObservedType = Snowtyped.ObservedType;
+/** @deprecated Use `Snowtyped.PhysicalType`. */
+export type PhysicalType = Snowtyped.PhysicalType;
+/** @deprecated Use `Snowtyped.SchemaChange`. */
+export type SchemaChange = Snowtyped.SchemaChange;
+/** @deprecated Use `Snowtyped.SchemaDefinition`. */
+export type SchemaDefinition = Snowtyped.SchemaDefinition;
+/** @deprecated Use `Snowtyped.SchemaDiff`. */
+export type SchemaDiff = Snowtyped.SchemaDiff;
+/** @deprecated Use `Snowtyped.TableDefinition`. */
+export type TableDefinition = Snowtyped.TableDefinition;
+/** @deprecated Use `Snowtyped.TableDefinitionOptions`. */
+export type TableDefinitionOptions<C extends Snowtyped.ColumnMap> =
+  Snowtyped.TableDefinitionOptions<C>;
+/** @deprecated Use `Snowtyped.UnmodeledType`. */
+export type UnmodeledType = Snowtyped.UnmodeledType;
+/** @deprecated Use `Snowtyped.UnsupportedChange`. */
+export type UnsupportedChange = Snowtyped.UnsupportedChange;

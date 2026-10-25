@@ -14,7 +14,7 @@ import {
   max,
   notExists,
   rowNumber,
-  type SelectQuery,
+  type Snowtyped,
   scalar,
   select,
   snowflakeTable,
@@ -200,7 +200,9 @@ describe('subqueries', () => {
     expect(() => userOrders.innerJoin(users, eq(users.columns.id, orders.columns.id))).toThrow(
       'distinct names',
     );
-    const standalone = userOrders as unknown as SelectQuery<{ id: typeof orders.columns.id }>;
+    const standalone = userOrders as unknown as Snowtyped.SelectQuery<{
+      id: typeof orders.columns.id;
+    }>;
     expect(() => standalone.compile()).toThrow('only be used as a subquery');
     expect(() => standalone.as('x')).toThrow('only be used as a subquery');
     expect(() => standalone.asCte('x')).toThrow('only be used as a subquery');

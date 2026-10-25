@@ -5,13 +5,12 @@ import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   generateSchema,
-  type IntrospectedTable,
   insert,
   introspect,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
-  type Table,
   text,
 } from '../../src/index.js';
 import { createFixture, integrationConfig, tableIdentifier } from '../support/snowflake.js';
@@ -45,7 +44,7 @@ describe('introspection and generated declarations against Snowflake', () => {
   const supported = snowflakeTable('ALL_TYPES', { id: text('ID') }, namespace);
   const mixed = snowflakeTable('Mixed table', { id: text('id') }, namespace);
   const geo = snowflakeTable('GEO', { id: text('ID') }, namespace);
-  let tables: readonly IntrospectedTable[] = [];
+  let tables: readonly Snowtyped.IntrospectedTable[] = [];
   let directory = '';
 
   beforeAll(async () => {
@@ -162,13 +161,13 @@ export type Checks = [
     const code = generateSchema(tables);
     const file = join(directory, 'runtime.ts');
     await writeFile(file, code.replace("from 'snowtyped'", `from ${JSON.stringify(SOURCE)}`));
-    const generated = (await import(file)) as Record<string, Table>;
+    const generated = (await import(file)) as Record<string, Snowtyped.Table>;
     const [allTypes, customers, geoTable, mixedTable] = [
       'table0',
       'table1',
       'table2',
       'table3',
-    ].map((key) => generated[key] as Table);
+    ].map((key) => generated[key] as Snowtyped.Table);
     const row = {
       ID: 1n,
       SMALL: -5n,
@@ -193,21 +192,28 @@ export type Checks = [
       MAP: { key: 'value' },
       BYTES: new Uint8Array([1, 2, 3]),
     };
-    await db.execute(insert(allTypes as Table, row as never));
-    const [read] = (await db.execute(select(allTypes as Table))).rows as Record<string, unknown>[];
+    await db.execute(insert(allTypes as Snowtyped.Table, row as never));
+    const [read] = (await db.execute(select(allTypes as Snowtyped.Table))).rows as Record<
+      string,
+      unknown
+    >[];
     expect(read).toMatchObject({
       ...row,
       LTZ: expect.stringMatching(/^2026-10-2\d \d{2}:02:03\.000000004 /),
       BYTES: expect.any(Uint8Array),
     });
     expect([...((read?.BYTES as Uint8Array | undefined) ?? [])]).toEqual([1, 2, 3]);
-    expect((await db.execute(select(customers as Table))).rows).toHaveLength(3);
-    await db.execute(insert(mixedTable as Table, { id: 7n, 'Display "Name"': 'quoted' } as never));
-    expect((await db.execute(select(mixedTable as Table))).rows).toEqual([
+    expect((await db.execute(select(customers as Snowtyped.Table))).rows).toHaveLength(3);
+    await db.execute(
+      insert(mixedTable as Snowtyped.Table, { id: 7n, 'Display "Name"': 'quoted' } as never),
+    );
+    expect((await db.execute(select(mixedTable as Snowtyped.Table))).rows).toEqual([
       { id: 7n, 'Display "Name"': 'quoted' },
     ]);
     const place = { type: 'Point', coordinates: [-122.35, 37.55] };
-    await db.execute(insert(geoTable as Table, { ID: 1n, PLACE: place } as never));
-    expect((await db.execute(select(geoTable as Table))).rows).toEqual([{ ID: 1n, PLACE: place }]);
+    await db.execute(insert(geoTable as Snowtyped.Table, { ID: 1n, PLACE: place } as never));
+    expect((await db.execute(select(geoTable as Snowtyped.Table))).rows).toEqual([
+      { ID: 1n, PLACE: place },
+    ]);
   });
 });

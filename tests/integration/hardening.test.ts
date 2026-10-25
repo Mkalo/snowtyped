@@ -3,8 +3,17 @@ import v8 from 'node:v8';
 import vm from 'node:vm';
 import snowflake from 'snowflake-sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { eq, insert, integer, select, snowflakeTable, sql, text } from '../../src/index.js';
-import { createPool, type PoolOptions } from '../../src/snowflake/index.js';
+import {
+  eq,
+  insert,
+  integer,
+  type Snowtyped,
+  select,
+  snowflakeTable,
+  sql,
+  text,
+} from '../../src/index.js';
+import { createPool } from '../../src/snowflake/index.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
 
 v8.setFlagsFromString('--expose-gc');
@@ -37,7 +46,7 @@ describe('production scenarios against Snowflake', () => {
   });
   afterAll(() => fixture.cleanup());
 
-  async function observedPool(options: PoolOptions) {
+  async function observedPool(options: Snowtyped.PoolOptions) {
     const spy = vi.spyOn(snowflake, 'createPool');
     try {
       const pool = await createPool(config, options);

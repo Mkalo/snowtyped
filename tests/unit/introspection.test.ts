@@ -1,15 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  generateSchema,
-  type IntrospectedColumn,
-  introspect,
-  type RawQuery,
-} from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
+import { generateSchema, introspect, type Snowtyped } from '../../src/index.js';
 
 describe('schema introspection and code generation', () => {
   it('binds filters, validates metadata, and preserves names, ordinals, and nullability', async () => {
-    const queryRaw = vi.fn(async (_query: RawQuery) => [
+    const queryRaw = vi.fn(async (_query: Snowtyped.RawQuery) => [
       {
         TABLE_SCHEMA: 'S',
         TABLE_NAME: 'T',
@@ -87,7 +81,7 @@ describe('schema introspection and code generation', () => {
         EXPRESSION: null,
       },
     ]);
-    const client = { queryRaw } as unknown as SnowflakeClient;
+    const client = { queryRaw } as unknown as Snowtyped.SnowflakeClient;
     const tables = await introspect(client, { database: 'Odd.DB', schema: "S'; --" });
     expect(tables).toHaveLength(2);
     expect(tables[0]?.columns).toEqual([
@@ -214,7 +208,7 @@ describe('schema introspection and code generation', () => {
           shown('VP', { type: 'OBJECT', nullable: true }),
         ];
       },
-    } as unknown as SnowflakeClient;
+    } as unknown as Snowtyped.SnowflakeClient;
     const [table] = await introspect(client, { database: 'DB' });
     if (!table) throw new Error('Expected a table.');
     expect(queries[1]).toBe('SHOW COLUMNS IN TABLE "DB"."S"."T"');
@@ -256,7 +250,7 @@ describe('schema introspection and code generation', () => {
     expect(() => generateSchema([{ ...table, columns: [table.columns[6] as never] }])).toThrow(
       'Unsupported structured element type for code generation: REAL',
     );
-    const { structure: _, ...unshown } = table.columns[2] as IntrospectedColumn;
+    const { structure: _, ...unshown } = table.columns[2] as Snowtyped.IntrospectedColumn;
     expect(() => generateSchema([{ ...table, columns: [unshown] }])).toThrow(
       'Unsupported Snowflake type for code generation: ARRAY(NUMBER)',
     );
@@ -269,7 +263,7 @@ describe('schema introspection and code generation', () => {
         calls += 1;
         return [];
       },
-    } as unknown as SnowflakeClient;
+    } as unknown as Snowtyped.SnowflakeClient;
     expect(await introspect(client, { database: 'DB' })).toEqual([]);
     expect(calls).toBe(1);
   });
@@ -309,7 +303,7 @@ describe('schema introspection and code generation', () => {
         { ...base, COLUMN_NAME: 'DOUBLED', KIND: 'VIRTUAL_COLUMN', EXPRESSION: 'ID * 2' },
         { ...base, COLUMN_NAME: 'PART', KIND: 'PARTITION_COLUMN' },
       ],
-    } as unknown as SnowflakeClient;
+    } as unknown as Snowtyped.SnowflakeClient;
     const tables = await introspect(client, { database: 'DB' });
     expect(tables[0]?.columns.map((column) => column.serverValue)).toEqual([
       { kind: 'identity', start: 10, increment: 5, order: true },
@@ -355,7 +349,7 @@ describe('schema introspection and code generation', () => {
         row('V', 'VECTOR', 'VECTOR(FLOAT, 4)'),
         row('W', 'VECTOR', 'VECTOR(INT, 16)'),
       ],
-    } as unknown as SnowflakeClient;
+    } as unknown as Snowtyped.SnowflakeClient;
     const [table] = await introspect(client, { database: 'DB' });
     if (!table) throw new Error('Expected a table.');
     expect(table.columns.map((column) => column.dataType)).toEqual([
@@ -382,7 +376,7 @@ describe('schema introspection and code generation', () => {
   });
 
   it('rejects invalid driver metadata', async () => {
-    const client = { queryRaw: async () => [{}] } as unknown as SnowflakeClient;
+    const client = { queryRaw: async () => [{}] } as unknown as Snowtyped.SnowflakeClient;
     await expect(introspect(client, { database: 'DB' })).rejects.toThrow();
   });
 
@@ -408,7 +402,7 @@ describe('schema introspection and code generation', () => {
       'OBJECT',
       'BINARY',
     ];
-    const columns: IntrospectedColumn[] = types.map((dataType, index) => ({
+    const columns: Snowtyped.IntrospectedColumn[] = types.map((dataType, index) => ({
       name: `C${index}`,
       dataType,
       nullable: index % 2 === 0,
@@ -464,7 +458,7 @@ describe('schema introspection and code generation', () => {
       precision: number | null,
       scale: number | null,
       length: number | null,
-    ): IntrospectedColumn => ({
+    ): Snowtyped.IntrospectedColumn => ({
       name: `${dataType}_${precision}_${scale}_${length}`,
       dataType,
       nullable: true,

@@ -6,13 +6,14 @@ import {
   eq,
   insert,
   integer,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
   text,
   update,
 } from '../../src/index.js';
-import { createPool, type PooledClient } from '../../src/snowflake/index.js';
+import { createPool } from '../../src/snowflake/index.js';
 import { createFixture, integrationConfig, tableIdentifier } from '../support/snowflake.js';
 
 const ROWS = 20_000;
@@ -34,13 +35,13 @@ describe('raw SQL, streaming, cancellation, transactions, and pools against Snow
     namespace,
   );
   const quoted = snowflakeTable('raw "quoted" table', { value: text('Value') }, namespace);
-  const ledgerIds = async (client: Pick<PooledClient, 'execute'> = db) =>
+  const ledgerIds = async (client: Pick<Snowtyped.PooledClient, 'execute'> = db) =>
     (
       await client.execute(
         select(ledger, { id: ledger.columns.id }).orderBy(asc(ledger.columns.id)),
       )
     ).rows.map((row) => row.id);
-  const pools: PooledClient[] = [];
+  const pools: Snowtyped.PooledClient[] = [];
   const pool = async (max: number) => {
     const created = await createPool(integrationConfig(), { max, acquireTimeoutMillis: 15_000 });
     pools.push(created);

@@ -6,16 +6,15 @@ import {
   eq,
   integer,
   pivot,
-  type RawQuery,
+  type Snowtyped,
   select,
   snowflakeTable,
   text,
   unpivot,
   variant,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 const sales = snowflakeTable('SALES', {
   id: integer('ID').notNull(),
   region: text('REGION'),
@@ -90,7 +89,7 @@ expectTypeOf(db.execute(select(required, { amount: required.columns.amount })))
   .resolves.toHaveProperty('rows')
   .toEqualTypeOf<readonly { readonly amount: bigint }[]>();
 const dynamic = dynamicPivot(sales, 'Y', { aggregate: 'sum', value: 'amount', for: 'quarter' });
-expectTypeOf(dynamic).toEqualTypeOf<RawQuery<unknown>>();
+expectTypeOf(dynamic).toEqualTypeOf<Snowtyped.RawQuery<unknown>>();
 expectTypeOf(db.queryRaw(dynamic)).toEqualTypeOf<Promise<unknown>>();
 // @ts-expect-error A pivot column cannot reuse a grouping column name.
 pivot(sales, 'X', { aggregate: 'sum', value: 'amount', for: 'quarter', in: { id: 'Q1' } });

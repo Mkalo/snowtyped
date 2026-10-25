@@ -293,7 +293,7 @@ export async function migrationStatus(
  * @throws {@link MigrationError} whose `code` names the cause.
  * @example
  * ```ts
- * const migrations: Migration[] = [
+ * const migrations: Snowtyped.Migration[] = [
  *   { id: '0001_customers', statements: [createTable(defineTable(customers))] },
  * ];
  * const { applied } = await migrate(db, migrations, { database: 'APP_DB', schema: 'PUBLIC' });

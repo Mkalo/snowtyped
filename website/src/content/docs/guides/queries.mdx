@@ -27,11 +27,17 @@ again replaces that clause on the new query.
 
 ## Row types
 
-`InferRow<typeof query>` is the type of each row a query returns, without executing it, much like
-`z.infer` for a Zod schema. It accepts a `select()` query, a set operation, a query with relations,
-or a table, whose row has every declared column. Columns of outer-joined sources are nullable, as
-in executed rows. `InferInsert<typeof table>` and `InferUpdate<typeof table>` are the values
-`insert()` and `update()` accept; see [mutations](/guides/mutations/#input-types).
+Every public type is a member of the type-only `Snowtyped` namespace, imported with
+`import type { Snowtyped } from 'snowtyped'` or as `type Snowtyped` next to other imports.
+Individual type exports such as `InferSelection` still work, but are deprecated and will be
+removed in 2.0.
+
+`Snowtyped.InferRow<typeof query>` is the type of each row a query returns, without executing it,
+much like `z.infer` for a Zod schema. It accepts a `select()` query, a set operation, a query with
+relations, or a table, whose row has every declared column. Columns of outer-joined sources are
+nullable, as in executed rows. `Snowtyped.InferInsert<typeof table>` and
+`Snowtyped.InferUpdate<typeof table>` are the values `insert()` and `update()` accept; see
+[mutations](/guides/mutations/#input-types).
 
 <Snippet code={rowTypes} />
 
