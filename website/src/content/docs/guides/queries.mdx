@@ -12,6 +12,7 @@ import grouping from '../../../snippets/grouping.ts?raw';
 import joins from '../../../snippets/joins.ts?raw';
 import nested from '../../../snippets/nested.ts?raw';
 import relations from '../../../snippets/relations.ts?raw';
+import rowTypes from '../../../snippets/row-types.ts?raw';
 import recursiveCtes from '../../../snippets/recursive-ctes.ts?raw';
 import setOperations from '../../../snippets/set-operations.ts?raw';
 import subqueries from '../../../snippets/subqueries.ts?raw';
@@ -23,6 +24,16 @@ selects specific columns and expressions. Projection keys become the exact outpu
 
 Builders are immutable. Each call returns a new query, and calling a clause such as `.where()`
 again replaces that clause on the new query.
+
+## Row types
+
+`InferRow<typeof query>` is the type of each row a query returns, without executing it, much like
+`z.infer` for a Zod schema. It accepts a `select()` query, a set operation, a query with relations,
+or a table, whose row has every declared column. Columns of outer-joined sources are nullable, as
+in executed rows. `InferInsert<typeof table>` and `InferUpdate<typeof table>` are the values
+`insert()` and `update()` accept; see [mutations](/guides/mutations/#input-types).
+
+<Snippet code={rowTypes} />
 
 ## Expressions
 

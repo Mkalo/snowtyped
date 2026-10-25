@@ -26,7 +26,7 @@ const expected = {
       CastType CastValue Column ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType
       DatePart DefineContext Expression FilteredMutation FlattenOptions FrameBoundary
       FramedWindowOptions GeoJsonGeometry GeoPosition IdentityOptions InferColumn InferExpression
-      InferSelection InferStructured InsertSource InsertValues IntersectRow IntervalUnit
+      InferInsert InferRow InferSelection InferStructured InferUpdate InsertSource InsertValues IntersectRow IntervalUnit
       IntrospectedColumn IntrospectedTable MatchRecognizeColumns MatchRecognizeOptions MatchRowScope
       MatchVariableScope MeasureContext MergeQuery MutationQuery Navigation OffsetWindowOptions
       OperandRow OrderedWindowOptions Ordering PivotAggregate PivotColumns PivotOptions PivotValue

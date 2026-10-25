@@ -37,9 +37,10 @@ that list and this section.
   reviewable output; its formatting is not stable.
 - `snowtyped/snowflake`: `createClient`, `createPool`, and their option and
   result types.
-- Inference types: `InferSelection`, `InferColumn`, `InferExpression`,
-  `InsertValues`, `UpdateValues`, and the other exported type names. The value
-  types they produce are stable; their internal generic parameters are not.
+- Inference types: `InferRow`, `InferInsert`, `InferUpdate`, `InferSelection`,
+  `InferColumn`, `InferExpression`, `InsertValues`, `UpdateValues`, and the
+  other exported type names. The value types they produce are stable; their
+  internal generic parameters are not.
 
 Inferred result types and runtime representations of existing declarations are
 part of the stable API. Correcting a type that contradicted runtime behavior is

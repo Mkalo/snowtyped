@@ -5,6 +5,7 @@ description: Typed INSERT, UPDATE, DELETE, and MERGE statements.
 
 import { Aside } from '@astrojs/starlight/components';
 import Snippet from '../../../components/Snippet.astro';
+import inputTypes from '../../../snippets/input-types.ts?raw';
 import merge from '../../../snippets/merge.ts?raw';
 import serverValues from '../../../snippets/server-values.ts?raw';
 import sourcedWrites from '../../../snippets/sourced-writes.ts?raw';
@@ -22,6 +23,15 @@ import writes from '../../../snippets/writes.ts?raw';
 <Aside type="caution">
   UPDATE and DELETE without `.where()` affect every row in the table.
 </Aside>
+
+## Input types
+
+`InferInsert<typeof table>` is the row `insert()` accepts: required columns without a server value
+are required, other writable columns are optional, and virtual columns are left out.
+`InferUpdate<typeof table>` makes every writable column optional, for literal values passed to
+`update()`. Use them to type values that are built before the statement, such as a request body.
+
+<Snippet code={inputTypes} />
 
 ## Defaults, identity, and virtual columns
 

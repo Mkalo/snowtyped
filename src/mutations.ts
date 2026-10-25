@@ -48,6 +48,32 @@ type RequiredKeys<C extends ColumnMap> = {
 export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferColumn<C[K]> } & {
   [K in Exclude<WritableKeys<C>, RequiredKeys<C>>]?: InferColumn<C[K]>;
 };
+/**
+ * The row {@link insert} accepts for a table: {@link InsertValues} of its columns.
+ *
+ * @example
+ * ```ts
+ * type NewCustomer = InferInsert<typeof customers>;
+ * // { id: bigint; name: string; email?: string | null }
+ * ```
+ */
+export type InferInsert<T> =
+  T extends Table<infer C extends ColumnMap> ? Simplify<InsertValues<C>> : never;
+/**
+ * The literal values {@link update} accepts for a table: every writable column, optional. Virtual
+ * columns are excluded. {@link UpdateValues} additionally accepts expressions.
+ *
+ * @example
+ * ```ts
+ * type CustomerPatch = InferUpdate<typeof customers>;
+ * // { id?: bigint; name?: string; email?: string | null }
+ * ```
+ */
+export type InferUpdate<T> =
+  T extends Table<infer C extends ColumnMap>
+    ? { [K in WritableKeys<C>]?: InferColumn<C[K]> }
+    : never;
+type Simplify<T> = { [K in keyof T]: T[K] };
 type Assignment<C extends AnyColumn, Scope extends string> = Expression<
   InferColumn<C>,
   Scope,

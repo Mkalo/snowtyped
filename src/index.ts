@@ -193,6 +193,8 @@ export {
   deleteFrom,
   deleteUsing,
   type FilteredMutation,
+  type InferInsert,
+  type InferUpdate,
   type InsertSource,
   type InsertValues,
   insert,
@@ -218,6 +220,7 @@ export {
 export {
   type CompatibleOperand,
   exists,
+  type InferRow,
   type IntersectRow,
   inSubquery,
   notExists,
