@@ -133,6 +133,7 @@ describe('server-populated columns', () => {
       'Cannot write virtual column: doubled',
     );
     expect(() => update(events, { doubled: 1n } as never)).toThrow('virtual column');
+    expect(() => update(events, { id: 1n, doubled: undefined } as never)).toThrow('virtual column');
     expect(update(events, { id: 1n, status: 'x' }).compile().sql).toBe(
       'UPDATE "EVENTS" SET "ID" = ?, "STATUS" = ?',
     );
