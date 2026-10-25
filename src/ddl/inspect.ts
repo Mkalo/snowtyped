@@ -4,23 +4,39 @@ import type { SnowflakeClient } from '../snowflake/client.js';
 import { sql } from '../sql.js';
 import { defaultVarcharLengths, type ObservedType } from './types.js';
 
+/** A column as {@link inspectSchema} read it from Snowflake. */
 export interface ObservedColumn {
+  /** The physical column name. */
   readonly name: string;
+  /** The column's physical type. */
   readonly type: ObservedType;
+  /** Whether the column is NOT NULL. */
   readonly notNull: boolean;
+  /** The column comment. */
   readonly comment: string | null;
+  /** The column's default, identity, or virtual expression. */
   readonly serverValue: ServerValue | null;
 }
+/** A base table as {@link inspectSchema} read it from Snowflake. */
 export interface ObservedTable {
+  /** The physical table name. */
   readonly name: string;
+  /** The table comment. */
   readonly comment: string | null;
+  /** The table's columns, in ordinal order. */
   readonly columns: readonly ObservedColumn[];
 }
+/** A schema as {@link inspectSchema} read it from Snowflake. */
 export interface ObservedSchema {
+  /** The schema's database. */
   readonly database: string;
+  /** The schema's name. */
   readonly schema: string;
+  /** Whether the schema exists. */
   readonly exists: boolean;
+  /** The schema comment. */
   readonly comment: string | null;
+  /** The schema's base tables. */
   readonly tables: readonly ObservedTable[];
 }
 
@@ -190,7 +206,13 @@ function serverValue(row: ColumnRow): ServerValue | null {
 
 const freeze = <T>(value: T): T => (value === null ? value : Object.freeze(value));
 
-/** Reads base tables and columns of one schema through INFORMATION_SCHEMA, limited by the role. */
+/**
+ * Reads a schema's base tables and columns through `INFORMATION_SCHEMA`, and structured types
+ * through `SHOW COLUMNS`. Results are limited to what the connection's role can access.
+ *
+ * @param client - A client from `snowtyped/snowflake`.
+ * @param target - The schema to read, such as a {@link SchemaDefinition}.
+ */
 export async function inspectSchema(
   client: Pick<SnowflakeClient, 'queryRaw'>,
   target: { readonly database: string; readonly schema: string },

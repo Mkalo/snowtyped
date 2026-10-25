@@ -1,7 +1,18 @@
 import type { Connection, RowStatement, StatementOption } from 'snowflake-sdk';
 
+/**
+ * Cancellation options accepted by every client method.
+ *
+ * Cancellation waits for Snowflake to accept the cancel. If the statement finishes first, the
+ * request settles with its real outcome, so a committed write resolves rather than rejecting.
+ */
 export interface ExecuteOptions {
+  /** Cancels the request when aborted. */
   readonly signal?: AbortSignal;
+  /**
+   * Cancels the request after this many milliseconds. On a pool, the deadline includes the wait for
+   * a connection.
+   */
   readonly timeoutMs?: number;
 }
 export type DriverConnection = Pick<Connection, 'execute'>;

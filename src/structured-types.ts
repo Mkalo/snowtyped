@@ -37,6 +37,9 @@ function structuredType<T, R extends boolean>(
 }
 const number = () => z.instanceof(JsonNumber).transform((value) => value.source);
 
+/**
+ * An integral `NUMBER(precision, 0)` element that decodes as `bigint`. Precision defaults to 38.
+ */
 export function integer(options: { readonly precision?: number } = {}): StructuredType<bigint> {
   const column = integerColumn('VALUE', options).notNull();
   return structuredType(
@@ -47,7 +50,10 @@ export function integer(options: { readonly precision?: number } = {}): Structur
     false,
   );
 }
-/** Defaults follow Snowflake NUMBER: precision 38, scale 0. */
+/**
+ * A `NUMBER(precision, scale)` element that decodes as exact decimal text padded to the scale.
+ * Precision defaults to 38 and scale to 0.
+ */
 export function decimal(
   options: { readonly precision?: number; readonly scale?: number } = {},
 ): StructuredType<string> {
@@ -70,6 +76,7 @@ export function decimal(
     false,
   );
 }
+/** A VARCHAR element, or `VARCHAR(length)` when `length` is given. */
 export function text(options: { readonly length?: number } = {}): StructuredType<string> {
   const column = textColumn('VALUE', options).notNull();
   const { length } = column.constraints;
@@ -81,10 +88,12 @@ export function text(options: { readonly length?: number } = {}): StructuredType
     false,
   );
 }
+/** A BOOLEAN element. */
 export function boolean(): StructuredType<boolean> {
   const column = booleanColumn('VALUE').notNull();
   return structuredType('BOOLEAN', column.readSchema, writeSchema(column), String, false);
 }
+/** An `ARRAY(element)` type whose values are JavaScript arrays. */
 export function array<E extends AnyStructuredType>(
   element: E,
 ): StructuredType<InferStructured<E>[]> {
@@ -96,6 +105,10 @@ export function array<E extends AnyStructuredType>(
     false,
   );
 }
+/**
+ * An `OBJECT(field type, ...)` type. Values must have exactly the declared keys, which are quoted
+ * exactly as given.
+ */
 export function object<const F extends Fields>(
   fields: F,
 ): StructuredType<{ -readonly [K in keyof F]: InferStructured<F[K]> }> {
@@ -112,6 +125,11 @@ export function object<const F extends Fields>(
     false,
   );
 }
+/**
+ * A `MAP(key, value)` type whose values are JavaScript `Map`s.
+ *
+ * @throws `TypeError` unless the key is VARCHAR or NUMBER with scale 0.
+ */
 export function map<K extends MapKey, V extends AnyStructuredType>(
   key: K,
   value: V,

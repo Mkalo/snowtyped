@@ -1,5 +1,6 @@
 import type { ColumnConstraints, DataType } from '../schema.js';
 
+/** A physical Snowflake column type, built with {@link sqlType}. */
 export type PhysicalType =
   | {
       readonly kind: 'NUMBER';
@@ -27,11 +28,14 @@ type PlainKind =
   | 'OBJECT'
   | 'GEOGRAPHY'
   | 'GEOMETRY';
-/** A type the DDL module cannot model, such as a structured ARRAY, kept by its metadata name. */
+/** A type read from Snowflake that `snowtyped/ddl` does not model, kept by its metadata name. */
 export interface UnmodeledType {
+  /** Identifies an unmodeled type. */
   readonly kind: 'OTHER';
+  /** The type's name as Snowflake reports it. */
   readonly name: string;
 }
+/** A column type as read from Snowflake. */
 export type ObservedType = PhysicalType | UnmodeledType;
 
 function checked(value: number, min: number, max: number, label: string): number {
@@ -55,8 +59,18 @@ function fractional(
 }
 const plain = (kind: PlainKind) => () => Object.freeze({ kind }) as PhysicalType;
 
-/** Physical Snowflake column types. VARCHAR and BINARY without a length use the server default. */
+/**
+ * Builders for physical Snowflake column types, used by {@link defineTable} overrides and
+ * `alterTable`. VARCHAR and BINARY without a length use the server default.
+ *
+ * @throws `RangeError` when a precision, scale, length, or dimension is out of range.
+ * @example
+ * ```ts
+ * defineTable(customers, { types: { name: sqlType.varchar(200) } });
+ * ```
+ */
 export const sqlType = /* @__PURE__ */ Object.freeze({
+  /** `NUMBER(precision, scale)`, by default `NUMBER(38, 0)`. */
   number(precision = 38, scale = 0): PhysicalType {
     checked(precision, 1, 38, 'NUMBER precision');
     return Object.freeze({
@@ -65,19 +79,35 @@ export const sqlType = /* @__PURE__ */ Object.freeze({
       scale: checked(scale, 0, Math.min(precision, 37), 'NUMBER scale'),
     });
   },
+  /** `VARCHAR`, or `VARCHAR(length)`. */
   varchar: (length?: number) => sized('VARCHAR', length, 134_217_728),
+  /** `BINARY`, or `BINARY(length)` in bytes. */
   binary: (length?: number) => sized('BINARY', length, 67_108_864),
+  /** `TIME(precision)`, by default `TIME(9)`. */
   time: (precision = 9) => fractional('TIME', precision),
+  /**
+   * `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`, or `TIMESTAMP_TZ` with a fractional seconds precision, by
+   * default 9.
+   */
   timestamp: (mode: 'ntz' | 'ltz' | 'tz' = 'ntz', precision = 9) =>
     fractional(`TIMESTAMP_${mode.toUpperCase() as 'NTZ' | 'LTZ' | 'TZ'}`, precision),
+  /** `FLOAT`. */
   float: plain('FLOAT'),
+  /** `BOOLEAN`. */
   boolean: plain('BOOLEAN'),
+  /** `DATE`. */
   date: plain('DATE'),
+  /** `VARIANT`. */
   variant: plain('VARIANT'),
+  /** A semi-structured `ARRAY`. */
   array: plain('ARRAY'),
+  /** A semi-structured `OBJECT`. */
   object: plain('OBJECT'),
+  /** `GEOGRAPHY`. */
   geography: plain('GEOGRAPHY'),
+  /** `GEOMETRY`. */
   geometry: plain('GEOMETRY'),
+  /** `VECTOR(INT | FLOAT, dimension)`, with a dimension from 1 to 4096. */
   vector(element: 'int' | 'float', dimension: number): PhysicalType {
     if (element !== 'int' && element !== 'float')
       throw new RangeError("VECTOR elements must be 'int' or 'float'.");
@@ -240,7 +270,9 @@ export function sameType(desired: PhysicalType, observed: ObservedType): boolean
   }
 }
 
-/** Snowflake can widen VARCHAR and change NUMBER precision in place; other changes need a rebuild. */
+/**
+ * Snowflake can widen VARCHAR and change NUMBER precision in place; other changes need a rebuild.
+ */
 export function alterableType(observed: ObservedType, desired: PhysicalType): boolean {
   if (observed.kind === 'VARCHAR' && desired.kind === 'VARCHAR')
     return (desired.length ?? 16_777_216) > (observed.length ?? Number.POSITIVE_INFINITY);

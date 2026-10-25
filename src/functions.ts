@@ -40,6 +40,7 @@ import {
   timestamp,
 } from './schema.js';
 
+/** A target type of {@link cast}. */
 export type CastType =
   | 'text'
   | 'integer'
@@ -51,16 +52,27 @@ export type CastType =
   | 'timestamp_ntz'
   | 'timestamp_ltz'
   | 'timestamp_tz';
+/** The TypeScript value each {@link CastType} decodes to. */
 export interface CastValue {
+  /** VARCHAR, decoded as text. */
   text: string;
+  /** NUMBER(38, 0), decoded as `bigint`. */
   integer: bigint;
+  /** NUMBER(precision, scale), decoded as exact decimal text. */
   decimal: string;
+  /** DOUBLE, decoded as `number`. */
   float: number;
+  /** BOOLEAN. */
   boolean: boolean;
+  /** DATE, decoded as text. */
   date: string;
+  /** TIME, decoded as text. */
   time: string;
+  /** TIMESTAMP_NTZ, decoded as text. */
   timestamp_ntz: string;
+  /** TIMESTAMP_LTZ, decoded as text with its offset. */
   timestamp_ltz: string;
+  /** TIMESTAMP_TZ, decoded as text with its offset. */
   timestamp_tz: string;
 }
 type NullOf<T> = null extends T ? null : never;
@@ -114,12 +126,22 @@ type LiteralType<V> = V extends AnyExpression
       : V extends number
         ? 'float'
         : 'boolean';
+/**
+ * A CASE expression under construction, returned by {@link caseWhen}.
+ *
+ * It is already a usable expression, NULL when no branch matches. Add branches with `when` and
+ * finish with `else` to make it non-nullable.
+ */
 export interface CaseExpression<
   T,
   S extends string,
   N extends string,
   D extends DataType = DataType,
 > extends Expression<T | null, S, N, D> {
+  /**
+   * Adds a `WHEN predicate THEN value` branch. The value must have the same SQL type as the earlier
+   * branches.
+   */
   when<P extends Predicate, V extends SameValue<Expression<T, string, string, D>>>(
     predicate: P,
     value: V,
@@ -129,6 +151,9 @@ export interface CaseExpression<
     N | ExpressionNullScope<V>,
     D
   >;
+  /**
+   * Adds the `ELSE value` branch, which makes the result non-nullable when every branch value is.
+   */
   else<V extends SameValue<Expression<T, string, string, D>>>(
     value: V,
   ): Expression<T | Widen<V>, S | ExpressionScope<V>, N | ExpressionNullScope<V>, D>;
@@ -138,6 +163,11 @@ type AnyNull<Vs extends readonly unknown[]> = {
 }[number];
 type TextExpression = Expression<string | null, string, string, 'text'>;
 type TemporalExpression = Expression<string | null, string, string, DateTimeType | 'time'>;
+/**
+ * A date or time part, used by {@link dateTrunc}, {@link dateAdd}, {@link dateDiff}, and {@link
+ * datePart}. DATE values accept only `year` through `day`, and TIME values only `hour` through
+ * `nanosecond`.
+ */
 export type DatePart =
   | 'year'
   | 'quarter'
@@ -150,10 +180,21 @@ export type DatePart =
   | 'millisecond'
   | 'microsecond'
   | 'nanosecond';
+/**
+ * The window of a ranking function: an optional PARTITION BY and a required ORDER BY.
+ *
+ * @category Windows
+ */
 export type OrderedWindowOptions<S extends string = string> = Pick<
   WindowOptions<S>,
   'partitionBy'
 > & { readonly orderBy: readonly [Ordering<S>, ...Ordering<S>[]] };
+/**
+ * The window of {@link lag} and {@link lead}, plus the number of rows to shift by, which defaults
+ * to 1.
+ *
+ * @category Windows
+ */
 export type OffsetWindowOptions<S extends string = string> = OrderedWindowOptions<S> & {
   readonly offset?: number;
 };
@@ -409,6 +450,14 @@ function caseBuilder(branches: readonly (readonly [AnyExpression, unknown])[]) {
   });
 }
 
+/**
+ * Converts a value to another SQL type with `CAST(value AS type)`, keeping its nullability.
+ *
+ * @example
+ * ```ts
+ * select(orders, { label: cast(orders.columns.id, 'text') });
+ * ```
+ */
 export function cast<E extends AnyExpression, T extends Exclude<CastType, 'decimal'>>(
   value: E,
   type: T,
@@ -418,6 +467,12 @@ export function cast<E extends AnyExpression, T extends Exclude<CastType, 'decim
   ExpressionNullScope<E>,
   T
 >;
+/**
+ * Converts a value to `NUMBER(precision, scale)`, keeping its nullability. The result decodes as
+ * exact decimal text.
+ *
+ * @throws `TypeError` unless precision is 1 to 38 and scale is 0 to 37 and at most the precision.
+ */
 export function cast<E extends AnyExpression>(
   value: E,
   type: 'decimal',
@@ -464,35 +519,71 @@ type Average<E extends AnyExpression> = Expression<
   ExpressionScope<E>,
   NonNullable<InferExpression<E>> extends number ? 'float' : 'decimal'
 >;
+/**
+ * Averages a numeric expression with `AVG`. NULL for an empty group.
+ *
+ * FLOAT inputs decode as `number`, and other inputs as exact decimal text.
+ *
+ * @category Aggregates
+ */
 export function avg<E extends NumericExpression>(value: E): Average<E> {
   return derive(aggregate('AVG', [value]), domain(numeric([value], true)), true, [value], {
     phase: 'aggregate',
   }) as Average<E>;
 }
+/**
+ * Adds two numbers with `+`.
+ *
+ * Integer operands stay `bigint`, any FLOAT operand yields `number`, and DECIMAL yields exact text.
+ * A literal operand is bound and cast to the left operand's type.
+ *
+ * @example
+ * ```ts
+ * select(orders, { next: add(orders.columns.id, 1n) });
+ * ```
+ */
 export function add<L extends NumericExpression, R extends Operand<L>>(
   left: L,
   right: R,
 ): ArithmeticResult<L, R, false> {
   return arithmetic('+', left, right) as ArithmeticResult<L, R, false>;
 }
+/** Subtracts with `-`. Accepts the same operands as {@link add}. */
 export function sub<L extends NumericExpression, R extends Operand<L>>(
   left: L,
   right: R,
 ): ArithmeticResult<L, R, false> {
   return arithmetic('-', left, right) as ArithmeticResult<L, R, false>;
 }
+/** Multiplies with `*`. Accepts the same operands as {@link add}. */
 export function mul<L extends NumericExpression, R extends Operand<L>>(
   left: L,
   right: R,
 ): ArithmeticResult<L, R, false> {
   return arithmetic('*', left, right) as ArithmeticResult<L, R, false>;
 }
+/**
+ * Divides with `/`. Accepts the same operands as {@link add}, except that integer division yields
+ * exact decimal text.
+ */
 export function div<L extends NumericExpression, R extends Operand<L>>(
   left: L,
   right: R,
 ): ArithmeticResult<L, R, true> {
   return arithmetic('/', left, right) as ArithmeticResult<L, R, true>;
 }
+/**
+ * Returns the first non-NULL value with `COALESCE`.
+ *
+ * Every value must have the first value's SQL type, and literals are bound as that type. The result
+ * is non-null when any argument is non-null.
+ *
+ * @throws `TypeError` when called with fewer than two values.
+ * @example
+ * ```ts
+ * select(orders, { total: coalesce(orders.columns.amount, '0') });
+ * ```
+ */
 export function coalesce<
   E extends AnyExpression,
   R extends readonly [SameValue<E>, ...SameValue<E>[]],
@@ -524,6 +615,19 @@ export function coalesce(first: AnyExpression, ...rest: unknown[]): AnyExpressio
     { nullRefs: certain ? [] : [...new Set(guards.flatMap((value) => value.nullRefs))] },
   );
 }
+/**
+ * Starts a searched CASE expression with its first `WHEN predicate THEN value` branch.
+ *
+ * Every branch value must share one SQL type, and conditions must be BOOLEAN. The expression is
+ * nullable until `.else()` gives a fallback.
+ *
+ * @example
+ * ```ts
+ * const tier = caseWhen(gt(orders.columns.amount, '1000'), 'large')
+ *   .when(gt(orders.columns.amount, '100'), 'medium')
+ *   .else('small');
+ * ```
+ */
 export function caseWhen<P extends Predicate, V extends Literal | AnyExpression>(
   predicate: P,
   value: V,
@@ -540,6 +644,7 @@ export function caseWhen<P extends Predicate, V extends Literal | AnyExpression>
     LiteralType<V>
   >;
 }
+/** Concatenates TEXT values with `CONCAT`. NULL when any argument is NULL. */
 export function concat<E extends TextExpression, R extends readonly (string | TextExpression)[]>(
   first: E,
   ...rest: R
@@ -568,18 +673,26 @@ type Unary<T, E extends AnyExpression, D extends DataType> = Expression<
   ExpressionNullScope<E>,
   D
 >;
+/** Removes leading and trailing whitespace from TEXT with `TRIM`. */
 export function trim<E extends TextExpression>(value: E): Unary<string, E, 'text'> {
   textual([value]);
   return derive(call('TRIM', [value.expression]), domain('text'), nullable(value), [
     value,
   ]) as Unary<string, E, 'text'>;
 }
+/** Counts the characters of TEXT with `LENGTH`. */
 export function length<E extends TextExpression>(value: E): Unary<bigint, E, 'integer'> {
   textual([value]);
   return derive(call('LENGTH', [value.expression]), domain('integer'), nullable(value), [
     value,
   ]) as Unary<bigint, E, 'integer'>;
 }
+/**
+ * Extracts part of TEXT with `SUBSTR`, starting at the 1-based `start` and taking at most `count`
+ * characters, or the rest of the text.
+ *
+ * @throws `TypeError` unless `start` is an integer and `count` a nonnegative integer.
+ */
 export function substring<E extends TextExpression>(
   value: E,
   start: number,
@@ -602,6 +715,7 @@ export function substring<E extends TextExpression>(
     [value],
   ) as Unary<string, E, 'text'>;
 }
+/** Truncates a DATE, TIME, or timestamp to a part with `DATE_TRUNC`, keeping its type. */
 export function dateTrunc<E extends TemporalExpression>(
   part: DatePart,
   value: E,
@@ -621,6 +735,16 @@ export function dateTrunc<E extends TemporalExpression>(
     ExpressionDataType<E>
   >;
 }
+/**
+ * Adds an integer amount of a part to a DATE, TIME, or timestamp with `DATEADD`.
+ *
+ * Adding a time part to a DATE yields TIMESTAMP_NTZ; otherwise the type is kept.
+ *
+ * @example
+ * ```ts
+ * dateAdd('day', 7n, trades.columns.at);
+ * ```
+ */
 export function dateAdd<
   P extends DatePart,
   E extends TemporalExpression,
@@ -656,6 +780,11 @@ export function dateAdd<
     DateAddType<ExpressionDataType<E>, P>
   >;
 }
+/**
+ * Counts the part boundaries between two DATE, TIME, or timestamp values with `DATEDIFF`.
+ *
+ * TIME values cannot be mixed with dates or timestamps. A literal `end` is bound as `start`'s type.
+ */
 export function dateDiff<S extends TemporalExpression, E extends string | TemporalExpression>(
   part: DatePart,
   start: S,
@@ -687,6 +816,7 @@ export function dateDiff<S extends TemporalExpression, E extends string | Tempor
     'integer'
   >;
 }
+/** Extracts a part of a DATE, TIME, or timestamp as an integer with `DATE_PART`. */
 export function datePart<E extends TemporalExpression>(
   part: Exclude<DatePart, 'millisecond' | 'microsecond'>,
   value: E,
@@ -698,11 +828,21 @@ export function datePart<E extends TemporalExpression>(
     value,
   ]) as Unary<bigint, E, 'integer'>;
 }
+/**
+ * Ranks rows within each partition with `RANK() OVER (...)`. Ties share a rank and leave gaps.
+ *
+ * @category Windows
+ */
 export function rank<S extends string = never>(
   options: OrderedWindowOptions<S>,
 ): Expression<bigint, S, never, 'integer'> {
   return ranking('RANK', options) as Expression<bigint, S, never, 'integer'>;
 }
+/**
+ * Ranks rows within each partition with `DENSE_RANK() OVER (...)`. Ties share a rank without gaps.
+ *
+ * @category Windows
+ */
 export function denseRank<S extends string = never>(
   options: OrderedWindowOptions<S>,
 ): Expression<bigint, S, never, 'integer'> {
@@ -714,10 +854,27 @@ type Shifted<E extends AnyExpression, S extends string> = Expression<
   ExpressionNullScope<E>,
   ExpressionDataType<E>
 >;
+/**
+ * Reads a value from an earlier row of the window with `LAG`, or `default` when there is no such
+ * row.
+ *
+ * The result is non-null when both the value and the default are non-null.
+ *
+ * @category Windows
+ * @example
+ * ```ts
+ * lag(orders.columns.amount, { orderBy: [asc(orders.columns.id)], default: '0' });
+ * ```
+ */
 export function lag<E extends AnyExpression, D extends SameValue<E>, S extends string = never>(
   value: E,
   options: OffsetWindowOptions<S> & { readonly default: D },
 ): DefaultResult<E, S, D>;
+/**
+ * Reads a value from an earlier row of the window with `LAG`. NULL when there is no such row.
+ *
+ * @category Windows
+ */
 export function lag<E extends AnyExpression, S extends string = never>(
   value: E,
   options: OffsetWindowOptions<S>,
@@ -728,10 +885,22 @@ export function lag(
 ): AnyExpression {
   return offset('LAG', value, options);
 }
+/**
+ * Reads a value from a later row of the window with `LEAD`, or `default` when there is no such row.
+ *
+ * The result is non-null when both the value and the default are non-null.
+ *
+ * @category Windows
+ */
 export function lead<E extends AnyExpression, D extends SameValue<E>, S extends string = never>(
   value: E,
   options: OffsetWindowOptions<S> & { readonly default: D },
 ): DefaultResult<E, S, D>;
+/**
+ * Reads a value from a later row of the window with `LEAD`. NULL when there is no such row.
+ *
+ * @category Windows
+ */
 export function lead<E extends AnyExpression, S extends string = never>(
   value: E,
   options: OffsetWindowOptions<S>,

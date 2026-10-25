@@ -18,7 +18,14 @@ import {
 } from './expressions.js';
 import { decodeEwkb, type GeoJsonGeometry, geoJson } from './spatial.js';
 
+/**
+ * A column's TypeScript value: `T` when the column is required (NOT NULL), otherwise `T | null`.
+ */
 export type ColumnValue<T, Required extends boolean> = Required extends true ? T : T | null;
+/**
+ * The SQL type of a column or expression. Comparisons, functions, and assignments check it before a
+ * query runs.
+ */
 export type DataType =
   | 'text'
   | 'integer'
@@ -38,19 +45,30 @@ export type DataType =
   | 'geometry'
   | 'vector'
   | 'structured';
+/** The kinds of server-populated values a column can declare, keyed by {@link ServerValueKind}. */
 export interface ServerValues {
+  /** No server value. */
   readonly none: null;
+  /** A DEFAULT, declared with `.serverDefault()`. The expression is trusted SQL text. */
   readonly default: { readonly kind: 'default'; readonly expression?: string };
+  /** An identity column, declared with `.identity()`. */
   readonly identity: {
     readonly kind: 'identity';
     readonly start?: number;
     readonly increment?: number;
     readonly order?: boolean;
   };
+  /** A computed `AS (expression)` column, declared with `.virtual()`. It is read-only. */
   readonly virtual: { readonly kind: 'virtual'; readonly expression?: string };
 }
+/** The server value a column declares: `'none'`, `'default'`, `'identity'`, or `'virtual'`. */
 export type ServerValueKind = keyof ServerValues;
+/** A declared server value. */
 export type ServerValue = NonNullable<ServerValues[ServerValueKind]>;
+/**
+ * The `start`, `increment`, and `order` of an identity column. Start and increment are safe
+ * integers, and increment cannot be zero.
+ */
 export type IdentityOptions = Omit<ServerValues['identity'], 'kind'>;
 export interface ColumnConstraints {
   readonly precision?: number;
@@ -62,6 +80,18 @@ export interface ColumnConstraints {
   /** The SQL spelling of a structured ARRAY, OBJECT, or MAP type. */
   readonly structure?: string;
 }
+/**
+ * A declared table column, created by a column factory such as {@link text} or {@link integer}.
+ *
+ * A column is an {@link Expression} of its source, so it can be projected, compared, and passed to
+ * functions. Columns are nullable until `.notNull()`. Modifiers return a new column.
+ *
+ * @typeParam T - The decoded value, without `null`.
+ * @typeParam Required - `true` once the column is declared NOT NULL.
+ * @typeParam Scope - The name of the table the column belongs to.
+ * @typeParam Server - The server value the column declares.
+ * @typeParam D - The column's SQL type.
+ */
 export interface Column<
   T,
   Required extends boolean = false,
@@ -69,20 +99,50 @@ export interface Column<
   Server extends ServerValueKind = 'none',
   D extends DataType = DataType,
 > extends Expression<ColumnValue<T, Required>, Scope, Scope, D> {
+  /** The physical column name. */
   readonly node: IdentifierNode;
+  /** Whether the column is NOT NULL. */
   readonly required: Required;
+  /** Declared precision, scale, length, and other type constraints. */
   readonly constraints: ColumnConstraints;
+  /** The declared server value, or `null`. */
   readonly serverValue: ServerValues[Server];
+  /**
+   * Validates a value against the column's declared constraints and encodes it for INSERT, UPDATE,
+   * or MERGE.
+   */
   encodeWrite(value: ColumnValue<T, Required>): ExpressionNode;
+  /**
+   * Declares the column NOT NULL, which removes `null` from its type and makes it required on
+   * insert unless it has a server value.
+   */
   notNull(): Column<T, true, Scope, Server, D>;
+  /**
+   * Declares a server DEFAULT, which makes the column optional on insert. `snowtyped/ddl` renders
+   * the expression, which is trusted SQL text, as `DEFAULT expression`.
+   */
   serverDefault(expression?: string): Column<T, Required, Scope, 'default', D>;
+  /**
+   * Declares an identity column, which makes it optional on insert. `snowtyped/ddl` renders it as
+   * `AUTOINCREMENT`.
+   *
+   * @throws `TypeError` when start or increment is not a safe integer or increment is zero.
+   */
   identity(options?: IdentityOptions): Column<T, Required, Scope, 'identity', D>;
+  /**
+   * Declares a computed `AS (expression)` column. Virtual columns are read-only: insert, update,
+   * and MERGE values exclude them.
+   */
   virtual(expression?: string): Column<T, Required, Scope, 'virtual', D>;
 }
+/** A column of any type, scope, and server value. */
 export type AnyColumn = Column<unknown, boolean, string, ServerValueKind>;
+/** The TypeScript value of a column, including `null` unless it is NOT NULL. */
 export type InferColumn<C> =
   C extends Column<infer T, infer R, string, ServerValueKind> ? ColumnValue<T, R> : never;
+/** The columns of a table, keyed by the names used in TypeScript. */
 export type ColumnMap = Readonly<Record<string, AnyColumn>>;
+/** A flat projection: output aliases mapped to expressions. */
 export type Selection = Readonly<Record<string, AnyExpression>>;
 /** A selection whose entries may be nested objects of further entries. */
 export type Projection = { readonly [key: string]: AnyExpression | Projection };
@@ -116,6 +176,16 @@ type InferNested<P extends Projection, Nullable extends string> = [
   : 'always' extends PresenceKeys<P, Nullable>
     ? InferSelection<P, Nullable>
     : InferSelection<P, Exclude<Nullable, ProvenScopes<PresenceKeys<P, Nullable>>>> | null;
+/**
+ * The row type of a projection. Columns of the `Nullable` sources, which an outer join can leave
+ * absent, become nullable.
+ *
+ * @example
+ * ```ts
+ * type Customer = InferSelection<typeof customers.columns>;
+ * // { id: bigint; name: string; email: string | null }
+ * ```
+ */
 export type InferSelection<S extends Projection, Nullable extends string = never> = {
   [K in keyof S]: S[K] extends Leaf
     ?
@@ -125,6 +195,7 @@ export type InferSelection<S extends Projection, Nullable extends string = never
       ? InferNested<S[K], Nullable>
       : never;
 };
+/** The columns of a table bound to the source name `Name`. */
 export type BoundColumns<C extends ColumnMap, Name extends string> = {
   [K in keyof C]: C[K] extends Column<infer T, infer R, string, infer S, infer D>
     ? Column<T, R, Name, S, D>
@@ -300,6 +371,20 @@ function fractional(type: string, options: { readonly precision?: number }) {
     check: (value: string) => fraction(value, precision),
   };
 }
+/**
+ * Declares a TEXT (VARCHAR) column that decodes as `string`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param options - `length` declares VARCHAR(length); longer values are rejected. Length counts
+ * code points.
+ * @example
+ * ```ts
+ * const users = snowflakeTable('USERS', {
+ *   id: integer('ID').notNull(),
+ *   name: text('NAME', { length: 100 }).notNull(),
+ * });
+ * ```
+ */
 export function text(
   name: string,
   options: { readonly length?: number } = {},
@@ -321,6 +406,12 @@ export function text(
         },
   );
 }
+/**
+ * Declares an integral NUMBER column that decodes as `bigint`, covering all 38 digits.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param options - `precision` declares NUMBER(precision, 0); values with more digits are rejected.
+ */
 export function integer(
   name: string,
   options: { readonly precision?: number } = {},
@@ -346,6 +437,13 @@ export function integer(
         },
   );
 }
+/**
+ * Declares a fixed-point NUMBER column that decodes as exact decimal text, such as `"12.50"`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param options - `precision` and `scale` declare NUMBER(precision, scale); values that would be
+ * rounded or do not fit are rejected.
+ */
 export function decimal(
   name: string,
   options: { readonly precision?: number; readonly scale?: number } = {},
@@ -369,6 +467,11 @@ export function decimal(
     },
   });
 }
+/**
+ * Declares a BOOLEAN column.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function boolean(name: string): Column<boolean, false, string, 'none', 'boolean'> {
   return column(name, 'boolean', z.boolean(), z.boolean(), false);
 }
@@ -380,6 +483,12 @@ function decodeFloat(value: string): number {
   const half = Math.trunc(exponent / 2);
   return Number(match[1]) * 2 ** half * 2 ** (exponent - half);
 }
+/**
+ * Declares a FLOAT (DOUBLE) column that decodes as a finite `number`, exactly equal to the stored
+ * value.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function float(name: string): Column<number, false, string, 'none', 'float'> {
   return column(
     name,
@@ -389,9 +498,21 @@ export function float(name: string): Column<number, false, string, 'none', 'floa
     false,
   );
 }
+/**
+ * Declares a DATE column that decodes as text such as `"2026-10-22"`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function date(name: string): Column<string, false, string, 'none', 'date'> {
   return column(name, 'date', z.string(), z.iso.date(), false);
 }
+/**
+ * Declares a TIME column that decodes as text with up to nine fractional digits.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param options - `precision` declares TIME(precision); values with more fractional digits are
+ * rejected.
+ */
 export function time(
   name: string,
   options: { readonly precision?: number } = {},
@@ -405,7 +526,21 @@ export function time(
     fractional('TIME', options),
   );
 }
+/**
+ * Declares a TIMESTAMP_NTZ column that decodes as text with nanoseconds retained.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function timestamp(name: string): Column<string, false, string, 'none', 'timestamp_ntz'>;
+/**
+ * Declares a TIMESTAMP_NTZ, TIMESTAMP_LTZ, or TIMESTAMP_TZ column that decodes as text with
+ * nanoseconds retained. LTZ and TZ values include their offset.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param mode - `'ntz'`, `'ltz'`, or `'tz'`.
+ * @param options - `precision` declares the fractional seconds precision; values with more
+ * fractional digits are rejected.
+ */
 export function timestamp<M extends 'ntz' | 'ltz' | 'tz'>(
   name: string,
   mode: M,
@@ -425,7 +560,26 @@ export function timestamp(
     fractional(`TIMESTAMP_${mode.toUpperCase()}`, options),
   );
 }
+/**
+ * Declares a VARIANT column that decodes as `unknown` JSON.
+ *
+ * An explicit `null` writes SQL NULL, not JSON `null`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function variant(name: string): Column<unknown, false, string, 'none', 'variant'>;
+/**
+ * Declares a VARIANT column with a JSON shape. Values are validated with `schema` when they are
+ * read and written, and the column's type is inferred from it.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @example
+ * ```ts
+ * const events = snowflakeTable('EVENTS', {
+ *   payload: variant('PAYLOAD', z.object({ kind: z.string(), count: z.number() })),
+ * });
+ * ```
+ */
 export function variant<T>(
   name: string,
   schema: z.ZodType<T>,
@@ -436,7 +590,17 @@ export function variant(
 ): Column<unknown, false, string, 'none', 'variant'> {
   return column(name, 'variant', json(schema), schema, false);
 }
+/**
+ * Declares a semi-structured ARRAY column that decodes as `unknown[]`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function array(name: string): Column<unknown[], false, string, 'none', 'array'>;
+/**
+ * Declares a semi-structured ARRAY column whose elements are validated with `element`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function array<T>(
   name: string,
   element: z.ZodType<T>,
@@ -448,9 +612,19 @@ export function array(
   const schema = z.array(element);
   return column(name, 'array', json(schema), schema, false);
 }
+/**
+ * Declares a semi-structured OBJECT column that decodes as `Record<string, unknown>`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function object(
   name: string,
 ): Column<Record<string, unknown>, false, string, 'none', 'object'>;
+/**
+ * Declares a semi-structured OBJECT column validated with `schema`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function object<T extends Record<string, unknown>>(
   name: string,
   schema: z.ZodType<T>,
@@ -461,6 +635,12 @@ export function object(
 ): Column<Record<string, unknown>, false, string, 'none', 'object'> {
   return column(name, 'object', json(schema), schema, false);
 }
+/**
+ * Declares a BINARY column that decodes as `Uint8Array`.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param options - `length` declares BINARY(length) in bytes; longer values are rejected.
+ */
 export function binary(
   name: string,
   options: { readonly length?: number } = {},
@@ -484,6 +664,13 @@ export function binary(
   );
 }
 
+/**
+ * Declares a GEOGRAPHY column whose values are GeoJSON geometry objects.
+ *
+ * GEOGRAPHY values cannot be compared, ordered, or grouped.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ */
 export function geography(
   name: string,
 ): Column<GeoJsonGeometry, false, string, 'none', 'geography'> {
@@ -492,6 +679,12 @@ export function geography(
     call('TO_GEOGRAPHY', value === null ? null : JSON.stringify(value)),
   );
 }
+/**
+ * Declares a GEOMETRY column whose values are GeoJSON geometry objects.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param options - `srid` is the spatial reference ID every value must carry, 0 by default.
+ */
 export function geometry(
   name: string,
   options: { readonly srid?: number } = {},
@@ -521,6 +714,15 @@ export function geometry(
     (value) => call('TO_GEOMETRY', value === null ? null : JSON.stringify(value), srid),
   );
 }
+/**
+ * Declares a VECTOR column of a fixed dimension that decodes as `number[]`.
+ *
+ * FLOAT elements are stored as FLOAT32, so results return the nearest FLOAT32 value.
+ *
+ * @param name - The physical column name, quoted exactly as given.
+ * @param element - `'int'` for INT32 elements or `'float'` for FLOAT32 elements.
+ * @param dimension - The number of elements, from 1 to 4096. Writes must match it.
+ */
 export function vector(
   name: string,
   element: 'int' | 'float',
@@ -549,16 +751,31 @@ function call(name: string, ...args: (string | number | null)[]): ExpressionNode
   return Object.freeze({ kind: 'function', name, args: Object.freeze(args.map(scalarParameter)) });
 }
 
+/**
+ * A table source: a declared table, an alias, a derived query, a CTE, or a Snowflake table
+ * function.
+ *
+ * Select from it with {@link select}, and reference its columns through `columns`.
+ */
 export interface Table<C extends ColumnMap = ColumnMap, Name extends string = string> {
+  /** The table's name. */
   readonly node: IdentifierNode;
+  /** The table's columns, bound to its source name. */
   readonly columns: C;
+  /** The FROM item the table compiles to. */
   readonly source: RelationNode;
+  /** Identifies this source within a query. */
   readonly ref: SourceReference;
+  /** @internal */
   readonly scopeType?: Name;
+  /** The sources a lateral table function reads, which must precede it in a query. */
   readonly dependencies: readonly SourceReference[];
 }
+/** Qualifies a declared table name. */
 export interface TableOptions {
+  /** The schema that contains the table. */
   readonly schema?: string;
+  /** The database that contains the schema. Requires `schema`. */
   readonly database?: string;
 }
 
@@ -600,6 +817,27 @@ export function bindTable<C extends ColumnMap, N extends string>(
     dependencies: Object.freeze([...dependencies]),
   });
 }
+/**
+ * Declares a Snowflake table, the source of truth for query result types and runtime validation.
+ *
+ * @param name - The physical table name, quoted exactly as given.
+ * @param columns - The table's columns, keyed by the names used in TypeScript.
+ * @param options - Qualifies the table with a `database` and `schema`.
+ * @throws `TypeError` when the table has no columns, repeats a physical column name, or names a
+ * database without a schema.
+ * @example
+ * ```ts
+ * const customers = snowflakeTable(
+ *   'CUSTOMERS',
+ *   {
+ *     id: integer('ID').notNull(),
+ *     name: text('NAME').notNull(),
+ *     email: text('EMAIL'),
+ *   },
+ *   { database: 'APP_DB', schema: 'PUBLIC' },
+ * );
+ * ```
+ */
 export function snowflakeTable<const C extends ColumnMap, const N extends string>(
   name: N,
   columns: C,
@@ -618,6 +856,18 @@ export function snowflakeTable<const C extends ColumnMap, const N extends string
   const node = identifier(...parts);
   return bindTable(node, columns, Object.freeze({ kind: 'table', name: node }), name);
 }
+/**
+ * Gives a base table another name, so it can appear more than once in a query.
+ *
+ * @throws `TypeError` when `table` is a derived query; use `.as()` for those.
+ * @example
+ * ```ts
+ * const manager = alias(employees, 'MANAGER');
+ * select(employees)
+ *   .leftJoin(manager, eq(employees.columns.managerId, manager.columns.id))
+ *   .select({ name: employees.columns.name, manager: manager.columns.name });
+ * ```
+ */
 export function alias<C extends ColumnMap, const N extends string>(
   table: Table<C>,
   name: N,
@@ -627,6 +877,19 @@ export function alias<C extends ColumnMap, const N extends string>(
   const source = Object.freeze({ ...table.source, alias: identifier(name) });
   return bindTable(table.node, table.columns, source, name, table.dependencies);
 }
+/**
+ * Reads a base table at a point in time with Snowflake time travel: `AT` (the default) or `BEFORE`
+ * a timestamp, an `offset` in seconds (zero or negative), or a `statement` query ID.
+ *
+ * Timestamps are cast to TIMESTAMP_TZ, so a timestamp without an offset is read in the session time
+ * zone.
+ *
+ * @throws `TypeError` when `table` is not a base table or the selector is invalid.
+ * @example
+ * ```ts
+ * select(timeTravel(customers, { offset: -3600 }));
+ * ```
+ */
 export function timeTravel<C extends ColumnMap, N extends string>(
   table: Table<C, N>,
   selector:

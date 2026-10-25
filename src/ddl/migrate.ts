@@ -10,18 +10,25 @@ import { type PhysicalType, sqlType } from './types.js';
 
 type Client = Pick<SnowflakeClient, 'queryRaw'>;
 
+/** A versioned migration for {@link migrate}. Once applied, a migration must not change or move. */
 export interface Migration {
+  /** A unique, stable identifier, such as `0001_customers`. */
   readonly id: string;
+  /** The statements to run in order: DDL builders or raw `sql` fragments. */
   readonly statements: readonly (DdlStatement | RawQuery)[];
   /** Acknowledges destructive DDL statements. Raw SQL is never classified. */
   readonly destructive?: boolean;
 }
+/** The schema whose migrations are recorded, and the history table that records them. */
 export interface MigrationTarget {
+  /** The database that contains the schema. */
   readonly database: string;
+  /** The schema the history table lives in. It is created if needed. */
   readonly schema: string;
   /** Defaults to SNOWTYPED_MIGRATIONS; the lock table adds a _LOCK suffix. */
   readonly historyTable?: string;
 }
+/** Options of {@link migrate}. */
 export interface MigrateOptions extends MigrationTarget {
   /** Continue a failed or interrupted migration after its last committed statement. */
   readonly resumeFailed?: boolean;
@@ -30,22 +37,40 @@ export interface MigrateOptions extends MigrationTarget {
   /** Compares this desired schema with the database after migrating. */
   readonly verify?: SchemaDefinition;
 }
+/** The result of {@link migrate}. */
 export interface MigrateResult {
+  /** The IDs of the migrations this run applied. */
   readonly applied: readonly string[];
+  /** The differences between the database and `verify`, when it was given. */
   readonly drift?: SchemaDiff;
 }
+/** A migration that failed or was interrupted after committing some of its statements. */
 export interface IncompleteMigration {
+  /** The migration's ID. */
   readonly id: string;
+  /** `'failed'` when a statement failed, `'running'` when the run was interrupted. */
   readonly status: 'running' | 'failed';
+  /** The number of statements committed. */
   readonly appliedStatements: number;
+  /** The migration's total number of statements. */
   readonly statements: number;
+  /** The failed statement's error message. */
   readonly error: string | null;
 }
+/** The result of {@link migrationStatus}. */
 export interface MigrationStatus {
+  /** The IDs of fully applied migrations, in order. */
   readonly applied: readonly string[];
+  /** The IDs of migrations that have not run yet, in order. */
   readonly pending: readonly string[];
+  /** A migration that failed or was interrupted partway. */
   readonly incomplete?: IncompleteMigration;
 }
+/**
+ * Why a migration run failed: an `INVALID` migration list, unacknowledged `DESTRUCTIVE` DDL,
+ * `UNSUPPORTED` changes for `pushSchema`, a migration lock held by another run (`LOCKED`) or lost
+ * (`LOCK_LOST`), applied history that no longer matches (`HISTORY_DRIFT`), or a `FAILED` statement.
+ */
 export type MigrationErrorCode =
   | 'INVALID'
   | 'DESTRUCTIVE'
@@ -54,10 +79,18 @@ export type MigrationErrorCode =
   | 'LOCK_LOST'
   | 'HISTORY_DRIFT'
   | 'FAILED';
+/**
+ * The error thrown by {@link migrate}, {@link migrationStatus}, and {@link pushSchema}. Its `code`
+ * names the cause.
+ */
 export class MigrationError extends Error {
+  /** Always `'MigrationError'`. */
   override readonly name = 'MigrationError';
+  /** Why the run failed. */
   readonly code: MigrationErrorCode;
+  /** The ID of the migration that failed, when one did. */
   readonly migration: string | undefined;
+  /** Creates an error with a code, a message, and optionally the failed migration and its cause. */
   constructor(
     code: MigrationErrorCode,
     message: string,
@@ -227,7 +260,12 @@ function reconcile(planned: readonly Planned[], rows: readonly HistoryRow[]) {
   return { done: rows.length - (incomplete ? 1 : 0), incomplete };
 }
 
-/** Reports applied, pending, and incomplete migrations without taking the lock. */
+/**
+ * Reports applied, pending, and incomplete migrations without changing anything or taking the lock.
+ *
+ * @throws {@link MigrationError} with `INVALID` for an invalid migration list, or `HISTORY_DRIFT`
+ * when applied migrations changed or moved.
+ */
 export async function migrationStatus(
   client: Client,
   migrations: readonly Migration[],
@@ -245,9 +283,21 @@ export async function migrationStatus(
 }
 
 /**
- * Applies pending migrations in declaration order under a lease lock. Snowflake commits each DDL
- * statement separately, so progress is recorded per statement and a failure leaves earlier
- * statements committed.
+ * Applies pending migrations in array order and records each statement in the history table,
+ * `SNOWTYPED_MIGRATIONS` by default.
+ *
+ * A lease lock makes a concurrent run fail with `LOCKED`. Snowflake commits each DDL statement on
+ * its own, so a failure keeps earlier statements committed, and later runs refuse to continue until
+ * the remaining statements are fixed and `resumeFailed` is set.
+ *
+ * @throws {@link MigrationError} whose `code` names the cause.
+ * @example
+ * ```ts
+ * const migrations: Migration[] = [
+ *   { id: '0001_customers', statements: [createTable(defineTable(customers))] },
+ * ];
+ * const { applied } = await migrate(db, migrations, { database: 'APP_DB', schema: 'PUBLIC' });
+ * ```
  */
 export async function migrate(
   client: Client,
@@ -374,11 +424,24 @@ export async function migrate(
   });
 }
 
+/** Options of {@link checkDrift} and {@link pushSchema}. */
 export interface DriftOptions {
+  /**
+   * The migration history table to ignore, `SNOWTYPED_MIGRATIONS` by default, with its lock table.
+   */
   readonly historyTable?: string;
+  /** Other observed tables that are neither compared nor dropped. */
   readonly ignoreTables?: readonly string[];
 }
-/** Diffs the desired schema against the database, ignoring migration bookkeeping tables. */
+/**
+ * Compares the desired schema with the database, ignoring the migration history and lock tables.
+ *
+ * @example
+ * ```ts
+ * const desired = defineSchema({ database: 'APP_DB', schema: 'PUBLIC' }, [customers]);
+ * const { changes, unsupported } = await checkDrift(db, desired);
+ * ```
+ */
 export async function checkDrift(
   client: Client,
   desired: SchemaDefinition,
@@ -391,8 +454,11 @@ export async function checkDrift(
 }
 
 /**
- * Applies the diff directly, without history or locking. Rerunning recomputes the diff, so a
- * partially applied push resumes from the database state.
+ * Applies the changes {@link checkDrift} finds, without history or locking. Intended for
+ * development; rerunning it continues a partial push.
+ *
+ * @throws {@link MigrationError} with `UNSUPPORTED` when a change needs a hand-written migration,
+ * or `DESTRUCTIVE` when a change can lose data and `allowDestructive` is not set.
  */
 export async function pushSchema(
   client: Client,

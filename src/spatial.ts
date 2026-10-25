@@ -1,9 +1,17 @@
 import * as z from 'zod';
 
+/**
+ * A GeoJSON position: longitude and latitude (or x and y), optionally followed by elevation and a
+ * measure.
+ */
 export type GeoPosition =
   | [number, number]
   | [number, number, number]
   | [number, number, number, number];
+/**
+ * A GeoJSON geometry object, the value of GEOGRAPHY and GEOMETRY columns. Features, `bbox`, and
+ * `crs` members are rejected.
+ */
 export type GeoJsonGeometry =
   | { type: 'Point'; coordinates: GeoPosition }
   | { type: 'MultiPoint'; coordinates: GeoPosition[] }

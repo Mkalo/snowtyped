@@ -58,6 +58,7 @@ interface Uncorrelated {
 }
 /** Only flat projections compose into SQL; nested objects are rebuilt when rows are decoded. */
 interface Flat {
+  /** The flat projection, keyed by output alias. */
   readonly selection: Selection;
 }
 type Present<T> = unknown extends T ? T : Exclude<T, null>;
@@ -80,22 +81,38 @@ type TypeMismatch<L, R> = {
         : K
       : K;
 }[keyof L & keyof R];
+/**
+ * A query that can be combined with a set operation: a {@link SelectQuery} or a {@link SetQuery}
+ * with a flat projection.
+ */
 export interface SetOperand extends Flat {
+  /** Whether the operand is a single SELECT or already a combined query. */
   readonly kind: 'select' | 'set';
+  /** @internal */
   readonly rowType?: object;
+  /** @internal */
   readonly sqlTypes?: object;
 }
+/** The row type of a set operand. */
 export type OperandRow<Q> = Q extends { readonly rowType?: infer R } ? R : never;
 export type OperandTypes<Q> = Q extends { readonly sqlTypes?: infer T } ? T : never;
 export type SelectionTypes<S extends Projection> = { [K in keyof S]: ExpressionDataType<S[K]> };
 type ColumnType<T, K> = K extends keyof T ? (T[K] extends DataType ? T[K] : DataType) : DataType;
-/** Branches match by projection alias; each alias needs the same SQL type in both branches. */
+/**
+ * Resolves to `unknown` when two set operands have the same aliases and SQL types. Otherwise it
+ * requires an `incompatibleSetColumns` property naming the mismatched columns, which surfaces them
+ * in the type error. Branches match by projection alias.
+ */
 export type CompatibleOperand<L, R, LT = object, RT = object> = [
   SetMismatch<L, R> | TypeMismatch<LT, RT>,
 ] extends [never]
   ? unknown
   : { readonly incompatibleSetColumns: SetMismatch<L, R> | TypeMismatch<LT, RT> };
+/** The row type of a UNION: each column is nullable when it is nullable in either branch. */
 export type UnionRow<L, R> = { [K in keyof L]: L[K] | R[K & keyof R] };
+/**
+ * The row type of an INTERSECT: each column is nullable only when it is nullable in both branches.
+ */
 export type IntersectRow<L, R> = {
   [K in keyof L]: null extends R[K & keyof R] ? L[K] : Present<L[K]>;
 };
@@ -112,7 +129,11 @@ type UndeclaredNull<Contract, R> = {
       : K
     : never;
 }[keyof Contract & keyof R];
-/** The recursive branch must produce rows of the contract that its self-reference reads. */
+/**
+ * Resolves to `unknown` when a recursive CTE branch produces rows of the anchor's contract.
+ * Otherwise it requires a property naming the mismatched columns, or the columns that can be NULL
+ * without being declared in `nullable`.
+ */
 export type RecursiveOperand<Contract, R, CT = object, RT = object> = ([
   RecursiveMismatch<Contract, R> | TypeMismatch<CT, RT>,
 ] extends [never]
@@ -123,116 +144,318 @@ export type RecursiveOperand<Contract, R, CT = object, RT = object> = ([
   ([UndeclaredNull<Contract, R>] extends [never]
     ? unknown
     : { readonly undeclaredNullableColumns: UndeclaredNull<Contract, R> });
+/**
+ * The row type of a recursive CTE: the anchor's row with the declared `nullable` columns widened.
+ */
 export type RecursiveRow<Row, Nullable extends PropertyKey = never> = {
   [K in keyof Row]: K extends Nullable ? Row[K] | null : Row[K];
 };
+/**
+ * Resolves to `unknown` for uppercase names, which Snowflake treats as recursive CTE names, and to
+ * a type error otherwise.
+ */
 export type RecursiveName<N extends string> =
   N extends Uppercase<N> ? unknown : { readonly recursiveCteNamesMustBeUppercase: N };
+/** The source name of the columns of a combined query, which order it. */
 export type SetScope = '__sflib_result';
+/** The columns of a combined query or recursive CTE, typed from its row. */
 export type SetColumns<Row, N extends string = SetScope, Types = object> = {
   [K in keyof Row]: Column<Row[K], true, N, 'none', ColumnType<Types, K>>;
 };
 interface SetOperations<Row, Types> {
+  /**
+   * Combines with another query using `UNION`, removing duplicate rows.
+   *
+   * Both queries need the same projection aliases and SQL types. Columns are aligned by alias, not
+   * position, and are nullable when either branch is.
+   *
+   * @example
+   * ```ts
+   * const ids = select(customers, { id: customers.columns.id }).union(
+   *   select(orders, { id: orders.columns.customerId }),
+   * );
+   * ```
+   */
   union<Q extends SetOperand>(
     this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<UnionRow<Row, OperandRow<Q>>, Types>;
+  /**
+   * Combines with another query using `UNION ALL`, keeping duplicate rows. Accepts the same
+   * operands as `union`.
+   */
   unionAll<Q extends SetOperand>(
     this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<UnionRow<Row, OperandRow<Q>>, Types>;
+  /**
+   * Keeps the rows both queries return, using `INTERSECT`. Columns are nullable only when both
+   * branches are.
+   */
   intersect<Q extends SetOperand>(
     this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<IntersectRow<Row, OperandRow<Q>>, Types>;
+  /**
+   * Keeps the rows this query returns and the other does not, using `EXCEPT`. Column types follow
+   * this query.
+   */
   except<Q extends SetOperand>(
     this: Flat,
     other: Q & CompatibleOperand<Row, OperandRow<Q>, Types, OperandTypes<Q>>,
   ): SetQuery<Row, Types>;
 }
+/**
+ * Queries combined with `.union()`, `.unionAll()`, `.intersect()`, or `.except()`.
+ *
+ * Every operand is parenthesized, and chained calls apply to the whole preceding query, so keyword
+ * precedence never regroups it. Order and paginate the result with its own `columns`.
+ */
 export interface SetQuery<Row, Types = object> extends SetOperations<Row, Types> {
+  /** Identifies a combined query. */
   readonly kind: 'set';
+  /** The query's syntax tree. */
   readonly ast: SetOperationNode;
+  /** The result columns, for `.orderBy()` on the combined query. */
   readonly columns: SetColumns<Row, SetScope, Types>;
+  /** The result columns, keyed by projection alias. */
   readonly selection: SetColumns<Row, SetScope, Types>;
+  /** @internal */
   readonly nullableSources: ReadonlySet<symbol>;
+  /** @internal */
   readonly rowType?: Row;
+  /** @internal */
   readonly sqlTypes?: Types;
+  /**
+   * Orders the combined rows by its own `columns`. Replaces any earlier ordering.
+   *
+   * @example
+   * ```ts
+   * const ids = select(customers, { id: customers.columns.id }).union(
+   *   select(orders, { id: orders.columns.customerId }),
+   * );
+   * ids.orderBy(asc(ids.columns.id)).limit(10);
+   * ```
+   */
   orderBy(...values: readonly Ordering<SetScope>[]): SetQuery<Row, Types>;
+  /** Returns at most `value` rows. */
   limit(value: number): SetQuery<Row, Types>;
+  /** Skips the first `value` rows. */
   offset(value: number): SetQuery<Row, Types>;
+  /** Turns the combined query into a derived table named `name`. */
   as<const N extends string>(name: N): Table<SetColumns<Row, N, Types>, N>;
+  /**
+   * Turns the combined query into a CTE named `name`. Selecting from or joining it adds the WITH
+   * clause.
+   */
   asCte<const N extends string>(name: N): Table<SetColumns<Row, N, Types>, N>;
+  /** Compiles the query to SQL text and bind values without executing it. */
   compile(): CompiledQuery;
 }
-/** Outer names the enclosing sources a correlated subquery may reference. */
+/**
+ * An immutable SELECT query built by {@link select}.
+ *
+ * Every method returns a new query. Calling a clause such as `.where()` again replaces that clause.
+ * Execute a query with a client from `snowtyped/snowflake`, or compile it with `.compile()`.
+ *
+ * @typeParam S - The projection, which determines the row type.
+ * @typeParam Scope - Names of the sources in FROM and joins.
+ * @typeParam Nullable - Sources an outer join can leave absent, whose columns read as nullable.
+ * @typeParam Outer - Sources of an enclosing query that a correlated subquery may reference.
+ * @example
+ * ```ts
+ * const query = select(customers, { id: customers.columns.id, email: customers.columns.email })
+ *   .where(eq(customers.columns.name, 'Ada'))
+ *   .orderBy(asc(customers.columns.id))
+ *   .limit(10);
+ * const { rows } = await db.execute(query);
+ * ```
+ */
 export interface SelectQuery<
   S extends Projection,
   Scope extends string = string,
   Nullable extends string = never,
   Outer extends string = never,
 > extends SetOperations<InferSelection<S, Nullable>, SelectionTypes<S>> {
+  /** Identifies a single SELECT. */
   readonly kind: 'select';
+  /** The query's syntax tree. `compileAst(query.ast)` equals `query.compile()`. */
   readonly ast: SelectNode;
+  /** The projection. */
   readonly selection: S;
+  /** @internal */
   readonly nullableSources: ReadonlySet<symbol>;
+  /** The enclosing sources added with `.correlate()`. */
   readonly outerSources: readonly SourceReference[];
+  /** @internal */
   readonly sourceScopeType?: Scope;
+  /** @internal */
   readonly nullableScopeType?: Nullable;
+  /** @internal */
   readonly outerScopeType?: Outer;
+  /** @internal */
   readonly rowType?: InferSelection<S, Nullable>;
+  /** @internal */
   readonly sqlTypes?: SelectionTypes<S>;
+  /**
+   * Filters rows with WHERE. The predicate cannot contain aggregates or windows; use `.having()` or
+   * `.qualify()` for those.
+   */
   where(predicate: Predicate<Scope | Outer>): SelectQuery<S, Scope, Nullable, Outer>;
+  /**
+   * Replaces the projection. Keys become the output aliases, and an entry can be a nested object of
+   * further entries, which is rebuilt into an object when rows are decoded.
+   *
+   * Project joined columns with this method after joining, so they are in scope.
+   */
   select<const Next extends ScopedSelection<Scope | Outer>>(
     selection: Next,
   ): SelectQuery<Next, Scope, Nullable, Outer>;
+  /**
+   * Lets the query reference sources of the immediately enclosing query, for use as a correlated
+   * subquery in {@link exists}, {@link notExists}, {@link scalar}, or {@link inSubquery}.
+   *
+   * A correlated query cannot be executed, compiled, or turned into a derived table on its own.
+   *
+   * @example
+   * ```ts
+   * const hasOrders = exists(
+   *   select(orders)
+   *     .correlate(customers)
+   *     .where(eq(orders.columns.customerId, customers.columns.id)),
+   * );
+   * select(customers).where(hasOrders);
+   * ```
+   */
   correlate<const T extends readonly [Table, ...Table[]]>(
     ...tables: T
   ): SelectQuery<S, Scope, Nullable, Outer | TableName<T[number]>>;
+  /**
+   * Adds an INNER JOIN. Joined sources need distinct names; use {@link alias} for repeated tables.
+   *
+   * @example
+   * ```ts
+   * select(orders)
+   *   .innerJoin(customers, eq(orders.columns.customerId, customers.columns.id))
+   *   .select({ id: orders.columns.id, customer: customers.columns.name });
+   * ```
+   */
   innerJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
     on: Predicate<Scope | N | Outer>,
   ): SelectQuery<S, Scope | N, Nullable, Outer>;
+  /** Adds a LEFT JOIN. Columns of the joined table become nullable in the result. */
   leftJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
     on: Predicate<Scope | N | Outer>,
   ): SelectQuery<S, Scope | N, Nullable | N, Outer>;
+  /** Adds a RIGHT JOIN. Columns of the sources joined so far become nullable in the result. */
   rightJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
     on: Predicate<Scope | N | Outer>,
   ): SelectQuery<S, Scope | N, Nullable | Scope, Outer>;
+  /** Adds a FULL JOIN. Columns of every source become nullable in the result. */
   fullJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
     on: Predicate<Scope | N | Outer>,
   ): SelectQuery<S, Scope | N, Nullable | Scope | N, Outer>;
+  /** Adds a CROSS JOIN. */
   crossJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
   ): SelectQuery<S, Scope | N, Nullable, Outer>;
+  /**
+   * Joins a {@link flatten} source laterally. Its input can only reference sources that precede it.
+   */
   lateralJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
   ): SelectQuery<S, Scope | N, Nullable, Outer>;
+  /**
+   * Adds an ASOF JOIN, which matches each row with the closest row of `table` that satisfies
+   * `match`.
+   *
+   * `match` must be an inequality comparison, and `on` optionally matches keys. Columns of the
+   * joined table become nullable.
+   *
+   * @example
+   * ```ts
+   * select(trades)
+   *   .asofJoin(quotes, gte(trades.columns.at, quotes.columns.at))
+   *   .select({ id: trades.columns.id, price: quotes.columns.price });
+   * ```
+   */
   asofJoin<C extends ColumnMap, N extends string>(
     table: Table<C, N>,
     match: Predicate<Scope | N | Outer>,
     on?: Predicate<Scope | N | Outer>,
   ): SelectQuery<S, Scope | N, Nullable | N, Outer>;
+  /**
+   * Groups rows with GROUP BY. Projected and ordered values must then be grouping keys or
+   * aggregates.
+   *
+   * Keys match structurally, so `groupBy(lower(name))` allows `lower(name)` but not `name`.
+   * GEOGRAPHY and GEOMETRY values cannot be grouping keys.
+   */
   groupBy(
     ...values: readonly Expression<unknown, Scope | Outer, string, KeyType>[]
   ): SelectQuery<S, Scope, Nullable, Outer>;
+  /** Filters groups with HAVING. The predicate cannot contain window functions. */
   having(predicate: Predicate<Scope | Outer>): SelectQuery<S, Scope, Nullable, Outer>;
+  /**
+   * Filters rows on window function results with QUALIFY. The query must use a window function in
+   * its projection or in the predicate.
+   */
   qualify(predicate: Predicate<Scope | Outer>): SelectQuery<S, Scope, Nullable, Outer>;
+  /**
+   * Orders rows with ORDER BY, using {@link asc} and {@link desc}. Replaces any earlier ordering.
+   */
   orderBy(...values: readonly Ordering<Scope | Outer>[]): SelectQuery<S, Scope, Nullable, Outer>;
+  /** Removes duplicate rows with SELECT DISTINCT. Order expressions must then be projected. */
   distinct(): SelectQuery<S, Scope, Nullable, Outer>;
+  /**
+   * Returns at most `value` rows.
+   *
+   * @throws `TypeError` unless `value` is a nonnegative safe integer.
+   */
   limit(value: number): SelectQuery<S, Scope, Nullable, Outer>;
+  /**
+   * Skips the first `value` rows.
+   *
+   * @throws `TypeError` unless `value` is a nonnegative safe integer.
+   */
   offset(value: number): SelectQuery<S, Scope, Nullable, Outer>;
+  /**
+   * Turns the query into a derived table named `name`, whose `columns` keep their inferred types
+   * and outer-join nullability.
+   *
+   * @example
+   * ```ts
+   * const big = select(orders, { id: orders.columns.id, amount: orders.columns.amount })
+   *   .where(gt(orders.columns.amount, '1000'))
+   *   .as('BIG');
+   * select(big, { id: big.columns.id });
+   * ```
+   */
   as<const N extends string>(
     this: Uncorrelated & Flat,
     name: N,
   ): Table<DerivedColumns<S, N, Nullable>, N>;
+  /**
+   * Turns the query into a CTE named `name`. Selecting from or joining the result adds its WITH
+   * definition automatically.
+   */
   asCte<const N extends string>(
     this: Uncorrelated & Flat,
     name: N,
   ): Table<DerivedColumns<S, N, Nullable>, N>;
+  /**
+   * Compiles the query to SQL text and bind values without executing it.
+   *
+   * @example
+   * ```ts
+   * select(customers, { name: customers.columns.name }).compile();
+   * // { sql: 'SELECT "NAME" AS "name" FROM "APP_DB"."PUBLIC"."CUSTOMERS"', binds: [] }
+   * ```
+   */
   compile(this: Uncorrelated): CompiledQuery;
 }
 
@@ -826,9 +1049,29 @@ export function narrow<Q extends SelectQuery<Projection, string, string>>(
   }) as unknown as Q;
 }
 
+/**
+ * Starts a query that selects every declared column of `table`.
+ *
+ * @example
+ * ```ts
+ * const { rows } = await db.execute(select(customers));
+ * ```
+ */
 export function select<C extends ColumnMap, N extends string>(
   table: Table<C, N>,
 ): SelectQuery<C, N>;
+/**
+ * Starts a query that selects `selection` from `table`. Keys become output aliases, and entries are
+ * expressions of `table` or nested objects of them.
+ *
+ * @example
+ * ```ts
+ * select(customers, {
+ *   id: customers.columns.id,
+ *   contact: { name: customers.columns.name, email: customers.columns.email },
+ * }).where(eq(customers.columns.name, 'Ada'));
+ * ```
+ */
 export function select<
   C extends ColumnMap,
   N extends string,
@@ -875,8 +1118,31 @@ function mentions(value: unknown, test: (node: object) => boolean): boolean {
 }
 
 /**
- * Defines `WITH RECURSIVE name (...) AS (anchor UNION ALL recursive)`. The anchor's projection
- * is the row contract, widened by `nullable`; the recursive branch reads it through `self`.
+ * Defines `WITH RECURSIVE name (...) AS (anchor UNION ALL recursive)`.
+ *
+ * The anchor's projection is the row contract. The callback receives `self`, the CTE being defined,
+ * and returns the recursive branch, which must produce the same aliases and SQL types and reference
+ * `self` exactly once in FROM or a join. Columns the branch can make NULL must be listed in
+ * `nullable`. The result is a CTE table to select from, join, or combine.
+ *
+ * Recursion ends only when the branch returns no rows.
+ *
+ * @param name - An uppercase name; Snowflake treats only uppercase names as recursive.
+ * @throws `TypeError` when the name is not uppercase or a branch breaks the rules above.
+ * @example
+ * ```ts
+ * const chain = recursiveCte(
+ *   'CHAIN',
+ *   select(employees, { id: employees.columns.id, managerId: employees.columns.managerId }).where(
+ *     isNull(employees.columns.managerId),
+ *   ),
+ *   (self) =>
+ *     select(employees)
+ *       .innerJoin(self, eq(employees.columns.managerId, self.columns.id))
+ *       .select({ id: employees.columns.id, managerId: employees.columns.managerId }),
+ * );
+ * select(chain);
+ * ```
  */
 export function recursiveCte<
   const N extends string,
@@ -1033,6 +1299,11 @@ function existence<Outer extends string>(
     nullRefs: [],
   });
 }
+/**
+ * Tests whether a subquery returns any row, with `EXISTS (...)`.
+ *
+ * Use `.correlate(outer)` on the subquery to reference the enclosing query.
+ */
 export function exists<
   S extends Selection,
   Scope extends string,
@@ -1041,6 +1312,7 @@ export function exists<
 >(query: SelectQuery<S, Scope, Nullable, Outer>): Expression<boolean, Outer, never, 'boolean'> {
   return existence(query, false);
 }
+/** Tests whether a subquery returns no rows, with `NOT EXISTS (...)`. */
 export function notExists<
   S extends Selection,
   Scope extends string,
@@ -1050,8 +1322,21 @@ export function notExists<
   return existence(query, true);
 }
 /**
- * An empty result reads as NULL. Snowflake rejects uncorrelated subqueries returning several
- * rows at execution, and only correlates scalar subqueries that are ungrouped aggregates.
+ * Embeds a single-column query as a scalar subquery.
+ *
+ * The result keeps the column's SQL type and is always nullable, because an empty result reads as
+ * NULL. Snowflake rejects an uncorrelated subquery that returns several rows at execution, and only
+ * accepts correlated scalar subqueries that project an aggregate without GROUP BY.
+ *
+ * @example
+ * ```ts
+ * const orderCount = scalar(
+ *   select(orders, { n: count() })
+ *     .correlate(customers)
+ *     .where(eq(orders.columns.customerId, customers.columns.id)),
+ * );
+ * select(customers, { id: customers.columns.id, orderCount });
+ * ```
  */
 export function scalar<
   S extends Selection,
@@ -1084,6 +1369,10 @@ export function scalar<
     ExpressionDataType<S[keyof S]>
   >;
 }
+/**
+ * Tests whether a value is among the rows of a single-column query, with `IN (...)`, or `NOT IN`
+ * when `negate` is true. The column must be comparable with the value.
+ */
 export function inSubquery<
   E extends AnyExpression,
   S extends Selection,
