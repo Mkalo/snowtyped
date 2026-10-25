@@ -20,7 +20,6 @@ import {
   eq,
   float,
   gt,
-  type InferSelection,
   integer,
   isNull,
   jsonPath,
@@ -29,6 +28,7 @@ import {
   length,
   mul,
   rank,
+  type Snowtyped,
   select,
   snowflakeTable,
   sub,
@@ -63,7 +63,7 @@ const casts = select(accounts, {
   date: cast(code, 'date'),
   json: cast(jsonPath(data, 'x'), 'timestamp_tz'),
 });
-expectTypeOf<InferSelection<typeof casts.selection>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof casts.selection>>().toEqualTypeOf<{
   readonly text: string;
   readonly integer: bigint | null;
   readonly decimal: string;
@@ -75,7 +75,7 @@ expectTypeOf<InferSelection<typeof casts.selection>>().toEqualTypeOf<{
 const joinedCast = select(accounts)
   .leftJoin(owners, eq(accounts.columns.id, owners.columns.id))
   .select({ owner: cast(owners.columns.id, 'text') });
-expectTypeOf<InferSelection<typeof joinedCast.selection, 'OWNERS'>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof joinedCast.selection, 'OWNERS'>>().toEqualTypeOf<{
   readonly owner: string | null;
 }>();
 eq(cast(id, 'text'), '1');
@@ -99,7 +99,7 @@ const math = select(accounts, {
   floating: mul(id, rate),
   maybe: add(balance, bonus),
 });
-expectTypeOf<InferSelection<typeof math.selection>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof math.selection>>().toEqualTypeOf<{
   readonly avgId: string | null;
   readonly avgRate: number | null;
   readonly next: bigint;
@@ -113,7 +113,7 @@ expectTypeOf<InferSelection<typeof math.selection>>().toEqualTypeOf<{
 const joinedMath = select(accounts)
   .leftJoin(owners, eq(accounts.columns.id, owners.columns.id))
   .select({ next: add(owners.columns.id, id) });
-expectTypeOf<InferSelection<typeof joinedMath.selection, 'OWNERS'>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof joinedMath.selection, 'OWNERS'>>().toEqualTypeOf<{
   readonly next: bigint | null;
 }>();
 // @ts-expect-error Literal operands use the left operand's representation.
@@ -133,7 +133,7 @@ const fallback = select(accounts, {
   open: caseWhen(gt(id, 10n), 1n),
   amount: caseWhen(eq(active, true), bonus).else(balance),
 });
-expectTypeOf<InferSelection<typeof fallback.selection>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof fallback.selection>>().toEqualTypeOf<{
   readonly code: string;
   readonly maybe: string | null;
   readonly balance: string;
@@ -149,7 +149,7 @@ const joinedFallback = select(accounts)
     label: caseWhen(isNull(owners.columns.id), 'none').else('owned'),
     owner: caseWhen(gt(id, 1n), owners.columns.id).else(0n),
   });
-expectTypeOf<InferSelection<typeof joinedFallback.selection, 'OWNERS'>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof joinedFallback.selection, 'OWNERS'>>().toEqualTypeOf<{
   readonly guarded: bigint;
   readonly either: bigint | null;
   readonly label: string;
@@ -173,7 +173,7 @@ const strings = select(accounts, {
   size: length(cast(id, 'text')),
   prefix: substring(code, 1, 2),
 });
-expectTypeOf<InferSelection<typeof strings.selection>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof strings.selection>>().toEqualTypeOf<{
   readonly label: string | null;
   readonly tag: string;
   readonly trimmed: string | null;
@@ -188,7 +188,7 @@ const dates = select(accounts, {
   gap: dateDiff('day', opened, seen),
   year: datePart('year', opened),
 });
-expectTypeOf<InferSelection<typeof dates.selection>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof dates.selection>>().toEqualTypeOf<{
   readonly month: string;
   readonly next: string;
   readonly shifted: string | null;
@@ -218,7 +218,7 @@ const windows = select(accounts, {
   nextCode: lead(code, { orderBy: [asc(id)], default: 'none' }),
   prior: lag(sum(balance), { orderBy: [asc(code)] }),
 }).qualify(eq(ranked, 1n));
-expectTypeOf<InferSelection<typeof windows.selection>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof windows.selection>>().toEqualTypeOf<{
   readonly ranked: bigint;
   readonly dense: bigint;
   readonly previous: string | null;
@@ -232,7 +232,7 @@ const joinedWindows = select(accounts)
     owner: lag(owners.columns.id, { orderBy: [asc(id)], default: 0n }),
     ranked: rank({ orderBy: [asc(owners.columns.id)] }),
   });
-expectTypeOf<InferSelection<typeof joinedWindows.selection, 'OWNERS'>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof joinedWindows.selection, 'OWNERS'>>().toEqualTypeOf<{
   readonly owner: bigint | null;
   readonly ranked: bigint;
 }>();

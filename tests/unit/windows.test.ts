@@ -6,23 +6,21 @@ import {
   decimal,
   desc,
   eq,
-  type FramedWindowOptions,
   float,
   integer,
   lower,
   max,
   over,
-  type RangeBoundary,
   rangeBetween,
   rowNumber,
   rowsBetween,
+  type Snowtyped,
   select,
   snowflakeTable,
   sum,
   text,
   time,
   timestamp,
-  type WindowFrame,
 } from '../../src/index.js';
 
 const t = snowflakeTable('T', {
@@ -39,8 +37,8 @@ const t = snowflakeTable('T', {
 const u = snowflakeTable('U', { id: integer('ID').notNull() });
 const total = sum(t.columns.amount);
 const byId = [asc(t.columns.id)] as const;
-const unchecked = (options: object) => options as FramedWindowOptions;
-const boundary = (value: unknown) => value as RangeBoundary as 'CURRENT ROW';
+const unchecked = (options: object) => options as Snowtyped.FramedWindowOptions;
+const boundary = (value: unknown) => value as Snowtyped.RangeBoundary as 'CURRENT ROW';
 
 describe('explicit window frames', () => {
   it('compiles ROWS and RANGE frames after partitioning and ordering', () => {
@@ -191,7 +189,7 @@ describe('explicit window frames', () => {
 
   it('rejects boundaries that are out of order or malformed', () => {
     const order = 'A window frame cannot start after it ends.';
-    const cases: [RangeBoundary, RangeBoundary][] = [
+    const cases: [Snowtyped.RangeBoundary, Snowtyped.RangeBoundary][] = [
       ['UNBOUNDED FOLLOWING', 'UNBOUNDED FOLLOWING'],
       ['UNBOUNDED PRECEDING', 'UNBOUNDED PRECEDING'],
       ['CURRENT ROW', { preceding: 1 }],
@@ -242,7 +240,7 @@ describe('explicit window frames', () => {
   });
 
   it('keeps frames immutable and reusable', () => {
-    const frame: WindowFrame = rowsBetween({ preceding: 1 }, 'CURRENT ROW');
+    const frame: Snowtyped.WindowFrame = rowsBetween({ preceding: 1 }, 'CURRENT ROW');
     expect(Object.isFrozen(frame)).toBe(true);
     expect(Object.isFrozen(frame.ast)).toBe(true);
     expect(Object.isFrozen(frame.ast.start)).toBe(true);

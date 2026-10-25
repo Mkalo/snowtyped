@@ -2,12 +2,12 @@ import { db } from './fixtures.js';
 import { customers } from './schema.js';
 // ---cut---
 
+import type { Snowtyped } from 'snowtyped';
 import {
   alterTable,
   createTable,
   defineSchema,
   defineTable,
-  type Migration,
   migrate,
   migrationStatus,
   sqlType,
@@ -17,7 +17,7 @@ const customersTable = defineTable(customers, {
   types: { name: sqlType.varchar(200) },
   comments: { email: 'Primary contact' },
 });
-const migrations: Migration[] = [
+const migrations: Snowtyped.Migration[] = [
   { id: '0001_customers', statements: [createTable(customersTable)] },
   {
     id: '0002_customer_tier',

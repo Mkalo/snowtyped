@@ -26,10 +26,11 @@ import writes from '../../../snippets/writes.ts?raw';
 
 ## Input types
 
-`InferInsert<typeof table>` is the row `insert()` accepts: required columns without a server value
-are required, other writable columns are optional, and virtual columns are left out.
-`InferUpdate<typeof table>` makes every writable column optional, for literal values passed to
-`update()`. Use them to type values that are built before the statement, such as a request body.
+`Snowtyped.InferInsert<typeof table>` is the row `insert()` accepts: required columns without a
+server value are required, other writable columns are optional, and virtual columns are left out.
+`Snowtyped.InferUpdate<typeof table>` makes every writable column optional, for literal values
+passed to `update()`. Use them to type values that are built before the statement, such as a request
+body.
 
 <Snippet code={inputTypes} />
 

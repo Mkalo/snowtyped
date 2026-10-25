@@ -38,20 +38,33 @@ function hasCategory(reflection) {
   return comments.some((comment) => comment?.blockTags.some((tag) => tag.tag === '@category'));
 }
 
+// The deprecated flat aliases of `Snowtyped` namespace members are left out of the reference.
+const deprecatedAliases = /^src\/(?:.+\/)?deprecated-types\.ts$/;
+
+function sourceFile(reflection) {
+  const source = reflection.sources?.[0]?.fullFileName;
+  return source && relative(root, source).replaceAll('\\', '/');
+}
+
+function categorize(children) {
+  for (const child of children ?? []) {
+    const category = categories[sourceFile(child)];
+    if (!category || hasCategory(child)) continue;
+    child.comment ??= new Comment();
+    child.comment.blockTags.push(new CommentTag('@category', [{ kind: 'text', text: category }]));
+  }
+}
+
 export function load(app) {
   app.converter.on(Converter.EVENT_RESOLVE_BEGIN, (context) => {
     for (const module of context.project.getReflectionsByKind(ReflectionKind.Module)) {
       module.name = names[module.name] ?? module.name;
-      for (const child of module.children ?? []) {
-        const source = child.sources?.[0]?.fullFileName;
-        const file = source && relative(root, source).replaceAll('\\', '/');
-        const category = categories[file];
-        if (!category || hasCategory(child)) continue;
-        child.comment ??= new Comment();
-        child.comment.blockTags.push(
-          new CommentTag('@category', [{ kind: 'text', text: category }]),
-        );
-      }
+      for (const child of [...(module.children ?? [])])
+        if (deprecatedAliases.test(sourceFile(child) ?? ''))
+          context.project.removeReflection(child);
+      categorize(module.children);
     }
+    for (const namespace of context.project.getReflectionsByKind(ReflectionKind.Namespace))
+      categorize(namespace.children);
   });
 }

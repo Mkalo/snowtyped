@@ -6,7 +6,7 @@ import {
   decimal,
   identifier,
   integer,
-  type RawQuery,
+  type Snowtyped,
   snowflakeTable,
   sql,
   text,
@@ -57,7 +57,7 @@ export function integrationConfig(environment: NodeJS.ProcessEnv = process.env):
   };
 }
 
-export function tableIdentifier(table: { node: { parts: readonly string[] } }): RawQuery {
+export function tableIdentifier(table: { node: { parts: readonly string[] } }): Snowtyped.RawQuery {
   return sql.identifier(...(table.node.parts as [string, ...string[]]));
 }
 

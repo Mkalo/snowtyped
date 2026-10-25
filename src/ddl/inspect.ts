@@ -2,6 +2,7 @@ import * as z from 'zod';
 import type { ServerValue } from '../schema.js';
 import type { SnowflakeClient } from '../snowflake/client.js';
 import { sql } from '../sql.js';
+import type { SchemaDefinition } from './definition.js';
 import { defaultVarcharLengths, type ObservedType } from './types.js';
 
 /** A column as {@link inspectSchema} read it from Snowflake. */

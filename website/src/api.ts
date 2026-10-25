@@ -29,6 +29,7 @@ export const apiTypeDocOptions = {
     'Physical types',
     'Diffs and drift',
     'Migrations',
+    'Types',
     '*',
     'AST',
   ],

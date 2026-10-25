@@ -128,20 +128,23 @@ test('packed ESM/CJS consumers, declarations, license, and tree shaking', async 
 
     // TypeScript must resolve both conditional declaration formats from the installed tarball.
     runPnpm(['add', '--ignore-workspace', '--ignore-scripts', '--save-dev', 'snowflake-sdk@3.4.0']);
-    const typeSource = `import { eq, integer, select, snowflakeTable, sql, text } from 'snowtyped';
+    const typeSource = `import { eq, integer, select, snowflakeTable, type Snowtyped, sql, text } from 'snowtyped';
     import type { SnowflakeClient } from 'snowtyped/snowflake';
-    import { defineTable, type Migration, sqlType } from 'snowtyped/ddl';
+    import { defineTable, sqlType } from 'snowtyped/ddl';
     const table = snowflakeTable('T', { id: integer('ID').notNull(), email: text('EMAIL') });
     const query = select(table, { id: table.columns.id, email: table.columns.email });
-    declare const client: SnowflakeClient;
+    declare const client: Snowtyped.SnowflakeClient;
+    const deprecated: SnowflakeClient = client;
+    void deprecated;
     const raw: Promise<{ ID: string }[]> = client.queryRaw<{ ID: string }[]>(sql.unsafe('SELECT 1 AS ID'));
     void raw;
     client.execute(query).then((result) => {
-      const id: bigint = result.rows[0]!.id;
-      const email: string | null = result.rows[0]!.email;
+      const row: Snowtyped.InferRow<typeof query> = result.rows[0]!;
+      const id: bigint = row.id;
+      const email: string | null = row.email;
       void [id, email];
     });
-    const migration: Migration = { id: '1', statements: [] };
+    const migration: Snowtyped.Migration = { id: '1', statements: [] };
     void [migration, defineTable(table, { types: { email: sqlType.varchar(10) } })];
     // @ts-expect-error Integer filters require bigint.
     eq(table.columns.id, '1');`;

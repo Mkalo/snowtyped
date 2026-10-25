@@ -66,7 +66,7 @@ export type AnyExpression = Expression<unknown, string, string>;
  * @example
  * ```ts
  * const total = sum(orders.columns.amount);
- * type Total = InferExpression<typeof total>; // string | null
+ * type Total = Snowtyped.InferExpression<typeof total>; // string | null
  * ```
  */
 export type InferExpression<E> = E extends Expression<infer T, string, string> ? T : never;

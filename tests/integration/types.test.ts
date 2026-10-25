@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import {
-  type AnyColumn,
   asc,
   binary,
   boolean,
@@ -15,7 +14,7 @@ import {
   integer,
   max,
   min,
-  type Predicate,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
@@ -207,7 +206,7 @@ describe('column families and wire representations against Snowflake', () => {
   });
 
   it('binds typed filter values for every family', async () => {
-    const match = async (predicate: Predicate<'VALUES_TABLE'>) =>
+    const match = async (predicate: Snowtyped.Predicate<'VALUES_TABLE'>) =>
       (await db.execute(select(values, { id: v.id }).where(predicate))).rows
         .map((row) => row.id)
         .sort();
@@ -276,7 +275,7 @@ describe('column families and wire representations against Snowflake', () => {
   });
 
   it('rejects real data that contradicts each kind of declaration', async () => {
-    const reading = (column: AnyColumn, id: bigint) => {
+    const reading = (column: Snowtyped.AnyColumn, id: bigint) => {
       const table = snowflakeTable(
         'VALUES_TABLE',
         { id: integer('ID').notNull(), value: column },

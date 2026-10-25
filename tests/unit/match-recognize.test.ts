@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  type AfterMatch,
   and,
   asc,
   compileAst,
@@ -13,12 +12,11 @@ import {
   identifier,
   integer,
   lt,
-  type MatchRecognizeNode,
   matchRecognize,
   over,
-  type RowPattern,
   rowNumber,
   rowPattern,
+  type Snowtyped,
   select,
   snowflakeTable,
   sum,
@@ -177,7 +175,7 @@ describe('MATCH_RECOGNIZE', () => {
   it('infers measure nullability from the rows-per-match mode and pattern', () => {
     const relation = (
       rowsPerMatch: 'one' | 'all' | 'all-omit-empty' | 'all-with-unmatched',
-      shape: RowPattern<'a'> = zeroOrMore(a),
+      shape: Snowtyped.RowPattern<'a'> = zeroOrMore(a),
     ) =>
       matchRecognize(prices, 'M', {
         orderBy: (row) => [asc(row.day)],
@@ -207,7 +205,7 @@ describe('MATCH_RECOGNIZE', () => {
   });
 
   it('compiles navigation, semantics, and AFTER MATCH SKIP options', () => {
-    const relation = (afterMatch?: AfterMatch<'a' | 'b'>) =>
+    const relation = (afterMatch?: Snowtyped.AfterMatch<'a' | 'b'>) =>
       matchRecognize(prices, 'M', {
         orderBy: (row) => [asc(row.day)],
         pattern: sequence(a, oneOrMore(b)),
@@ -440,8 +438,8 @@ describe('MATCH_RECOGNIZE', () => {
 
   it('validates hand-built AST nodes', () => {
     const relation = matchRecognize(prices, 'M', { pattern: a, partitionBy: ['company'] });
-    const node = relation.source as MatchRecognizeNode;
-    const statement = (patch: Partial<MatchRecognizeNode>) =>
+    const node = relation.source as Snowtyped.MatchRecognizeNode;
+    const statement = (patch: Partial<Snowtyped.MatchRecognizeNode>) =>
       compileAst({
         kind: 'select',
         from: { ...node, ...patch },

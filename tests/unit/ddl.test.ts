@@ -4,15 +4,12 @@ import {
   compileDdl,
   createSchema,
   createTable,
-  type DdlNode,
   defineSchema,
   defineTable,
   diffSchema,
   dropSchema,
   dropTable,
   inspectSchema,
-  type ObservedSchema,
-  type ObservedTable,
   setSchemaComment,
   sqlType,
 } from '../../src/ddl/index.js';
@@ -31,7 +28,7 @@ import {
   identifier,
   integer,
   object,
-  type RawQuery,
+  type Snowtyped,
   snowflakeTable,
   structured,
   structuredType,
@@ -42,7 +39,6 @@ import {
   variant,
   vector,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const target = { database: 'DB', schema: 'APP' };
 const sqlOf = (statement: { compile(): { sql: string } }) => statement.compile().sql;
@@ -334,7 +330,7 @@ describe('DDL statements', () => {
       compileDdl({
         kind: 'unknown',
         name: identifier('T'),
-      } as unknown as DdlNode),
+      } as unknown as Snowtyped.DdlNode),
     ).toThrow('Unsupported DDL AST node.');
   });
 });
@@ -434,7 +430,7 @@ describe('desired schema definitions', () => {
 
 const column = (
   name: string,
-  type: ObservedTable['columns'][number]['type'],
+  type: Snowtyped.ObservedTable['columns'][number]['type'],
   notNull = false,
   comment: string | null = null,
 ) => ({
@@ -444,7 +440,10 @@ const column = (
   comment,
   serverValue: null,
 });
-function observed(tables: ObservedTable[], extra: Partial<ObservedSchema> = {}): ObservedSchema {
+function observed(
+  tables: Snowtyped.ObservedTable[],
+  extra: Partial<Snowtyped.ObservedSchema> = {},
+): Snowtyped.ObservedSchema {
   return { ...target, exists: true, comment: null, tables, ...extra };
 }
 
@@ -728,8 +727,8 @@ describe('schema inspection', () => {
         { ...row('X', 'NUMBER'), TABLE_NAME: 'VIEW_ONLY' },
       ],
     ];
-    const queryRaw = vi.fn(async (_query: RawQuery) => results.shift());
-    const schema = await inspectSchema({ queryRaw } as unknown as SnowflakeClient, {
+    const queryRaw = vi.fn(async (_query: Snowtyped.RawQuery) => results.shift());
+    const schema = await inspectSchema({ queryRaw } as unknown as Snowtyped.SnowflakeClient, {
       database: 'Odd"DB',
       schema: "S'; --",
     });
@@ -851,8 +850,11 @@ describe('schema inspection', () => {
         data_type: JSON.stringify(type),
       })),
     ];
-    const queryRaw = vi.fn(async (_query: RawQuery) => results.shift());
-    const schema = await inspectSchema({ queryRaw } as unknown as SnowflakeClient, target);
+    const queryRaw = vi.fn(async (_query: Snowtyped.RawQuery) => results.shift());
+    const schema = await inspectSchema(
+      { queryRaw } as unknown as Snowtyped.SnowflakeClient,
+      target,
+    );
     expect(queryRaw).toHaveBeenCalledTimes(4);
     expect(queryRaw.mock.calls[3]?.[0].compile().sql).toBe('SHOW COLUMNS IN TABLE "DB"."APP"."T"');
     expect(schema.tables[0]?.columns.map((column) => column.type)).toEqual([
@@ -871,7 +873,7 @@ describe('schema inspection', () => {
   });
 
   it('reports a missing schema and rejects malformed metadata', async () => {
-    const empty = { queryRaw: async () => [] } as unknown as SnowflakeClient;
+    const empty = { queryRaw: async () => [] } as unknown as Snowtyped.SnowflakeClient;
     expect(await inspectSchema(empty, target)).toEqual({
       ...target,
       exists: false,
@@ -881,7 +883,7 @@ describe('schema inspection', () => {
     const results: unknown[] = [[], [], [row('N', 'NUMBER', { NUMERIC_PRECISION: '1.5' })]];
     const malformed = {
       queryRaw: async () => results.shift(),
-    } as unknown as SnowflakeClient;
+    } as unknown as Snowtyped.SnowflakeClient;
     await expect(inspectSchema(malformed, target)).rejects.toThrow();
   });
 });
@@ -900,13 +902,13 @@ describe('server values', () => {
     target,
   );
   const definition = defineTable(events);
-  const table = (columns: ObservedTable['columns']) =>
+  const table = (columns: Snowtyped.ObservedTable['columns']) =>
     observed([{ name: 'EVENTS', comment: null, columns }]);
-  const unsupportedOf = (current: ObservedSchema, entry = definition) =>
+  const unsupportedOf = (current: Snowtyped.ObservedSchema, entry = definition) =>
     diffSchema(defineSchema(target, [entry]), current).unsupported.map(
       (change) => `${change.column}: ${change.reason}`,
     );
-  const sqlChanges = (current: ObservedSchema, entry = definition) =>
+  const sqlChanges = (current: Snowtyped.ObservedSchema, entry = definition) =>
     diffSchema(defineSchema(target, [entry]), current).changes.map((change) =>
       sqlOf(change.statement),
     );

@@ -8,13 +8,13 @@ import {
   inSubquery,
   integer,
   notExists,
+  type Snowtyped,
   scalar,
   select,
   snowflakeTable,
   sum,
   text,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const users = snowflakeTable('USERS', {
   id: integer('ID').notNull(),
@@ -26,7 +26,7 @@ const orders = snowflakeTable('ORDERS', {
   total: integer('TOTAL'),
 });
 const other = snowflakeTable('OTHER', { id: integer('ID').notNull() });
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 
 const correlated = select(orders, { id: orders.columns.id })
   .correlate(users)
