@@ -183,7 +183,7 @@ type InferNested<P extends Projection, Nullable extends string> = [
  * @example
  * ```ts
  * type Customer = InferSelection<typeof customers.columns>;
- * // { id: bigint; name: string; email: string | null }
+ * // { readonly id: bigint; readonly name: string; readonly email: string | null }
  * ```
  */
 export type InferSelection<S extends Projection, Nullable extends string = never> = {

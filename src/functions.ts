@@ -165,8 +165,8 @@ type TextExpression = Expression<string | null, string, string, 'text'>;
 type TemporalExpression = Expression<string | null, string, string, DateTimeType | 'time'>;
 /**
  * A date or time part, used by {@link dateTrunc}, {@link dateAdd}, {@link dateDiff}, and {@link
- * datePart}. DATE values accept only `year` through `day`, and TIME values only `hour` through
- * `nanosecond`.
+ * datePart}. {@link dateTrunc} and {@link datePart} accept only `year` through `day` for DATE
+ * values; TIME values accept only `hour` through `nanosecond`.
  */
 export type DatePart =
   | 'year'

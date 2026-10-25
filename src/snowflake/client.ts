@@ -43,8 +43,8 @@ export interface MutationResult {
  * Executes Snowtyped queries on a `snowflake-sdk` connection. Created by {@link createClient}, or
  * pooled by {@link createPool}.
  *
- * Queries are never retried implicitly. Every method accepts a `signal` and a `timeoutMs` deadline,
- * which cancel the statement in Snowflake.
+ * Queries are never retried implicitly. `execute`, `stream`, `streamRaw`, and `queryRaw(query,
+ * options)` accept a `signal` and a `timeoutMs` deadline, which cancel the statement in Snowflake.
  */
 export interface SnowflakeClient {
   /**
