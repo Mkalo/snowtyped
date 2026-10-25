@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+### Patch Changes
+
+- e18d77f: Document the public API with TSDoc, so editor hovers and the API reference describe every export, its parameters, and runnable examples.
+
 ## 1.0.0
 
 ### Major Changes
