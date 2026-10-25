@@ -16,6 +16,7 @@ import {
   select,
   snowflakeTable,
   text,
+  update,
   updateFrom,
   variant,
 } from '../../src/index.js';
@@ -238,6 +239,18 @@ describe('conditional MERGE branches', () => {
       }).sql,
     ).toMatch(
       /WHEN MATCHED THEN DELETE WHEN MATCHED THEN UPDATE SET "LABEL" = \? WHEN NOT MATCHED THEN INSERT \("ID"\) VALUES \(\?\)$/,
+    );
+  });
+});
+
+describe('UPDATE values', () => {
+  it('treats undefined values as absent, as insert does', () => {
+    const patch = { id: 1n, label: undefined } as never;
+    expect(update(target, patch).compile()).toEqual(update(target, { id: 1n }).compile());
+    expect(() => update(target, { label: undefined } as never)).toThrow('at least one');
+    const merge = mergeInto(target, source, eq(target.columns.id, source.columns.id));
+    expect(merge.whenMatchedUpdate(patch).compile().sql).toMatch(
+      /WHEN MATCHED THEN UPDATE SET "ID" = \?$/,
     );
   });
 });
