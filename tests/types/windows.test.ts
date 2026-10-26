@@ -11,12 +11,12 @@ import {
   rangeBetween,
   rowNumber,
   rowsBetween,
+  type Snowtyped,
   select,
   snowflakeTable,
   sum,
   text,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const orders = snowflakeTable('ORDERS', {
   id: integer('ID').notNull(),
@@ -25,7 +25,7 @@ const orders = snowflakeTable('ORDERS', {
   day: date('DAY').notNull(),
 });
 const other = snowflakeTable('OTHER', { id: integer('ID').notNull() });
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 
 const running = over(sum(orders.columns.amount), {
   partitionBy: [orders.columns.customer],

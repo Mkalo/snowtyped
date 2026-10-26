@@ -48,6 +48,35 @@ type RequiredKeys<C extends ColumnMap> = {
 export type InsertValues<C extends ColumnMap> = { [K in RequiredKeys<C>]: InferColumn<C[K]> } & {
   [K in Exclude<WritableKeys<C>, RequiredKeys<C>>]?: InferColumn<C[K]>;
 };
+/**
+ * The row {@link insert} accepts for a declared table or its alias: {@link InsertValues} of its
+ * columns. Derived tables, CTEs, and table functions also produce a type, but mutations reject them
+ * at runtime.
+ *
+ * @example
+ * ```ts
+ * type NewCustomer = Snowtyped.InferInsert<typeof customers>;
+ * // { id: bigint; name: string; email?: string | null }
+ * ```
+ */
+export type InferInsert<T> =
+  T extends Table<infer C extends ColumnMap> ? Simplify<InsertValues<C>> : never;
+/**
+ * The literal values {@link update} accepts for a declared table or its alias: every writable
+ * column, optional. Virtual columns are excluded, and keys set to `undefined` are left out of the
+ * statement. {@link UpdateValues} additionally accepts expressions.
+ *
+ * @example
+ * ```ts
+ * type CustomerPatch = Snowtyped.InferUpdate<typeof customers>;
+ * // { id?: bigint; name?: string; email?: string | null }
+ * ```
+ */
+export type InferUpdate<T> =
+  T extends Table<infer C extends ColumnMap>
+    ? { [K in WritableKeys<C>]?: InferColumn<C[K]> }
+    : never;
+type Simplify<T> = { [K in keyof T]: T[K] };
 type Assignment<C extends AnyColumn, Scope extends string> = Expression<
   InferColumn<C>,
   Scope,
@@ -190,7 +219,8 @@ function entries(
   values: Readonly<Record<string, unknown>>,
   refs: readonly SourceReference[] = [table.ref],
 ) {
-  const items = Object.entries(values);
+  for (const key of Object.keys(values)) writable(table, key);
+  const items = Object.entries(values).filter(([, value]) => value !== undefined);
   if (!items.length) throw new TypeError('A mutation needs at least one column value.');
   return Object.freeze(
     items.map(([key, value]) => {

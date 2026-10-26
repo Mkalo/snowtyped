@@ -12,6 +12,12 @@ The package has three entry points, `snowtyped`, `snowtyped/snowflake`, and
 type exports of each; adding, removing, or reclassifying an export must update
 that list and this section.
 
+Every exported type is a member of the type-only `Snowtyped` namespace exported
+by `snowtyped`, and new types are added only there. The types each entry point
+exported individually in `1.0.0` remain exported as deprecated aliases of the
+namespace members until `2.0.0`, which removes them. Classes such as
+`MigrationError` are values and stay individual exports.
+
 **Stable** from `1.0.0`; incompatible changes need a major release:
 - Schema declarations: `snowflakeTable`, `alias`, `timeTravel`, the column
   builders (`text`, `integer`, `decimal`, `float`, `boolean`, `date`, `time`,
@@ -37,9 +43,10 @@ that list and this section.
   reviewable output; its formatting is not stable.
 - `snowtyped/snowflake`: `createClient`, `createPool`, and their option and
   result types.
-- Inference types: `InferSelection`, `InferColumn`, `InferExpression`,
-  `InsertValues`, `UpdateValues`, and the other exported type names. The value
-  types they produce are stable; their internal generic parameters are not.
+- Inference types, as `Snowtyped` members: `InferRow`, `InferInsert`,
+  `InferUpdate`, `InferSelection`, `InferColumn`, `InferExpression`,
+  `InsertValues`, `UpdateValues`, and the other exported types. The value types
+  they produce are stable; their internal generic parameters are not.
 
 Inferred result types and runtime representations of existing declarations are
 part of the stable API. Correcting a type that contradicted runtime behavior is
@@ -48,8 +55,8 @@ members are minor; code that switches exhaustively over `DataType` may need a
 new case.
 
 **Experimental**; may change in a minor release, always with a changeset:
-- The AST layer: `compileAst`, `identifier`, `quoteIdentifier`, the `*Node`
-  types, `PivotLiteral`, `SourceReference`, and `WireType`.
+- The AST layer: `compileAst`, `identifier`, `quoteIdentifier`, and the
+  `Snowtyped` members `*Node`, `PivotLiteral`, `SourceReference`, and `WireType`.
 - Members of columns, tables, expressions, and queries other than their builder
   methods, `columns`, `selection`, and `compile()`; for example `ast`, `node`,
   `expression`, `readSchema`, `refs`, and the phantom `*ScopeType` fields. Use

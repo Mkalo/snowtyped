@@ -11,6 +11,7 @@ import {
   resultSchema,
 } from '../schema.js';
 import { isRawQuery, type RawQuery, type SqlInterpolation, sql } from '../sql.js';
+import type { createPool } from './pool.js';
 import {
   type DriverConnection,
   type ExecuteOptions,

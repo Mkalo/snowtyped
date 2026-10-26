@@ -11,13 +11,14 @@ import {
   eq,
   insert,
   integer,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
   text,
   timestamp,
 } from '../../src/index.js';
-import { createClient, createPool, type PoolOptions } from '../../src/snowflake/index.js';
+import { createClient, createPool } from '../../src/snowflake/index.js';
 import { fixed, type Summary, summarize, table } from '../support/measure.js';
 import { createFixture, integrationConfig } from '../support/snowflake.js';
 
@@ -125,7 +126,7 @@ describe('load against Snowflake', () => {
     }
     return summarize(samples);
   }
-  async function observedPool(options: PoolOptions) {
+  async function observedPool(options: Snowtyped.PoolOptions) {
     const spy = vi.spyOn(snowflake, 'createPool');
     try {
       const pool = await createPool(config, options);

@@ -6,15 +6,13 @@ import {
   defineSchema,
   defineTable,
   dropTable,
-  type Migration,
   MigrationError,
   migrate,
   migrationStatus,
   pushSchema,
   sqlType,
 } from '../../src/ddl/index.js';
-import { integer, type RawQuery, snowflakeTable, sql, text } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
+import { integer, type Snowtyped, snowflakeTable, sql, text } from '../../src/index.js';
 
 const target = { database: 'DB', schema: 'APP' };
 const users = snowflakeTable('USERS', { id: integer('ID').notNull(), name: text('NAME') }, target);
@@ -46,7 +44,7 @@ function database(options: { schema?: boolean; historyTable?: boolean } = {}) {
   };
   const updated = (count: number) => [{ 'number of rows updated': String(count) }];
   const row = (id: unknown) => state.rows.find((entry) => entry.ID === id) as Row;
-  const queryRaw = vi.fn(async (query: RawQuery) => {
+  const queryRaw = vi.fn(async (query: Snowtyped.RawQuery) => {
     const { sql: text, binds } = query.compile();
     if (text.startsWith('SELECT 1 FROM') && text.includes('"SCHEMATA"'))
       return state.schema ? [{}] : [];
@@ -111,10 +109,10 @@ function database(options: { schema?: boolean; historyTable?: boolean } = {}) {
     state.executed.push(text);
     return [];
   });
-  return { state, queryRaw, client: { queryRaw } as unknown as SnowflakeClient };
+  return { state, queryRaw, client: { queryRaw } as unknown as Snowtyped.SnowflakeClient };
 }
 const code = (value: string) => expect.objectContaining({ name: 'MigrationError', code: value });
-const migrations: Migration[] = [
+const migrations: Snowtyped.Migration[] = [
   { id: '0001', statements: [createTable(defineTable(users))] },
   {
     id: '0002',
@@ -132,7 +130,11 @@ describe('migration validation', () => {
       migrate(client, [{ id: '', statements: [sql`SELECT 1`] }], target),
     ).rejects.toEqual(code('INVALID'));
     await expect(
-      migrate(client, [migrations[0] as Migration, migrations[0] as Migration], target),
+      migrate(
+        client,
+        [migrations[0] as Snowtyped.Migration, migrations[0] as Snowtyped.Migration],
+        target,
+      ),
     ).rejects.toMatchObject({ code: 'INVALID', migration: '0001' });
     await expect(migrate(client, [{ id: 'x', statements: [] }], target)).rejects.toThrow(
       'has no statements',
@@ -216,7 +218,10 @@ describe('migration runs', () => {
   it('detects history that no longer matches the declared migrations', async () => {
     const { client, state } = database();
     await migrate(client, migrations, target);
-    const changed = [migrations[0] as Migration, { id: '0002', statements: [sql`SELECT 2`] }];
+    const changed = [
+      migrations[0] as Snowtyped.Migration,
+      { id: '0002', statements: [sql`SELECT 2`] },
+    ];
     await expect(migrate(client, changed, target)).rejects.toMatchObject({
       code: 'HISTORY_DRIFT',
       migration: '0002',
@@ -265,20 +270,20 @@ describe('migration runs', () => {
     await expect(migrate(client, migrations, target)).rejects.toThrow(
       'Migration 0002 failed after 1 of 2 statements: boom.',
     );
-    const reordered: Migration[] = [
-      migrations[0] as Migration,
+    const reordered: Snowtyped.Migration[] = [
+      migrations[0] as Snowtyped.Migration,
       { id: '0002', statements: [sql`SELECT 0`, sql`UPDATE T SET A = ${true}`] },
     ];
     await expect(migrate(client, reordered, { ...target, resumeFailed: true })).rejects.toThrow(
       'Statements already committed by migration 0002 changed.',
     );
     state.fail = undefined;
-    const fixed: Migration[] = [
-      migrations[0] as Migration,
+    const fixed: Snowtyped.Migration[] = [
+      migrations[0] as Snowtyped.Migration,
       {
         id: '0002',
         statements: [
-          (migrations[1] as Migration).statements[0] as RawQuery,
+          (migrations[1] as Snowtyped.Migration).statements[0] as Snowtyped.RawQuery,
           sql`UPDATE T SET A = ${false}`,
           sql`SELECT 3`,
         ],
@@ -299,8 +304,8 @@ describe('migration runs', () => {
       applied: ['0001', '0002'],
       pending: [],
     });
-    const shorter: Migration[] = [
-      migrations[0] as Migration,
+    const shorter: Snowtyped.Migration[] = [
+      migrations[0] as Snowtyped.Migration,
       { id: '0002', statements: [sql`SELECT 0`] },
     ];
     (state.rows[1] as Row).STATUS = 'running';

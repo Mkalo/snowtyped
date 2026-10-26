@@ -8,6 +8,7 @@ import * as snowflake from '../../src/snowflake/index.js';
 const names = (...lists: string[]) => lists.join(' ').trim().split(/\s+/).sort();
 
 // Stable names first, then the experimental AST layer (docs/release-contract.md#public-api).
+// Type names besides `Snowtyped` are deprecated aliases of its members; add new types only to it.
 const expected = {
   snowtyped: {
     values: names(
@@ -26,7 +27,7 @@ const expected = {
       CastType CastValue Column ColumnMap ColumnValue CompatibleOperand CompiledQuery DataType
       DatePart DefineContext Expression FilteredMutation FlattenOptions FrameBoundary
       FramedWindowOptions GeoJsonGeometry GeoPosition IdentityOptions InferColumn InferExpression
-      InferSelection InferStructured InsertSource InsertValues IntersectRow IntervalUnit
+      InferSelection InferStructured InsertSource InsertValues IntersectRow IntervalUnit Snowtyped
       IntrospectedColumn IntrospectedTable MatchRecognizeColumns MatchRecognizeOptions MatchRowScope
       MatchVariableScope MeasureContext MergeQuery MutationQuery Navigation OffsetWindowOptions
       OperandRow OrderedWindowOptions Ordering PivotAggregate PivotColumns PivotOptions PivotValue
@@ -77,6 +78,9 @@ const entries = {
     file: fileURLToPath(new URL('../../src/ddl/index.ts', import.meta.url)),
   },
 };
+// Types added after 1.0 that only the namespace exports.
+const namespaceOnly = 'InferInsert InferRow InferUpdate';
+
 const program = ts.createProgram(
   Object.values(entries).map(({ file }) => file),
   {
@@ -97,9 +101,30 @@ function declaredExports(file: string) {
   for (const exported of checker.getExportsOfModule(symbol)) {
     const target =
       exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
-    (target.flags & ts.SymbolFlags.Value ? values : types).push(exported.name);
+    const typeOnly = exported.declarations?.some(
+      (declaration) => ts.isNamespaceExport(declaration) && declaration.parent.isTypeOnly,
+    );
+    (target.flags & ts.SymbolFlags.Value && !typeOnly ? values : types).push(exported.name);
   }
   return { values: values.sort(), types: types.sort() };
+}
+
+/** Source text without formatting: whitespace and trailing separators. */
+const normalize = (text: string) => text.replace(/\s+/g, '').replace(/[;,](?=[}>])/g, '');
+
+function exportedSymbol(file: string, name: string): ts.Symbol {
+  const source = program.getSourceFile(file);
+  const module = source && checker.getSymbolAtLocation(source);
+  const exported = module && checker.tryGetMemberInModuleExports(name, module);
+  if (!exported) throw new Error(`${file} does not export ${name}.`);
+  return exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
+}
+
+function namespaceMembers(): ts.Symbol[] {
+  const members = checker.getExportsOfModule(exportedSymbol(entries.snowtyped.file, 'Snowtyped'));
+  return members
+    .map((member) => checker.getAliasedSymbol(member))
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
 }
 
 describe('public API', () => {
@@ -115,5 +140,52 @@ describe('public API', () => {
         expected[name as keyof typeof expected].values,
       );
     }
+  });
+
+  it('exports every type under the Snowtyped namespace', () => {
+    const flat = Object.values(expected).flatMap(({ types }) => types);
+    expect(namespaceMembers().map(({ name }) => name)).toEqual(
+      names(...flat.filter((name) => name !== 'Snowtyped'), namespaceOnly),
+    );
+  });
+
+  it('keeps each other type export as a deprecated alias of the namespace member', () => {
+    const members = new Map(namespaceMembers().map((member) => [member.name, member]));
+    const problems = Object.values(entries).flatMap(({ file }) =>
+      declaredExports(file).types.flatMap((name) => {
+        if (name === 'Snowtyped') return [];
+        const declaration = exportedSymbol(file, name).declarations?.[0];
+        const original = members.get(name)?.declarations?.[0];
+        if (!declaration || !ts.isTypeAliasDeclaration(declaration))
+          return [`${name} is not a type alias`];
+        const parameters = (node: ts.Declaration) =>
+          ts
+            .getEffectiveTypeParameterDeclarations(node as ts.DeclarationWithTypeParameters)
+            .map((parameter) => normalize(parameter.getText().replaceAll('Snowtyped.', '')));
+        const target = `Snowtyped.${name}${
+          declaration.typeParameters
+            ? `<${declaration.typeParameters.map((p) => p.name.text).join(', ')}>`
+            : ''
+        }`;
+        const deprecated = ts
+          .getJSDocTags(declaration)
+          .some(
+            (tag) =>
+              tag.tagName.text === 'deprecated' &&
+              ts.getTextOfJSDocComment(tag.comment) === `Use \`Snowtyped.${name}\`.`,
+          );
+        return [
+          ...(original &&
+          JSON.stringify(parameters(declaration)) === JSON.stringify(parameters(original))
+            ? []
+            : [`${name} has different type parameters`]),
+          ...(normalize(declaration.type.getText()) === normalize(target)
+            ? []
+            : [`${name} is not ${target}`]),
+          ...(deprecated ? [] : [`${name} is not deprecated`]),
+        ];
+      }),
+    );
+    expect(problems).toEqual([]);
   });
 });

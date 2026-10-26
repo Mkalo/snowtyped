@@ -93,6 +93,30 @@ export interface SetOperand extends Flat {
   /** @internal */
   readonly sqlTypes?: object;
 }
+/**
+ * The row type of a query or table, without executing anything: the type of each element of
+ * `rows` when it is executed. Accepts a {@link SelectQuery}, a {@link SetQuery}, a
+ * {@link LoadedQuery}, or a table, whose row has every declared column.
+ *
+ * Columns of outer-joined sources are nullable, as when the query is executed.
+ *
+ * @example
+ * ```ts
+ * const query = select(customers, { id: customers.columns.id, email: customers.columns.email });
+ * type Row = Snowtyped.InferRow<typeof query>;
+ * // { readonly id: bigint; readonly email: string | null }
+ * type Customer = Snowtyped.InferRow<typeof customers>;
+ * // { readonly id: bigint; readonly name: string; readonly email: string | null }
+ * ```
+ */
+export type InferRow<T> = T extends {
+  readonly kind: 'select' | 'set' | 'loaded';
+  readonly rowType?: infer Row;
+}
+  ? Exclude<Row, undefined>
+  : T extends Table<infer C extends ColumnMap>
+    ? InferSelection<C>
+    : never;
 /** The row type of a set operand. */
 export type OperandRow<Q> = Q extends { readonly rowType?: infer R } ? R : never;
 export type OperandTypes<Q> = Q extends { readonly sqlTypes?: infer T } ? T : never;

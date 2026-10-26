@@ -8,14 +8,14 @@ import {
   lt,
   matchRecognize,
   rowPattern,
+  type Snowtyped,
   select,
   snowflakeTable,
   sum,
   text,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 const prices = snowflakeTable('PRICES', {
   company: text('COMPANY').notNull(),
   day: integer('DAY').notNull(),

@@ -47,7 +47,7 @@ type PivotType<A extends PivotAggregate, C> = A extends 'count'
     : C extends AnyColumn
       ? ExpressionDataType<C>
       : DataType;
-type Key<C> = keyof C & string;
+export type Key<C> = keyof C & string;
 type Collisions<T, Taken> = { readonly [K in Extract<keyof T, Taken>]: never };
 
 interface PivotInput<C extends ColumnMap, A extends PivotAggregate, V extends Key<C>, F, D> {

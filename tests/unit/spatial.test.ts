@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import {
   eq,
-  type GeoJsonGeometry,
   geography,
   geometry,
   insert,
   integer,
+  type Snowtyped,
   select,
   snowflakeTable,
   update,
@@ -15,7 +15,7 @@ import {
 import { decodeEwkb } from '../../src/spatial.js';
 
 const hex = (value: string) => Buffer.from(value, 'hex');
-const point: GeoJsonGeometry = { type: 'Point', coordinates: [1, 2] };
+const point: Snowtyped.GeoJsonGeometry = { type: 'Point', coordinates: [1, 2] };
 
 describe('EWKB decoding', () => {
   it('decodes every geometry kind with exact coordinates and SRID', () => {

@@ -1,8 +1,6 @@
 // Checked by tsc, not executed. Keep this as .ts so skipLibCheck cannot hide failures.
 import { expectTypeOf } from 'vitest';
-import type { InferSelection } from '../../src/index.js';
-import { eq, integer, select, snowflakeTable, sql, text } from '../../src/index.js';
-import type { PooledClient, PoolOptions, SnowflakeClient } from '../../src/snowflake/index.js';
+import { eq, integer, type Snowtyped, select, snowflakeTable, sql, text } from '../../src/index.js';
 
 const customers = snowflakeTable('CUSTOMERS', {
   id: integer('ID').notNull(),
@@ -12,13 +10,13 @@ const query = select(customers, {
   customerId: customers.columns.id,
   email: customers.columns.email,
 });
-expectTypeOf<InferSelection<typeof query.selection>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof query.selection>>().toEqualTypeOf<{
   readonly customerId: bigint;
   readonly email: string | null;
 }>();
 
-declare const client: SnowflakeClient;
-declare const pool: PooledClient;
+declare const client: Snowtyped.SnowflakeClient;
+declare const pool: Snowtyped.PooledClient;
 const result = client.execute(query);
 expectTypeOf(result).resolves.toHaveProperty('rows').toEqualTypeOf<
   readonly {
@@ -69,5 +67,5 @@ client.queryRaw(strings, { timeoutMs: 1_000 });
 // @ts-expect-error Arbitrary objects are not implicitly encoded as SQL parameters.
 sql`SELECT ${{ unsafe: true }}`;
 
-expectTypeOf<{ max: 1; testOnBorrow: true }>().toExtend<PoolOptions>();
-expectTypeOf<{ testOnBorrow: 'yes' }>().not.toExtend<PoolOptions>();
+expectTypeOf<{ max: 1; testOnBorrow: true }>().toExtend<Snowtyped.PoolOptions>();
+expectTypeOf<{ testOnBorrow: 'yes' }>().not.toExtend<Snowtyped.PoolOptions>();

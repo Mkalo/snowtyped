@@ -1,9 +1,17 @@
 import { Readable } from 'node:stream';
 import type { Column, RowStatement, SnowflakeError, StatementOption } from 'snowflake-sdk';
 import { describe, expect, it, vi } from 'vitest';
-import { insert, integer, select, snowflakeTable, sql, text } from '../../src/index.js';
+import {
+  insert,
+  integer,
+  type Snowtyped,
+  select,
+  snowflakeTable,
+  sql,
+  text,
+} from '../../src/index.js';
 import { isUnusable } from '../../src/snowflake/client.js';
-import { createClient, type SnowflakeClient } from '../../src/snowflake/index.js';
+import { createClient } from '../../src/snowflake/index.js';
 import { normalizeWireRow } from '../../src/snowflake/wire.js';
 
 const table = snowflakeTable('T', { id: integer('ID').notNull(), name: text('NAME') });
@@ -375,7 +383,7 @@ describe('transaction sessions', () => {
   it('commits successful callbacks and rejects root, nested, and expired transaction access', async () => {
     const connection = transactionDriver();
     const db = createClient(connection);
-    let leaked: SnowflakeClient | undefined;
+    let leaked: Snowtyped.SnowflakeClient | undefined;
     expect(
       await db.transaction(async (tx) => {
         leaked = tx;

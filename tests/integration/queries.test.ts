@@ -27,10 +27,8 @@ import {
   not,
   or,
   over,
-  type Predicate,
   rowNumber,
-  type Selection,
-  type SelectQuery,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
@@ -88,10 +86,10 @@ describe('query semantics against Snowflake', () => {
     { id: integer('ID').notNull(), label: text('LABEL').notNull() },
     namespace,
   );
-  const rows = async <S extends Selection, Scope extends string, Nullable extends string>(
-    query: SelectQuery<S, Scope, Nullable>,
+  const rows = async <S extends Snowtyped.Selection, Scope extends string, Nullable extends string>(
+    query: Snowtyped.SelectQuery<S, Scope, Nullable>,
   ) => (await db.execute(query)).rows;
-  const ids = async (where: Predicate<'CUSTOMERS'>) =>
+  const ids = async (where: Snowtyped.Predicate<'CUSTOMERS'>) =>
     (await rows(select(customers, { id: c.id }).where(where))).map((row) => row.id).sort();
 
   beforeAll(async () => {
@@ -673,7 +671,7 @@ describe('query semantics against Snowflake', () => {
   it('matches ASOF joins with and without key predicates in both directions', async () => {
     const t = trades.columns;
     const q = quotes.columns;
-    const asof = (match: Predicate<'TRADES' | 'QUOTES'>, keyed: boolean) =>
+    const asof = (match: Snowtyped.Predicate<'TRADES' | 'QUOTES'>, keyed: boolean) =>
       rows(
         select(trades)
           .asofJoin(quotes, match, keyed ? eq(t.symbol, q.symbol) : undefined)

@@ -5,7 +5,6 @@ import {
   defineSchema,
   defineTable,
   inspectSchema,
-  type Migration,
   MigrationError,
   migrate,
   migrationStatus,
@@ -16,6 +15,7 @@ import {
   eq,
   insert,
   integer,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
@@ -61,7 +61,7 @@ describe('migrations against Snowflake', () => {
   });
 
   it('applies migrations once, records history, and serves typed queries on the result', async () => {
-    const migrations: Migration[] = [
+    const migrations: Snowtyped.Migration[] = [
       { id: '0001_accounts', statements: [createTable(accountsTable)] },
       {
         id: '0002_seed',
@@ -103,7 +103,10 @@ describe('migrations against Snowflake', () => {
       ['BALANCE', { kind: 'NUMBER', precision: 18, scale: 2 }, true, null],
     ]);
 
-    const edited = [migrations[0] as Migration, { id: '0002_seed', statements: [sql`SELECT 1`] }];
+    const edited = [
+      migrations[0] as Snowtyped.Migration,
+      { id: '0002_seed', statements: [sql`SELECT 1`] },
+    ];
     await expect(migrate(db, edited, migrated)).rejects.toEqual(failed('HISTORY_DRIFT'));
     await expect(migrate(db, migrations.slice(1), migrated)).rejects.toEqual(
       failed('HISTORY_DRIFT'),
@@ -111,7 +114,7 @@ describe('migrations against Snowflake', () => {
   });
 
   it('stops on a failed statement and resumes after the committed ones', async () => {
-    const base: Migration[] = [
+    const base: Snowtyped.Migration[] = [
       { id: '0001_accounts', statements: [createTable(accountsTable)] },
       {
         id: '0002_seed',
@@ -121,7 +124,7 @@ describe('migrations against Snowflake', () => {
       },
     ];
     const alter = alterTable(accounts);
-    const broken: Migration = {
+    const broken: Snowtyped.Migration = {
       id: '0003_columns',
       statements: [
         alter.addColumn('NOTE', sqlType.varchar()),
@@ -140,15 +143,15 @@ describe('migrations against Snowflake', () => {
     });
     await expect(migrate(db, [...base, broken], migrated)).rejects.toEqual(failed('FAILED'));
 
-    const fixed: Migration = {
+    const fixed: Snowtyped.Migration = {
       ...broken,
       statements: [
         broken.statements[0],
         alter.addColumn('REGION', sqlType.varchar()),
         broken.statements[2],
-      ] as Migration['statements'],
+      ] as Snowtyped.Migration['statements'],
     };
-    const changedPrefix: Migration = {
+    const changedPrefix: Snowtyped.Migration = {
       ...fixed,
       statements: [alter.addColumn('OTHER', sqlType.varchar()), ...fixed.statements.slice(1)],
     };
@@ -173,7 +176,7 @@ describe('migrations against Snowflake', () => {
     const target = { ...migrated, historyTable: 'LEASE_HISTORY' };
     const lock = sql.identifier(database, migrated.schema, 'LEASE_HISTORY_LOCK');
     const table = snowflakeTable('LEASED', { id: integer('ID').notNull() }, migrated);
-    const migrations: Migration[] = [
+    const migrations: Snowtyped.Migration[] = [
       { id: '0001_leased', statements: [createTable(defineTable(table))] },
     ];
     expect((await migrate(db, [], target)).applied).toEqual([]);
@@ -193,7 +196,7 @@ describe('migrations against Snowflake', () => {
   it('serializes concurrent runs so each migration applies once', async () => {
     const target = { ...migrated, historyTable: 'CONCURRENT_HISTORY' };
     const table = snowflakeTable('COUNTER', { id: integer('ID').notNull() }, migrated);
-    const migrations: Migration[] = [
+    const migrations: Snowtyped.Migration[] = [
       { id: '0001_counter', statements: [createTable(defineTable(table))] },
       {
         id: '0002_rows',

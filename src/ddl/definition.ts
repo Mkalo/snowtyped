@@ -1,7 +1,7 @@
 import { type IdentifierNode, identifier } from '../ast.js';
 import type { ColumnMap, ServerValue, Table } from '../schema.js';
 import { serverClause } from './statements.js';
-import { type PhysicalType, physicalType } from './types.js';
+import { type PhysicalType, physicalType, type sqlType } from './types.js';
 
 /** A physical column of a {@link TableDefinition}. */
 export interface ColumnDefinition {

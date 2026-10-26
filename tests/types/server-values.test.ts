@@ -2,18 +2,16 @@
 import { expectTypeOf } from 'vitest';
 import {
   eq,
-  type InsertValues,
   insert,
   integer,
   mergeInto,
+  type Snowtyped,
   select,
   snowflakeTable,
   text,
   timestamp,
-  type UpdateValues,
   update,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const events = snowflakeTable('EVENTS', {
   id: integer('ID').notNull().identity(),
@@ -23,17 +21,19 @@ const events = snowflakeTable('EVENTS', {
   doubled: integer('DOUBLED').virtual('ID * 2'),
 });
 type Columns = typeof events.columns;
-expectTypeOf<InsertValues<Columns>>().toEqualTypeOf<
+expectTypeOf<Snowtyped.InsertValues<Columns>>().toEqualTypeOf<
   { name: string } & { id?: bigint; status?: string; created?: string | null }
 >();
-expectTypeOf<keyof UpdateValues<Columns>>().toEqualTypeOf<'id' | 'name' | 'status' | 'created'>();
+expectTypeOf<keyof Snowtyped.UpdateValues<Columns>>().toEqualTypeOf<
+  'id' | 'name' | 'status' | 'created'
+>();
 expectTypeOf(events.columns.status.serverValue).toEqualTypeOf<{
   readonly kind: 'default';
   readonly expression?: string;
 }>();
 expectTypeOf(events.columns.name.serverValue).toEqualTypeOf<null>();
 
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 expectTypeOf(db.execute(select(events)))
   .resolves.toHaveProperty('rows')
   .toEqualTypeOf<

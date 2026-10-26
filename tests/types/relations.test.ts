@@ -8,12 +8,12 @@ import {
   integer,
   many,
   one,
+  type Snowtyped,
   select,
   snowflakeTable,
   text,
   withRelations,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const users = snowflakeTable('USERS', {
   id: integer('ID').notNull(),
@@ -34,7 +34,7 @@ const scores = snowflakeTable('SCORES', { value: float('VALUE').notNull() });
 const u = users.columns;
 const p = posts.columns;
 const c = comments.columns;
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 
 const userPosts = many(posts, { from: u.id, to: p.authorId }, (rows) =>
   rows.select({ id: p.id, title: p.title }).orderBy(asc(p.id)),

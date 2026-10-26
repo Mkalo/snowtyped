@@ -4,7 +4,6 @@ import {
   checkDrift,
   createSchema,
   createTable,
-  type DdlStatement,
   defineSchema,
   defineTable,
   dropSchema,
@@ -26,6 +25,7 @@ import {
   identifier,
   integer,
   object,
+  type Snowtyped,
   select,
   snowflakeTable,
   sql,
@@ -351,7 +351,8 @@ describe('DDL builders and schema diffs against Snowflake', () => {
   });
 
   it('runs each schema and ALTER TABLE builder in place', async () => {
-    const run = (statement: DdlStatement) => db.queryRaw(sql.unsafe(statement.compile().sql));
+    const run = (statement: Snowtyped.DdlStatement) =>
+      db.queryRaw(sql.unsafe(statement.compile().sql));
     const schema = identifier(database, altered.schema);
     await run(createSchema(schema, { ifNotExists: true, comment: 'first' }));
     await run(createSchema(schema, { ifNotExists: true }));

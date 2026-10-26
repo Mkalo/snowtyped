@@ -5,12 +5,12 @@ import {
   eq,
   integer,
   recursiveCte,
+  type Snowtyped,
   select,
   snowflakeTable,
   text,
   variant,
 } from '../../src/index.js';
-import type { SnowflakeClient } from '../../src/snowflake/index.js';
 
 const employees = snowflakeTable('EMPLOYEES', {
   id: integer('ID').notNull(),
@@ -20,7 +20,7 @@ const employees = snowflakeTable('EMPLOYEES', {
   payload: variant('PAYLOAD', z.object({ ok: z.boolean() })).notNull(),
   loose: variant('LOOSE').notNull(),
 });
-declare const db: SnowflakeClient;
+declare const db: Snowtyped.SnowflakeClient;
 const { columns: e } = employees;
 const anchor = select(employees, { id: e.id, managerId: e.managerId, name: e.name }).where(
   eq(e.id, 1n),

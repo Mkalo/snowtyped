@@ -55,65 +55,19 @@
  * @module
  */
 export {
-  type AssignmentNode,
-  type BindValue,
-  type CompiledQuery,
-  type CteNode,
   compileAst,
-  type DefaultNode,
-  type DeleteNode,
-  type DerivedNode,
-  type EqualityNode,
-  type ExistsNode,
-  type ExpressionNode,
-  type FlattenNode,
-  type FrameBoundaryNode,
-  type IdentifierNode,
-  type InSubqueryNode,
-  type InsertNode,
-  type IntervalUnit,
   identifier,
-  type JoinNode,
-  type MatchRecognizeNode,
-  type MergeBranchNode,
-  type MergeNode,
-  type NavigationNode,
-  type OrderNode,
-  type PatternNode,
-  type PivotLiteral,
-  type PivotNode,
-  type QueryNode,
   quoteIdentifier,
-  type RelationNode,
-  type SelectNode,
-  type SelfReferenceNode,
-  type SemanticsNode,
-  type SetOperationNode,
-  type SetOperator,
-  type SourceReference,
-  type StarNode,
-  type StatementNode,
-  type SubqueryNode,
-  type TableNode,
-  type TemporalNode,
-  type UnpivotNode,
-  type UpdateNode,
-  type WindowFrameNode,
-  type WireType,
 } from './ast.js';
+export type * from './deprecated-types.js';
 export {
-  type AnyExpression,
   and,
   asc,
   count,
   desc,
-  type Expression,
   eq,
-  type FrameBoundary,
-  type FramedWindowOptions,
   gt,
   gte,
-  type InferExpression,
   ilike,
   inArray,
   isNotNull,
@@ -127,29 +81,21 @@ export {
   min,
   ne,
   not,
-  type Ordering,
   or,
   over,
-  type Predicate,
-  type RangeBoundary,
   rangeBetween,
   rowNumber,
   rowsBetween,
   sum,
   upper,
-  type WindowFrame,
 } from './expressions.js';
 export {
   add,
   avg,
-  type CaseExpression,
-  type CastType,
-  type CastValue,
   caseWhen,
   cast,
   coalesce,
   concat,
-  type DatePart,
   dateAdd,
   dateDiff,
   datePart,
@@ -160,8 +106,6 @@ export {
   lead,
   length,
   mul,
-  type OffsetWindowOptions,
-  type OrderedWindowOptions,
   rank,
   sub,
   substring,
@@ -169,113 +113,52 @@ export {
 } from './functions.js';
 export {
   generateSchema,
-  type IntrospectedColumn,
-  type IntrospectedTable,
   introspect,
 } from './introspection.js';
 export {
-  type AfterMatch,
-  type DefineContext,
-  type MatchRecognizeColumns,
-  type MatchRecognizeOptions,
-  type MatchRowScope,
-  type MatchVariableScope,
-  type MeasureContext,
   matchRecognize,
-  type Navigation,
-  type QuantifiablePattern,
-  type QuantifierOptions,
-  type RowPattern,
-  type RowsPerMatch,
   rowPattern,
 } from './match-recognize.js';
 export {
   deleteFrom,
   deleteUsing,
-  type FilteredMutation,
-  type InsertSource,
-  type InsertValues,
   insert,
   insertFrom,
-  type MergeQuery,
-  type MutationQuery,
   mergeInto,
-  type UpdateValues,
   update,
   updateFrom,
 } from './mutations.js';
 export {
   dynamicPivot,
-  type PivotAggregate,
-  type PivotColumns,
-  type PivotOptions,
-  type PivotValue,
   pivot,
-  type UnpivotColumns,
-  type UnpivotOptions,
   unpivot,
 } from './pivot.js';
 export {
-  type CompatibleOperand,
   exists,
-  type IntersectRow,
   inSubquery,
   notExists,
-  type OperandRow,
-  type RecursiveName,
-  type RecursiveOperand,
-  type RecursiveRow,
   recursiveCte,
-  type SelectQuery,
-  type SetColumns,
-  type SetOperand,
-  type SetQuery,
-  type SetScope,
   scalar,
   select,
-  type UnionRow,
 } from './query.js';
 export {
-  type LoadedQuery,
-  type LoadedRow,
-  type LoadOptions,
   many,
   one,
-  type Relation,
-  type RelationCardinality,
-  type RelationKeyType,
-  type RelationRow,
   withRelations,
 } from './relations.js';
 export {
-  type AnyColumn,
   alias,
   array,
-  type BoundColumns,
   binary,
   boolean,
-  type Column,
-  type ColumnMap,
-  type ColumnValue,
-  type DataType,
   date,
   decimal,
   float,
   geography,
   geometry,
-  type IdentityOptions,
-  type InferColumn,
-  type InferSelection,
   integer,
   object,
-  type Projection,
-  type Selection,
-  type ServerValue,
-  type ServerValueKind,
-  type ServerValues,
   snowflakeTable,
-  type Table,
-  type TableOptions,
   text,
   time,
   timestamp,
@@ -283,15 +166,9 @@ export {
   variant,
   vector,
 } from './schema.js';
-export { type FlattenOptions, flatten } from './snowflake-syntax.js';
-export type { GeoJsonGeometry, GeoPosition } from './spatial.js';
-export { type RawQuery, type SqlInterpolation, type SqlParameter, sql } from './sql.js';
-export {
-  type AnyStructuredType,
-  type InferStructured,
-  type StructuredType,
-  structured,
-} from './structured.js';
+export { flatten } from './snowflake-syntax.js';
+export { sql } from './sql.js';
+export { structured } from './structured.js';
 /**
  * Element types for {@link structured} ARRAY, OBJECT, and MAP columns. `integer`, `decimal`,
  * `text`, and `boolean` take the same constraint options as the column factories, and `array`,
@@ -300,3 +177,18 @@ export {
  * @category Schema
  */
 export * as structuredType from './structured-types.js';
+/**
+ * Every public type of `snowtyped`, `snowtyped/snowflake`, and `snowtyped/ddl`. The same types are
+ * still exported individually, deprecated in favor of this namespace, until 2.0.
+ *
+ * @example
+ * ```ts
+ * import type { Snowtyped } from 'snowtyped';
+ *
+ * const query = select(customers, { id: customers.columns.id, email: customers.columns.email });
+ * type Row = Snowtyped.InferRow<typeof query>;
+ * // { readonly id: bigint; readonly email: string | null }
+ * ```
+ * @category Types
+ */
+export type * as Snowtyped from './types.js';

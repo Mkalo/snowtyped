@@ -4,8 +4,8 @@ import {
   date,
   decimal,
   float,
-  type InferSelection,
   integer,
+  type Snowtyped,
   snowflakeTable,
   text,
   time,
@@ -29,7 +29,7 @@ const samples = snowflakeTable('SAMPLES', {
   payload: variant('PAYLOAD'),
 });
 
-expectTypeOf<InferSelection<typeof samples.columns>>().toEqualTypeOf<{
+expectTypeOf<Snowtyped.InferSelection<typeof samples.columns>>().toEqualTypeOf<{
   readonly name: string;
   readonly id: bigint;
   readonly balance: string;
