@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0
+
+### Minor Changes
+
+- 2dd87b5: Add `Snowtyped.InferRow`, `Snowtyped.InferInsert`, and `Snowtyped.InferUpdate` helper types. `Snowtyped.InferRow<typeof query>` is the row type of a SELECT, set operation, query with relations, or table without executing it, including outer-join nullability. `Snowtyped.InferInsert<typeof table>` and `Snowtyped.InferUpdate<typeof table>` are the values `insert()` and `update()` accept.
+- 80bb0df: Export every public type under the type-only `Snowtyped` namespace: `import type { Snowtyped } from 'snowtyped'`, then `Snowtyped.InferRow<typeof query>`, `Snowtyped.Table`, `Snowtyped.SnowflakeClient`, or `Snowtyped.Migration`. It covers the types of `snowtyped`, `snowtyped/snowflake`, and `snowtyped/ddl`.
+
+  The individual type exports still work but are deprecated, so editors strike them through; they will be removed in 2.0. To migrate, replace `import { type InferSelection } from 'snowtyped'` with `import { type Snowtyped } from 'snowtyped'` and write `Snowtyped.InferSelection`. Runtime exports are unchanged.
+
+### Patch Changes
+
+- b226ace: `update()`, `updateFrom()`, and MERGE `whenMatchedUpdate()` now leave out keys whose value is `undefined`, as `insert()` already did, instead of throwing a `ZodError`. A patch whose values are all `undefined` is rejected with `A mutation needs at least one column value.`
+
 ## 1.0.1
 
 ### Patch Changes
